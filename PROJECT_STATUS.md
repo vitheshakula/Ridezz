@@ -4,9 +4,11 @@ Last updated: 2026-08-21
 
 ## Done
 
-- Git repository initialized locally at project root.
+- Git repository initialized locally at project root, connected to GitHub
+  remote `origin` (`vitheshakula/Ridezz`, private).
 - `mobile/` scaffolded: bare React Native 0.87.0 + TypeScript app
-  (`react-native init`, package `com.ridezz.mobile`).
+  (`react-native init`, package `com.ridezz.mobile`). Android-first; iOS
+  project exists from the template but is untested.
 - Fixed a CLI scaffolding bug: Android Kotlin sources were generated under
   `android/app/src/main/java/com/com.ridezz.mobile/` instead of
   `android/app/src/main/java/com/ridezz/mobile/`; moved to the correct path.
@@ -15,16 +17,24 @@ Last updated: 2026-08-21
   No room-join logic wired yet.
 - LiveKit React Native SDK installed in `mobile/`:
   `@livekit/react-native@2.12.0`, `@livekit/react-native-webrtc@144.1.2`,
-  `livekit-client@2.22.0`.
-- Android native setup for LiveKit applied:
+  `livekit-client@2.22.0`. Native autolinking confirmed for Android.
+- Android native setup for LiveKit applied and verified:
   - `LiveKitReactNative.setup(this, AudioType.CommunicationAudioType())`
-    added to `MainApplication.kt` (must run before other RN init).
-  - Permissions added to `AndroidManifest.xml`: `RECORD_AUDIO`,
+    in `MainApplication.kt` (runs before other RN init; `Communication`
+    mode is correct for full-duplex two-way audio, not just playback).
+  - Permissions in `AndroidManifest.xml`: `RECORD_AUDIO`,
     `MODIFY_AUDIO_SETTINGS`, `ACCESS_NETWORK_STATE`, `WAKE_LOCK`,
     `BLUETOOTH_CONNECT` (in addition to the default `INTERNET`).
 - `server/` directory created, intentionally empty — token service not built
   yet.
-- Root `.gitignore`, `README.md` created.
+- Root `.gitignore`, `README.md` created. `debug.keystore` is intentionally
+  tracked (RN's own generated `.gitignore` un-ignores it and
+  `android/app/build.gradle` references it by a hardcoded path with no
+  fallback generation) — it's the standard public debug-only signing key
+  (fixed alias/password), not a real secret.
+- Verified: `tsc --noEmit`, `eslint .`, `jest` all pass; `./gradlew
+  assembleDebug` builds successfully end-to-end (confirmed with both a full
+  cold build and a fresh incremental rebuild).
 
 ## Not done yet (known gaps)
 
@@ -41,13 +51,12 @@ Last updated: 2026-08-21
   (Connected/Reconnecting/Disconnected) — these come after room-join wiring.
 - No reconnection logic.
 - iOS not set up/tested (Android-first per product direction).
-- GitHub remote not connected — GitHub CLI (`gh`) is not installed locally,
-  so the repository has not been pushed anywhere yet.
 - JDK note: system default `java` resolves to JDK 23
-  (`C:\Program Files\Java\jdk-23`). This has not yet been build-verified
-  against the Android Gradle Plugin version in `mobile/android`; a JDK
-  mismatch is a plausible source of Android build failures and hasn't been
-  ruled out.
+  (`C:\Program Files\Java\jdk-23`), no JDK 17/21 present. This is not the
+  traditionally-recommended JDK for React Native/Gradle, but has now been
+  build-verified to work with this project's Gradle 9.4.1 / AGP setup
+  (`assembleDebug` succeeds), so it's a known-working combination, not a
+  blocker.
 
 ## Next milestone
 
