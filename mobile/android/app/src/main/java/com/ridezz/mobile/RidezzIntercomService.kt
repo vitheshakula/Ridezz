@@ -87,7 +87,7 @@ class RidezzIntercomService : Service() {
     val channel =
       NotificationChannel(
         CHANNEL_ID,
-        "Ridezz intercom",
+        "Rideaze intercom",
         NotificationManager.IMPORTANCE_LOW,
       ).apply {
         description = "Shows while your ride intercom is active"
@@ -110,7 +110,7 @@ class RidezzIntercomService : Service() {
       )
 
     return NotificationCompat.Builder(this, CHANNEL_ID)
-      .setContentTitle("Ridezz")
+      .setContentTitle("Rideaze")
       .setContentText("Intercom active")
       .setSmallIcon(R.mipmap.ic_launcher)
       .setOngoing(true)

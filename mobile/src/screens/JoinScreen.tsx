@@ -36,7 +36,7 @@ async function ensureMicrophonePermission(): Promise<boolean> {
     PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     {
       title: 'Microphone access',
-      message: 'Ridezz needs your microphone so other riders can hear you.',
+      message: 'Rideaze needs your microphone so other riders can hear you.',
       buttonPositive: 'Allow',
       buttonNegative: 'Deny',
     },
@@ -55,7 +55,7 @@ async function requestNotificationPermission(): Promise<void> {
       PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
       {
         title: 'Show ride status',
-        message: 'Ridezz shows an ongoing notification while your intercom is active.',
+        message: 'Rideaze shows an ongoing notification while your intercom is active.',
         buttonPositive: 'Allow',
         buttonNegative: 'Deny',
       },
@@ -75,7 +75,7 @@ async function requestLocationPermission(): Promise<void> {
   }
   await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
     title: 'Share your location',
-    message: 'Ridezz can show mounted riders where everyone in the group is. Optional.',
+    message: 'Rideaze can show mounted riders where everyone in the group is. Optional.',
     buttonPositive: 'Allow',
     buttonNegative: 'Deny',
   });
@@ -129,7 +129,7 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.content}>
-        <Text style={styles.title}>Ridezz</Text>
+        <Text style={styles.title}>Rideaze</Text>
         <Text style={styles.subtitle}>Group ride intercom</Text>
 
         <View style={styles.form}>

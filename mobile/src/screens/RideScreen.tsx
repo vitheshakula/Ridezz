@@ -228,7 +228,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     >
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
 
-      <Text style={styles.title}>RIDEZZ</Text>
+      <Text style={styles.title}>RIDEAZE</Text>
       <Text style={styles.roomLabel}>Room: {session.roomCode.toUpperCase()}</Text>
 
       <Text style={[styles.status, displayedError && styles.statusError]}>
