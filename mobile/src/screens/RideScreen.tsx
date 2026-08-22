@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AudioSession,
@@ -15,10 +15,16 @@ import MuteButton from '../components/MuteButton';
 import RiderRow from '../components/RiderRow';
 import PresenceToast from '../components/PresenceToast';
 import RiderMap from '../components/RiderMap';
+import DiagnosticsModal from '../components/DiagnosticsModal';
 import { startIntercomService, stopIntercomService } from '../services/intercomService';
+import { audioCues } from '../services/audioCues';
+import { logDiagnosticEvent } from '../services/diagnosticsLog';
 import { useRiderPresenceToasts } from '../hooks/useRiderPresenceToasts';
 import { useRiderLocations } from '../hooks/useRiderLocations';
+import { useConnectionCues } from '../hooks/useConnectionCues';
+import { useKeepAwake } from '../hooks/useKeepAwake';
 import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderPresence';
+import type { PresenceEvent } from '../utils/riderPresence';
 
 interface RideScreenProps {
   session: RideSession;
@@ -118,6 +124,25 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const hasCheckedCapacityRef = useRef(false);
+  const hasLoggedJoinRef = useRef(false);
+  const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false);
+  const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+
+  useKeepAwake(keepAwakeEnabled);
+
+  useEffect(() => {
+    if (connectionState === ConnectionState.Connected && !hasLoggedJoinRef.current) {
+      hasLoggedJoinRef.current = true;
+      logDiagnosticEvent('joined_room', `Joined room ${session.roomCode.toUpperCase()}`);
+    }
+  }, [connectionState, session.roomCode]);
+
+  useConnectionCues(connectionState, transition => {
+    logDiagnosticEvent(
+      transition === 'lost' ? 'connection_lost' : 'reconnected',
+      transition === 'lost' ? 'Connection lost — reconnecting' : 'Connection restored',
+    );
+  });
 
   // Ridezz's MVP cap is 10 riders per room. The Development Token Server has no way to set
   // server-side room capacity, so this is a client-side check made the moment we connect: if
@@ -154,7 +179,16 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     () => sortedRemoteParticipants.map(p => ({ identity: p.identity, name: p.name || p.identity })),
     [sortedRemoteParticipants],
   );
-  const presenceToast = useRiderPresenceToasts(riderIdentities);
+  const handlePresenceEvent = useCallback((event: PresenceEvent) => {
+    if (event.type === 'left') {
+      audioCues.riderLeft();
+      logDiagnosticEvent('rider_left', `${event.name} left`);
+    } else {
+      audioCues.riderJoined();
+      logDiagnosticEvent('rider_joined', event.type === 'rejoined' ? `${event.name} rejoined` : `${event.name} joined`);
+    }
+  }, []);
+  const presenceToast = useRiderPresenceToasts(riderIdentities, handlePresenceEvent);
 
   // Publishes our GPS fixes over LiveKit's data channel and keeps the latest known
   // location per rider (including ourselves). Location is a nice-to-have on top of the
@@ -178,6 +212,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const riderCount = remoteParticipants.length + 1;
   const displayedError = capacityError ?? connectError;
 
+  const handleLeavePress = useCallback(() => {
+    Alert.alert('Leave ride?', 'You’ll stop sharing audio and location with the group.', [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Leave Ride', style: 'destructive', onPress: onLeave },
+    ]);
+  }, [onLeave]);
+
   return (
     <View
       style={[
@@ -199,6 +240,20 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       {backgroundWarning ? (
         <Text style={styles.backgroundWarning}>{backgroundWarning}</Text>
       ) : null}
+
+      <View style={styles.utilityRow}>
+        <View style={styles.keepAwakeRow}>
+          <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
+          <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
+        </View>
+        <Pressable
+          style={styles.diagnosticsLink}
+          onPress={() => setDiagnosticsVisible(true)}
+          hitSlop={12}
+        >
+          <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
+        </Pressable>
+      </View>
 
       <View style={styles.tabs}>
         <Pressable
@@ -240,9 +295,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
       <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
-      <Pressable style={styles.leaveButton} onPress={onLeave}>
+      <Pressable style={styles.leaveButton} onPress={handleLeavePress}>
         <Text style={styles.leaveButtonText}>Leave Ride</Text>
       </Pressable>
+
+      <DiagnosticsModal
+        visible={diagnosticsVisible}
+        onClose={() => setDiagnosticsVisible(false)}
+      />
     </View>
   );
 }
@@ -287,6 +347,30 @@ const styles = StyleSheet.create({
     color: '#d29922',
     textAlign: 'center',
     marginTop: 12,
+  },
+  utilityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+  },
+  keepAwakeRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  keepAwakeLabel: {
+    color: '#c9d1d9',
+    fontSize: 14,
+    marginRight: 10,
+  },
+  diagnosticsLink: {
+    paddingVertical: 6,
+    paddingHorizontal: 4,
+  },
+  diagnosticsLinkText: {
+    color: '#58a6ff',
+    fontSize: 14,
+    fontWeight: '600',
   },
   tabs: {
     flexDirection: 'row',

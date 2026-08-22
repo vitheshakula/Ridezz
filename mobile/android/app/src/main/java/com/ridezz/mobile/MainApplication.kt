@@ -17,6 +17,8 @@ class MainApplication : Application(), ReactApplication {
       packageList =
         PackageList(this).packages.apply {
           add(RidezzIntercomPackage())
+          add(RidezzAudioCuesPackage())
+          add(RidezzKeepAwakePackage())
         },
     )
   }

@@ -403,17 +403,123 @@ fresh timestamp), haversine distance, and distance formatting. No
 dev-only mocked-rider-row rendering mode was built (the task marked this
 optional).
 
+### Road-test polish (audible cues, mounted mode, diagnostics, standalone build)
+
+**Real Google Maps API key verification**: a real key was added to (gitignored)
+`local.properties` this session. It did **not** resolve the map — Google's
+own SDK rejects it: `Google Maps Android API: Error requesting API token.
+StatusCode=INVALID_ARGUMENT`, and logcat's `Authorization failure` message
+prints the exact package/SHA-1 pair the key needs to be authorized for:
+package `com.ridezz.mobile`, SHA-1
+`5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25` (the debug
+keystore's fingerprint — also what the standalone release build below is
+signed with, so this one fingerprint covers both). **This needs fixing in
+Google Cloud Console** (enable "Maps SDK for Android" on the project that
+owns this key, add this exact package+SHA-1 pair as an Android app
+restriction if one exists, confirm billing is enabled on the project) — it
+is not something fixable from the app side. Two-phone map verification
+(peer markers, staleness after lock, recovery after a drop) is blocked on
+this and was **not performed**.
+
+**Audible cues**: `RidezzAudioCuesModule.kt` — Android `SoundPool` with
+`AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING` (the same attribute
+Android itself uses for in-call tones like DTMF), so cues ride whatever
+route the LiveKit call is already using and never touch audio focus or
+`AudioManager` mode — meaning they genuinely can't interrupt or restart the
+call, by construction, not just by care. Four short WAV tones
+(`mobile/android/app/src/main/res/raw/cue_*.wav`, ~9-12KB each) were
+synthesized locally (simple sine-wave "bip-boop" patterns, no external/
+copyrighted assets) for rider-joined, rider-left, connection-lost, and
+connection-restored. Join/leave cues reuse the exact same de-duplicated
+presence-diff events that already drive the toast banner
+(`useRiderPresenceToasts`'s new optional `onEvent` callback) rather than
+re-deriving them. Connection-lost/restored cues come from a new pure
+function, `classifyConnectionTransition` (`mobile/src/utils/connectionCues.ts`,
+8 unit tests) — "lost" only fires from a previously-*healthy* Connected
+state and "restored" only from a previously-reconnecting state, so there's
+no cue on the initial join and no repeat cue for an ongoing reconnect
+attempt. **Verified on-device**: toggling airplane mode mid-ride correctly
+drove the room through Reconnecting and back to Connected, with exactly one
+"lost" and one "restored" transition logged (see diagnostics below) and no
+native errors.
+
+**Keep screen awake**: `RidezzKeepAwakeModule.kt` toggles
+`WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON` on the current Activity's
+window — scoped to that window only, never touches the system-wide display
+timeout. OFF by default. `useKeepAwake` mirrors a toggle onto this flag and
+*always* releases it on unmount regardless of the toggle's last value, so
+Leave Ride can never strand the screen pinned on; the hook lives at the
+RideRoom level (not per-tab), so switching Intercom/Map doesn't release it.
+**Verified on-device** via `dumpsys window` showing the `KEEP_SCREEN_ON`
+flag appear and disappear exactly on toggle.
+
+**Diagnostics log**: a bounded (100-event), in-memory, session-scoped ring
+buffer (`mobile/src/utils/diagnostics.ts`, 4 unit tests) recording only
+operational metadata — joined room, connection lost/restored, rider
+joined/left, location started/permission-unavailable/paused/resumed — each
+with a timestamp and a short message. Explicitly never records audio,
+conversation content, a GPS trail, keys, or tokens. A `Diagnostics` link on
+the Ride screen opens a read-only modal, newest-first. **Verified
+on-device**: real events appeared with correct timestamps across two
+separate rides in the same app session (confirming it's session-scoped,
+not per-ride), including the airplane-mode connection-lost/restored pair
+matching the audible-cue transitions above.
+
+**Screen polish**: a `Leave ride?` confirmation (`Alert.alert`, Cancel /
+Leave Ride) now guards the Leave Ride button — verified on-device that a
+stray tap no longer ends the ride outright. Added a "Keep screen awake"
+toggle and "Diagnostics" link in a new row below the rider count, visible
+regardless of active tab. Connection status, rider count, and tabs were
+already reasonably sized (`MuteButton` is already 200×200dp) so were left
+alone rather than redesigned.
+
+**Standalone road-test APK**: `mobile/android/app/build.gradle`'s `release`
+build type already signed with the project's debug keystore (the RN
+template default, since no separate release keystore was ever generated) —
+this is **test-only signing**, not a production setup, and must not be
+treated as one; a real road-test/production release needs its own
+generated keystore, kept out of source control, before any wider
+distribution. Built via `./gradlew assembleRelease`, which embeds the JS
+bundle and assets into the APK (confirmed: `assets/index.android.bundle`,
+~2.7MB, present inside the APK) — no Metro/dev-server dependency at
+runtime. Exact path:
+`mobile/android/app/build/outputs/apk/release/app-release.apk` (~103MB,
+universal APK covering all 4 ABIs, gitignored — never commit built
+APKs). **Verified exactly as required**: installed on the physical
+device, all Metro/node processes killed and confirmed unreachable
+(`curl` connection-refused), `adb reverse tcp:8081` removed, app
+launched straight to the Join screen with no "Loading from
+localhost:8081" step, Wi-Fi disabled to force mobile data (confirmed via
+`dumpsys connectivity` showing only a `CELLULAR` network), joined a real
+LiveKit room, and the local rider's "Speaking" indicator went live —
+confirming mic capture and publish work with zero dev-server
+connectivity. Foreground service (`RidezzIntercomService`) also verified
+running with the correct `microphone|location` type in this exact release
+build via `dumpsys activity services`, and stopped cleanly (service entry
+disappears) on Leave Ride.
+
 ## Not done yet (known gaps)
 
-- **No Google Maps API key configured.** `mobile/android/local.properties`
-  needs a `MAPS_API_KEY` entry (see
-  `mobile/android/local.properties.example`) before map tiles, markers, or
-  the "Fit Group"/"Center Me" camera controls can be visually verified —
-  confirmed this session that `MapView`'s `onMapReady` never fires without
-  one, so the native map object doesn't finish initializing at all.
+- **Google Maps API key not authorized.** The key currently in
+  `local.properties` is rejected by Google (`INVALID_ARGUMENT`) — needs
+  "Maps SDK for Android" enabled, billing confirmed, and package
+  `com.ridezz.mobile` + SHA-1
+  `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25` authorized
+  for it in Google Cloud Console, before map tiles/markers/"Fit Group"/
+  "Center Me" can be visually verified on any device or build signed with
+  this same (debug) keystore.
 - **Location/map cross-device behavior untested** — a peer's marker
   appearing/moving, staleness after locking, and recovery after a network
-  drop all need a second physical device.
+  drop all need a second physical device, and are additionally blocked on
+  the API key issue above.
+- **Standalone-build two-phone regression untested** — same single-device
+  limitation as every other cross-device item on this list; only the
+  single-device checks described above were performed against the release
+  APK.
+- **No production signing key.** The standalone APK above is signed with
+  the shared, publicly-known debug keystore (fixed alias/password) — fine
+  for handing to known riders for tomorrow's test, not appropriate for any
+  wider distribution.
 - **Both-phones-locked simultaneously untested** — needs a second device.
 - **Cross-device rider presence untested** — remote Speaking/Muted/quality
   indicators and join/leave/rejoin toasts, and true 10-simultaneous-rider
@@ -437,20 +543,25 @@ optional).
 
 ## Verification status
 
-`tsc --noEmit`, `eslint .`, and `jest` (47 tests, all passing) all pass.
-`./gradlew assembleDebug` builds successfully. Metro bundling (dev and
-production) resolves the full dependency graph without errors. Verified on
-a real Android phone: launches without crashing, joins a real LiveKit
-Cloud room, publishes/unpublishes the microphone, survives 1 and 5 minutes
-locked with no reconnect, survives a brief network interruption while
-locked, leaves cleanly, correctly shows rider capacity/presence UI and
-preserves the background-service lifecycle, and — for this task — acquires
-GPS location, correctly attributes it to the local rider's real LiveKit
-identity, and classifies freshness/staleness correctly. Map tile/marker
-rendering itself needs a real Google Maps API key to verify visually (see
-known gaps above).
+`tsc --noEmit`, `eslint .`, and `jest` (59 tests, all passing) all pass.
+`./gradlew assembleDebug` and `./gradlew assembleRelease` both build
+successfully. Metro bundling (dev and production) resolves the full
+dependency graph without errors. Verified on a real Android phone:
+launches without crashing, joins a real LiveKit Cloud room, publishes/
+unpublishes the microphone, survives 1 and 5 minutes locked with no
+reconnect, survives a brief network interruption while locked (both as a
+Metro dev build and, this session, as the standalone release APK), leaves
+cleanly, correctly shows rider capacity/presence UI, preserves the
+background-service lifecycle, acquires GPS location and correctly
+attributes it to the local rider's real LiveKit identity, and — for this
+task — plays the correct audible cue exactly once per genuine connection-
+lost/restored transition, correctly toggles the keep-screen-on window flag,
+correctly logs and displays session diagnostics, and runs fully
+standalone (installed APK, Metro/adb-reverse torn down, mobile-data-only)
+with working audio. Map tile/marker rendering still needs an authorized
+Google Maps API key to verify visually (see known gaps above).
 
 ## Next milestone
 
-Add audible rider join/leave/reconnect cues and prepare a polished Ridezz
-build for tomorrow's road test.
+Run Ridezz on the real motorcycle group ride and record field-test results
+before adding further features.

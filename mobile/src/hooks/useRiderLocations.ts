@@ -17,6 +17,7 @@ import {
   type RiderLocation,
   type RiderLocationState,
 } from '../utils/riderLocation';
+import { logDiagnosticEvent } from '../services/diagnosticsLog';
 
 /** Motorcycle-appropriate balance between freshness and battery/data: not a
  * maximum-precision GPS lock, roughly one fix every 3-5s, and only published
@@ -85,6 +86,7 @@ export function useRiderLocations(
   useEffect(() => {
     let cancelled = false;
     let watchId: number | null = null;
+    let hadErrorSinceLastFix = false;
 
     async function start() {
       if (Platform.OS !== 'android') {
@@ -102,12 +104,18 @@ export function useRiderLocations(
       }
       setPermissionGranted(granted);
       if (!granted) {
+        logDiagnosticEvent('location_permission_unavailable', 'Location permission not granted');
         return;
       }
 
+      logDiagnosticEvent('location_started', 'Location sharing started');
       ensureGeolocationConfigured();
       watchId = Geolocation.watchPosition(
         position => {
+          if (hadErrorSinceLastFix) {
+            hadErrorSinceLastFix = false;
+            logDiagnosticEvent('location_resumed', 'Location updates resumed');
+          }
           const payload = {
             lat: position.coords.latitude,
             lng: position.coords.longitude,
@@ -137,6 +145,10 @@ export function useRiderLocations(
         () => {
           // GPS unavailable/failed after permission was granted -- location sharing
           // just stays stale/off for this rider; the intercom itself is unaffected.
+          if (!hadErrorSinceLastFix) {
+            hadErrorSinceLastFix = true;
+            logDiagnosticEvent('location_paused', 'Location updates interrupted');
+          }
         },
         WATCH_OPTIONS,
       );
