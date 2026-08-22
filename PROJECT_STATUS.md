@@ -436,6 +436,30 @@ configuration" -- so a delayed/filtered logcat read can miss it entirely):
   needed for a Console-side fix to take effect) and check `adb logcat` for
   the same "Authorization failure" text to verify once changed.
 
+**Re-tested with a replacement key (still failing)**: the user obtained a
+new/reconfigured key in Google Cloud Console and updated (gitignored)
+`local.properties` with it. Rebuilt and reinstalled, then re-verified with
+a live-streamed `adb logcat` (not a delayed dump) while opening the Map
+tab. **Same exact failure**: `Google Maps Android API: Error requesting
+API token. StatusCode=INVALID_ARGUMENT` followed by `Authorization
+failure`, printing the same package `com.ridezz.mobile` and the same
+SHA-1 `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
+(independently re-confirmed via `signingReport` this session too). One
+concrete new observation worth checking in Console: **this replacement
+key's format doesn't match a standard Google Maps Platform API key** --
+normal Maps/Cloud API keys always start with `AIzaSy` (39 characters
+total); this one starts with `AQ.` and is a different length/shape
+entirely. This may simply be a newer key format, but it's also consistent
+with the wrong kind of credential having been copied in (e.g. an OAuth
+token or a different credential type from Credentials -> Create
+Credentials, rather than a plain "API key"). Worth double-checking that
+Console -> APIs & Services -> Credentials shows this as an **API key**
+specifically, not another credential type, before assuming the
+enable/restriction/billing settings themselves are the problem. No
+app-side code change was made or is possible here -- `RiderMap.tsx`,
+manifest, and `build.gradle` remain byte-for-byte unchanged from the
+`Add live rider group map` commit.
+
 **Tests** (`mobile/__tests__/riderLocation.test.ts`, 23 cases, pure
 functions only): payload encode/decode round-trip, malformed JSON,
 unsupported version, out-of-range/missing/future-timestamp rejection,
@@ -542,16 +566,20 @@ disappears) on Leave Ride.
 
 ## Not done yet (known gaps)
 
-- **Google Maps API key still not authorized** — re-confirmed this session
-  (see "Google Maps authorization" above) with a real key in place: still
-  rejected by Google (`INVALID_ARGUMENT` / `Authorization failure`), same
-  root cause as before. Needs "Maps SDK for Android" enabled, billing
+- **Google Maps API key still not authorized, second attempt** — tested
+  twice now with two different keys (see "Google Maps authorization"
+  above), both rejected with the identical `INVALID_ARGUMENT` /
+  `Authorization failure`. Needs "Maps SDK for Android" enabled, billing
   confirmed, and package `com.ridezz.mobile` + SHA-1
   `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
-  (independently re-verified via `signingReport`) authorized in Google
-  Cloud Console, before map tiles/markers/"Fit Group"/"Center Me" can be
-  visually verified on any device or build signed with this same (debug)
-  keystore. No code change can fix this from the app side.
+  (independently re-verified via `signingReport` both sessions) authorized
+  in Google Cloud Console, before map tiles/markers/"Fit Group"/"Center
+  Me" can be visually verified on any device or build signed with this
+  same (debug) keystore. The second key's unusual format (`AQ.` prefix
+  rather than the standard `AIzaSy` Maps/Cloud API key format) is worth
+  checking -- confirm Console shows it as a plain "API key" credential, not
+  a different credential type. No code change can fix this from the app
+  side.
 - **Location/map cross-device behavior untested** — a peer's marker
   appearing/moving, staleness after locking, and recovery after a network
   drop all need a second physical device, and are additionally blocked on
@@ -607,7 +635,7 @@ Google Maps API key to verify visually (see known gaps above).
 
 ## Next milestone
 
-Run the two-phone endurance test and freeze the standalone APK for
-tomorrow morning's road test. Google Maps authorization is still
-unresolved (Console-side, see above) — the ride/intercom/location features
+Freeze map work and run the two-phone endurance test for tomorrow
+morning. Google Maps authorization is still unresolved after two key
+attempts (Console-side, see above) — the ride/intercom/location features
 this depends on are otherwise unaffected and ready.
