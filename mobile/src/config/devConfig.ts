@@ -10,4 +10,5 @@
  *
  * Fill in the real value below before joining a room will work.
  */
-export const LIVEKIT_DEVELOPMENT_TOKEN_SERVER_ID = 'PASTE_TOKEN_SERVER_ID_HERE';
+export const LIVEKIT_DEVELOPMENT_TOKEN_SERVER_ID: string =
+  'https://ridezz-jpbfuv.sandbox.livekit.io';
