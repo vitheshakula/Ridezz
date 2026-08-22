@@ -8,13 +8,15 @@
  *
  * @livekit/react-native ships its own version of this polyfill, but relying
  * on its internal import ordering is fragile (our own code also imports
- * livekit-client directly). This file is imported first, before anything
- * else, in index.js, so it's guaranteed to run regardless of what any
- * package does internally.
+ * livekit-client directly). This is imported first via
+ * src/polyfills/index.ts, which index.js imports before anything else, so
+ * it's guaranteed to run regardless of what any package does internally.
  */
 
-// @ts-expect-error: DOMException isn't declared on RN/Hermes's global type.
-if (typeof global.DOMException === 'undefined') {
+// @ts-expect-error: `global` isn't declared in this project's TS lib config.
+const globalObject: any = global;
+
+if (typeof globalObject.DOMException === 'undefined') {
   class PolyfillDOMException extends Error {
     code: number;
 
@@ -26,6 +28,5 @@ if (typeof global.DOMException === 'undefined') {
     }
   }
 
-  // @ts-expect-error: DOMException isn't declared on RN/Hermes's global type.
-  global.DOMException = PolyfillDOMException;
+  globalObject.DOMException = PolyfillDOMException;
 }
