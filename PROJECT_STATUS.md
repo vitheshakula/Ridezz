@@ -381,18 +381,60 @@ continued to register with the OS across the existing foreground service
 (no separate verification needed here beyond the prior 1/5-minute
 locked-screen tests, since this reuses that same already-verified
 mechanism). **Not visually confirmed**: whether a marker actually renders
-on top of the map surface. With `MAPS_API_KEY` unset (no real key
-available this session), `MapView`'s `onMapReady` callback never fires —
-confirmed directly by instrumenting it — meaning the underlying native
-Google Maps object never finishes initializing without a valid,
-billing-enabled key. This is standard Google Maps SDK behavior (the
-watermark logo is a static asset shown regardless of key validity; actual
-map/marker/camera functionality is not), not a defect in Ridezz's code.
-**A real Google Maps API key is required to visually verify markers, "Fit
+on top of the map surface — see "Google Maps authorization" below for the
+full diagnostic (superseding the `onMapReady`-based claim originally made
+here, which turned out not to be a reliable authorization signal). **A
+real Google Maps API key is required to visually verify markers, "Fit
 Group," and "Center Me" on this or any device.** Two-phone tests (seeing a
 peer's marker move, staleness after locking, recovery after a network
 drop) were **not performed** — only one physical device was available this
 session, same limitation as prior tasks.
+
+### Google Maps authorization (diagnosed, not resolved)
+
+A real Google Maps API key was added to (gitignored) `local.properties`
+and re-verified present. Diagnosis this session, done by streaming
+`adb logcat` live while navigating to the Map tab (earlier attempts missed
+the error because Android's own Flogger-based logging silently drops
+messages under load -- "Too many Flogger logs received before
+configuration" -- so a delayed/filtered logcat read can miss it entirely):
+
+- The exact same error as before persists: `Google Maps Android API: Error
+  requesting API token. StatusCode=INVALID_ARGUMENT`, followed by
+  `Google Android Maps SDK: Authorization failure`, printing the same
+  package/SHA-1 pair as last time.
+- **Correction to a wrong assumption from the prior session**:
+  `MapView`'s `onMapReady` callback firing does **not** mean the key is
+  authorized -- it fired in several tests this session (proving the local
+  native map object bootstraps regardless), while the authorization
+  failure still occurred moments later and tiles never rendered. Confirmed
+  by pixel-analyzing screenshots of the map area after forcing the camera
+  to a real city (Hyderabad) via a temporary `animateToRegion` call: only
+  15 unique pixel values across the entire map surface, all near-black,
+  consistent with zero tile content ever loading -- not with a legitimately
+  dark-styled map. `onMapReady` is not a substitute for checking logcat
+  for the authorization error.
+- SHA-1 re-verified independently via `./gradlew :app:signingReport`
+  (not just trusted from the earlier logcat capture):
+  `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`, keystore
+  `mobile/android/app/debug.keystore` / alias `androiddebugkey`, identical
+  across the `debug`, `release`, and `debugOptimized` variants (confirms
+  one Console fix covers tonight's debug build and the standalone release
+  APK).
+- Waited 3 additional minutes mid-session and retested in case of Google
+  Cloud propagation delay -- same result. Propagation delay remains
+  possible beyond that window; this does not rule it out, only rules out a
+  same-minute fix.
+- **This is a Google Cloud Console configuration issue, not a code defect
+  or a Ridezz bug.** No source change was made or needed; `RiderMap.tsx`,
+  the manifest, and `build.gradle` are unchanged from the last commit. The
+  needed configuration (unchanged from before): "Maps SDK for Android"
+  enabled on the project owning this key, an Android application
+  restriction (if the key uses one) listing package `com.ridezz.mobile` +
+  the SHA-1 above, and billing active on that project. Re-run
+  `./gradlew installDebug` (or just reopen the Map tab -- no rebuild is
+  needed for a Console-side fix to take effect) and check `adb logcat` for
+  the same "Authorization failure" text to verify once changed.
 
 **Tests** (`mobile/__tests__/riderLocation.test.ts`, 23 cases, pure
 functions only): payload encode/decode round-trip, malformed JSON,
@@ -500,14 +542,16 @@ disappears) on Leave Ride.
 
 ## Not done yet (known gaps)
 
-- **Google Maps API key not authorized.** The key currently in
-  `local.properties` is rejected by Google (`INVALID_ARGUMENT`) — needs
-  "Maps SDK for Android" enabled, billing confirmed, and package
-  `com.ridezz.mobile` + SHA-1
-  `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25` authorized
-  for it in Google Cloud Console, before map tiles/markers/"Fit Group"/
-  "Center Me" can be visually verified on any device or build signed with
-  this same (debug) keystore.
+- **Google Maps API key still not authorized** — re-confirmed this session
+  (see "Google Maps authorization" above) with a real key in place: still
+  rejected by Google (`INVALID_ARGUMENT` / `Authorization failure`), same
+  root cause as before. Needs "Maps SDK for Android" enabled, billing
+  confirmed, and package `com.ridezz.mobile` + SHA-1
+  `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
+  (independently re-verified via `signingReport`) authorized in Google
+  Cloud Console, before map tiles/markers/"Fit Group"/"Center Me" can be
+  visually verified on any device or build signed with this same (debug)
+  keystore. No code change can fix this from the app side.
 - **Location/map cross-device behavior untested** — a peer's marker
   appearing/moving, staleness after locking, and recovery after a network
   drop all need a second physical device, and are additionally blocked on
@@ -563,5 +607,7 @@ Google Maps API key to verify visually (see known gaps above).
 
 ## Next milestone
 
-Run Ridezz on the real motorcycle group ride and record field-test results
-before adding further features.
+Run the two-phone endurance test and freeze the standalone APK for
+tomorrow morning's road test. Google Maps authorization is still
+unresolved (Console-side, see above) — the ride/intercom/location features
+this depends on are otherwise unaffected and ready.
