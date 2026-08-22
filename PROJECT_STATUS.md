@@ -613,6 +613,119 @@ disappears) on Leave Ride.
   (`C:\Program Files\Java\jdk-23`), no JDK 17/21 present. Build-verified
   working with this project's Gradle 9.4.1 / AGP setup.
 
+## Road-test build freeze session
+
+Single-device session (no second phone was available this session --
+every cross-device item below is explicitly marked as such, not claimed).
+Standalone release APK, no code changes were made (no P0/P1 defects
+found), so the frozen build is exactly what was already at the last
+pushed commit.
+
+**Core regression (single device)**: Join Ride connects and publishes mic
+(real "Speaking" indicator observed, not just UI), Mute/Unmute toggles
+real publication state, Map tab opens without crashing (still blank --
+Google Maps authorization remains blocked, see below, not attempted again
+this session per instruction), foreground service runs with the correct
+`microphone|location` type throughout, Leave Ride disconnects cleanly and
+stops the service. **Cross-device items (two riders hearing each other,
+cross-device presence/mute indicators, join/leave toasts from a peer) were
+NOT tested -- no second phone available.**
+
+**Locked-screen test**: screen locked (`mWakefulness=Dozing`, confirmed via
+`dumpsys power`) for 15 continuous minutes. Foreground service remained
+`isForeground=true` throughout. One real event: a signal-level reconnect
+(`connected -> signalReconnecting -> connected`) at the ~15-minute mark,
+self-healed in 3 seconds with no manual interaction -- LiveKit's own
+resilience handled it correctly; this is not counted as a failure. Device
+apparently has no lock-screen PIN/pattern configured, so it woke to an
+unlocked state on its own shortly before the window closed (confirmed via
+`isKeyguardShowing=false`) -- for Android's process-lifecycle purposes
+(what actually matters for background survival) the operative state
+throughout was screen-off/Doze, which is what was actually exercised.
+**Two-phones-both-locked was not tested** -- only one device available.
+
+**Endurance**: total continuous room session of ~38 minutes (20:28-21:06),
+covering the lock test above plus the network-interruption tests, a mute/
+unmute cycle, a Keep Screen Awake toggle cycle, a tab switch to Map, and
+the music-coexistence check below. Zero crashes, zero stuck mute state, no
+duplicate cues (diagnostics confirmed each connection-lost/restored pair
+correctly matched, none orphaned), foreground notification present
+throughout, UI never desynced from actual connection state.
+
+**Network interruption (single device)**: both WiFi and mobile data
+disabled together (to force a genuine total connectivity gap, since WiFi
+was otherwise primary and mobile-data-only alone wouldn't have interrupted
+anything) for ~15s, then restored -- reconnected automatically via signal
+resume in ~26s total, no room-code re-entry, mute state preserved. Repeated
+with a ~25s gap -- this time triggered LiveKit's fuller reconnect flow
+(`signalReconnecting -> reconnecting -> connected`), also fully automatic,
+also preserved mute state, completed within ~15s of connectivity
+returning. **Cross-device observation of a peer's participant list during
+an outage was not tested** -- no second phone.
+
+**Bluetooth**: **not tested** -- no Bluetooth audio accessory was paired
+to the test device this session (`dumpsys bluetooth_manager` confirmed no
+bonded headset), and pairing physical earbuds isn't something achievable
+remotely. Needs a real device with earbuds already paired before tomorrow
+if this matters for the ride.
+
+**Call interruption**: **not tested** -- simulating a real incoming
+cellular call safely requires a second phone or a human dialing in;
+neither was available. Recorded as a real observational gap for the
+actual road test tomorrow, not something faked here.
+
+**Music coexistence (Spotify)**: played a podcast episode in Spotify, then
+switched to Ridezz (still Connected, no crash). Spotify's own media
+session immediately showed `state=PAUSED` (position frozen at ~1.3s in) --
+Ridezz's communication-mode audio session takes over rather than ducking
+or coexisting, consistent with `AudioType.CommunicationAudioType()`
+behaving like a call for audio-focus purposes. Leaving the ride did **not**
+auto-resume Spotify -- it stayed paused, ready for the user to resume
+manually, which is normal Android behavior (no app auto-resumes another
+app's media) and not a bug. No ducking logic was added -- this is an
+observation for future work, per instruction.
+
+**Diagnostics review**: reviewed on-device after the session -- every
+event (room join, location start, all three connection-lost/restored
+pairs) present, correctly timestamped, none duplicated or orphaned. No
+tokens, API keys, precise GPS coordinates, or audio content present in any
+entry, consistent with the log's design.
+
+**Battery/heat**: battery read 25% at session start, 26% at end (~38
+minutes) -- but the device was connected to power (charging icon visible
+throughout), so this is **not a representative unplugged battery-drain
+measurement**. Reported temperature via `dumpsys battery` was 36.2°C at
+the end of the session, consistent with normal operation (no thermal
+warning surfaced). A genuine on-bike, unplugged battery/heat reading still
+needs to happen during the actual ride tomorrow.
+
+### ROAD TEST BUILD
+
+- Git commit: `34e95f9`
+- APK path: `mobile/android/app/build/outputs/apk/release/app-release.apk`
+- APK SHA-256: `566ec87749aaed2a0e003f447df8121326a0f2e53c5fca59a49b95118d712c90`
+- APK size: 108,155,600 bytes (~103 MB)
+- Build type: release (JS bundle + assets embedded, no Metro/dev-server
+  dependency at runtime -- confirmed via a fresh install with Metro fully
+  stopped and `adb reverse` removed)
+- Signing: debug keystore (`mobile/android/app/debug.keystore`, alias
+  `androiddebugkey`) -- **test-only signing, not a production setup**
+- Date: 2026-08-22
+- Two-phone regression: not performed (single device only)
+- Both-locked result: not performed (single device); single-device locked
+  survival passed 15 continuous minutes
+- Endurance duration: ~38 minutes, zero crashes/stuck-states
+- Known issues:
+  - Google Maps authorization still blocked (Google Cloud Console
+    configuration issue, external to the app -- see "Google Maps
+    authorization" above); Map tab opens without crashing but stays blank
+  - No second physical device this session -- all genuinely cross-device
+    behavior (peer audio, peer presence/cues, both-locked simultaneously,
+    Bluetooth, call interruption) remains unverified in practice and needs
+    real two-phone testing before/during tomorrow's ride
+  - Battery/heat reading was taken while charging, not representative of
+    real unplugged drain
+
 ## Verification status
 
 `tsc --noEmit`, `eslint .`, and `jest` (59 tests, all passing) all pass.
@@ -635,7 +748,9 @@ Google Maps API key to verify visually (see known gaps above).
 
 ## Next milestone
 
-Freeze map work and run the two-phone endurance test for tomorrow
-morning. Google Maps authorization is still unresolved after two key
+Get a second physical device and run the real two-phone endurance test
+(audio, both-locked, Bluetooth, network interruption cross-device) before
+or during tomorrow's road test -- everything single-device-testable has
+passed. Google Maps authorization is still unresolved after two key
 attempts (Console-side, see above) — the ride/intercom/location features
 this depends on are otherwise unaffected and ready.
