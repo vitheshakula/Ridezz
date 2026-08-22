@@ -31,3 +31,15 @@ export function useLocalParticipant() {
 export function useRemoteParticipants() {
   return [];
 }
+
+export function useRoomContext() {
+  return { numParticipants: 1, disconnect: jest.fn(async () => {}) };
+}
+
+export function useIsSpeaking() {
+  return false;
+}
+
+export function useIsMuted() {
+  return false;
+}

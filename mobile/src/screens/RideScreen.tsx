@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AudioSession,
@@ -7,11 +7,16 @@ import {
   useConnectionState,
   useLocalParticipant,
   useRemoteParticipants,
+  useRoomContext,
 } from '@livekit/react-native';
 import { ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import type { RideSession } from './JoinScreen';
 import MuteButton from '../components/MuteButton';
+import RiderRow from '../components/RiderRow';
+import PresenceToast from '../components/PresenceToast';
 import { startIntercomService, stopIntercomService } from '../services/intercomService';
+import { useRiderPresenceToasts } from '../hooks/useRiderPresenceToasts';
+import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderPresence';
 
 interface RideScreenProps {
   session: RideSession;
@@ -41,7 +46,8 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
   // priority so a locked screen doesn't freeze/kill the room, and (b) the native audio engine
   // that routes call audio through whatever the phone is currently using (speaker/wired/
   // Bluetooth). Runs while the Activity is still visible, as part of the user's Join Ride tap --
-  // never started after the app has already gone into the background.
+  // never started after the app has already gone into the background. Untouched by the rider
+  // presence work below: it doesn't depend on participant count or state.
   //
   // A failed intercom-service start doesn't block the ride -- foreground audio still works,
   // it just won't survive a locked screen -- but it's surfaced rather than swallowed.
@@ -70,7 +76,8 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
     <LiveKitRoom
       serverUrl={session.serverUrl}
       token={session.token}
-      audio
+      // Mic publish is held off until the capacity check in RideRoom passes -- see there.
+      audio={false}
       video={false}
       connect
       onError={(e) => setConnectError(e.message)}
@@ -100,8 +107,49 @@ interface RideRoomProps {
 function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoomProps) {
   const insets = useSafeAreaInsets();
   const connectionState = useConnectionState();
+  const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+
+  const [capacityError, setCapacityError] = useState<string | null>(null);
+  const hasCheckedCapacityRef = useRef(false);
+
+  // Ridezz's MVP cap is 10 riders per room. The Development Token Server has no way to set
+  // server-side room capacity, so this is a client-side check made the moment we connect: if
+  // we'd be the 11th participant, disconnect immediately with a clear reason rather than
+  // silently publishing audio into an over-capacity room. This can't close every race (two
+  // riders joining in the same instant could both slip through) -- production-grade
+  // authoritative enforcement moves to the future Ridezz token backend, which can refuse to
+  // mint a token at all once a room is full. Only after this check passes do we publish the
+  // microphone, which is why <LiveKitRoom> above is given audio={false}.
+  useEffect(() => {
+    if (connectionState !== ConnectionState.Connected || hasCheckedCapacityRef.current) {
+      return;
+    }
+    hasCheckedCapacityRef.current = true;
+
+    if (isRoomOverCapacity(room.numParticipants, MAX_RIDERS)) {
+      setCapacityError(`This ride is full (${MAX_RIDERS}/${MAX_RIDERS} riders). Try again later.`);
+      room.disconnect();
+      const timer = setTimeout(onLeave, 2500);
+      return () => clearTimeout(timer);
+    }
+
+    localParticipant.setMicrophoneEnabled(true).catch(() => {
+      // Surfaced via onMediaDeviceFailure already.
+    });
+  }, [connectionState, room, localParticipant, onLeave]);
+
+  const sortedRemoteParticipants = useMemo(
+    () => sortByJoinOrder(remoteParticipants),
+    [remoteParticipants],
+  );
+
+  const riderIdentities = useMemo(
+    () => sortedRemoteParticipants.map(p => ({ identity: p.identity, name: p.name || p.identity })),
+    [sortedRemoteParticipants],
+  );
+  const presenceToast = useRiderPresenceToasts(riderIdentities);
 
   const statusLabel = connectError
     ? 'Error'
@@ -114,6 +162,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }, [localParticipant, isMicrophoneEnabled]);
 
   const riderCount = remoteParticipants.length + 1;
+  const displayedError = capacityError ?? connectError;
 
   return (
     <View
@@ -122,27 +171,27 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
       ]}
     >
+      {presenceToast ? <PresenceToast message={presenceToast} /> : null}
+
       <Text style={styles.title}>RIDEZZ</Text>
       <Text style={styles.roomLabel}>Room: {session.roomCode.toUpperCase()}</Text>
 
-      <Text style={[styles.status, connectError && styles.statusError]}>
-        {connectError ? `Error: ${connectError}` : statusLabel}
+      <Text style={[styles.status, displayedError && styles.statusError]}>
+        {displayedError ? `Error: ${displayedError}` : statusLabel}
       </Text>
       <Text style={styles.riderCount}>
-        {riderCount} {riderCount === 1 ? 'rider' : 'riders'}
+        {riderCount} / {MAX_RIDERS} riders
       </Text>
       {backgroundWarning ? (
         <Text style={styles.backgroundWarning}>{backgroundWarning}</Text>
       ) : null}
 
-      <View style={styles.riderList}>
-        <Text style={styles.riderName}>{session.riderName} (you)</Text>
-        {remoteParticipants.map(p => (
-          <Text key={p.sid} style={styles.riderName}>
-            {p.name || p.identity}
-          </Text>
+      <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
+        <RiderRow participant={localParticipant} isLocal />
+        {sortedRemoteParticipants.map(p => (
+          <RiderRow key={p.identity} participant={p} isLocal={false} />
         ))}
-      </View>
+      </ScrollView>
 
       <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
@@ -195,17 +244,14 @@ const styles = StyleSheet.create({
     marginTop: 12,
   },
   riderList: {
-    marginTop: 24,
-    marginBottom: 24,
-    alignItems: 'center',
+    marginTop: 20,
+    maxHeight: 260,
   },
-  riderName: {
-    fontSize: 18,
-    color: '#ffffff',
+  riderListContent: {
     paddingVertical: 4,
   },
   leaveButton: {
-    marginTop: 32,
+    marginTop: 24,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#f85149',

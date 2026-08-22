@@ -206,15 +206,97 @@ the unfiltered dump, the actual notification shade, and `ps`/`dumpsys
 power`/`dumpsys window`). Trust the unfiltered/visual checks over the
 filtered ones on ColorOS.
 
+### 10-rider readiness and presence
+
+**Room capacity (target: 10)**: enforced client-side, in
+`mobile/src/utils/riderPresence.ts` (`isRoomOverCapacity`) and wired into
+`RideScreen.tsx`. The Development Token Server has no field for
+server-side room capacity (checked `TokenSourceFetchOptions` — no
+`maxParticipants`-equivalent), so `<LiveKitRoom>` is now given `audio={false}`
+and the mic is only published *after* connecting, once we check the
+server-reported `room.numParticipants`: if we'd be the 11th rider, we
+disconnect immediately with a visible "This ride is full (10/10 riders)"
+message and return to the Join screen, without ever publishing audio into
+an over-capacity room. This is an explicitly accepted best-effort check,
+not a hard guarantee — two riders joining in the same instant could both
+slip through. **Authoritative enforcement moves to the future Ridezz token
+backend**, which can refuse to mint an 11th token for a full room instead
+of catching it after the fact.
+
+**Rider presence model**: the top-level Connected/Reconnecting/
+Disconnected/Error state continues to describe only the local rider's own
+LiveKit connection (unchanged). Each rider row now shows real, non-fabricated
+per-participant state from LiveKit's own SDK:
+- **Speaking** — `useIsSpeaking(participant)` (real SDK speaking detection,
+  no custom VAD).
+- **Muted** — `useIsMuted({ participant, source: Track.Source.Microphone })`
+  (real publication mute state).
+- **Connection quality** — LiveKit's own `ConnectionQuality` enum
+  (`Excellent`/`Good`/`Poor`/`Lost`/`Unknown`) via a small direct
+  subscription to `ParticipantEvent.ConnectionQualityChanged`
+  (`useParticipantConnectionQuality`), since components-react doesn't
+  publicly export a bare per-participant quality hook. `Poor` → "Poor
+  connection", `Lost` → "Connection lost"; Excellent/Good/Unknown show
+  nothing (quiet by default). Explicitly does **not** fabricate a
+  "Reconnecting" state for remote riders — LiveKit doesn't expose enough
+  to distinguish that from the outside, so a remote rider's real dropout
+  is only ever reported once `ParticipantDisconnected` actually fires
+  ("X left the ride"), and returning under the *same* LiveKit identity
+  is reported as "X rejoined" (tracked via a locally-remembered
+  seen-identities set — real identity continuity, not guessed).
+- List ordering is deterministic: local rider first, then remote riders by
+  real server-assigned `participant.joinedAt`, not alphabetical, so the
+  list doesn't reshuffle on every render.
+- Join/leave/rejoin produce a lightweight, non-blocking, auto-dismissing
+  banner (`PresenceToast`) — never a modal. Riders already in the room
+  when you join aren't announced.
+
+**Performance**: audited against the task's checklist — `<LiveKitRoom>`
+still creates its `Room` once per mount (unchanged, verified in
+`useLiveKitRoom`'s source, no new inline `options` object was introduced
+to break that memoization); each `RiderRow` subscribes only to its own
+participant's events (no cross-listening); remote audio continues to play
+automatically through the existing WebRTC/AudioSession engine with zero
+per-participant audio components added; `useIsSpeaking`/quality updates
+are boolean/enum state, not raw high-frequency audio-level floats.
+
+**Tests** (`mobile/__tests__/riderPresence.test.ts`, 23 cases, all pure
+functions — no LiveKit simulator): capacity at 1/2/10/11 riders, join
+ordering (including a full 10-rider list), presence diffing (join, leave,
+rejoin, no-op, partial 1→2, and filling 0→10), connection-quality label
+mapping, and the muted/speaking/quality status-label priority rule.
+
+**Physical verification**: only one physical device was available this
+session (same as the background-service task). Directly confirmed on that
+device: capacity check doesn't false-positive for a normal 1-rider join
+("1 / 10 riders"), the local rider's own row shows "You" and correctly
+reflects live Muted state on mute/unmute, and the background-service
+regression check passed (service still starts on join, still stops
+cleanly on Leave Ride with these changes in place). **Not directly
+observed**: a second rider's row as seen by a peer (name, Speaking,
+Muted, connection-quality label), cross-device join/leave/rejoin toasts,
+and 10 simultaneous riders — these are architecturally implemented and
+unit-tested but need a second (and ideally several more) physical
+device(s) to confirm cross-device.
+
 ## Not done yet (known gaps)
 
 - **Both-phones-locked simultaneously untested** — needs a second device.
+- **Cross-device rider presence untested** — remote Speaking/Muted/quality
+  indicators and join/leave/rejoin toasts, and true 10-simultaneous-rider
+  load, all need multiple physical devices to verify beyond unit tests.
+- **10-rider capacity enforcement is best-effort, not authoritative** —
+  a race between two riders joining at the same instant could both get
+  in; the future token backend is needed to close this properly.
 - **No `server/` implementation.** Token issuance backend is not built;
   the app still uses LiveKit's Development Token Server directly.
 - No reconnection UI beyond surfacing the SDK's own connection state; no
   retry/backoff logic has been added on top of it.
 - No mute/leave controls on the ongoing notification (deliberately out of
-  scope for this task).
+  scope).
+- No dev-only mocked-rider-row rendering mode was built (the task marked
+  this optional; skipped to avoid any risk of fake data leaking into a
+  real build for a first pass).
 - iOS not set up/tested (Android-first per product direction).
 - JDK note: system default `java` resolves to JDK 23
   (`C:\Program Files\Java\jdk-23`), no JDK 17/21 present. Build-verified
@@ -222,16 +304,16 @@ filtered ones on ColorOS.
 
 ## Verification status
 
-`tsc --noEmit`, `eslint .`, and `jest` all pass. `./gradlew assembleDebug`
-builds successfully, including the new native foreground-service module.
-Metro bundling (dev and production) resolves the full dependency graph
-without errors. Verified on a real Android phone: launches without
-crashing, joins a real LiveKit Cloud room, publishes/unpublishes the
-microphone, survives 1 and 5 minutes locked with no reconnect, survives a
-brief network interruption while locked, and leaves cleanly (service
-stopped, notification removed).
+`tsc --noEmit`, `eslint .`, and `jest` (23 tests, all passing) all pass.
+`./gradlew assembleDebug` builds successfully. Metro bundling (dev and
+production) resolves the full dependency graph without errors. Verified on
+a real Android phone: launches without crashing, joins a real LiveKit
+Cloud room, publishes/unpublishes the microphone, survives 1 and 5 minutes
+locked with no reconnect, survives a brief network interruption while
+locked, leaves cleanly, and — for this task — correctly shows rider
+capacity/presence UI and preserves the background-service lifecycle.
 
 ## Next milestone
 
-Prepare Ridezz for 10-rider rooms and improve per-rider connection/
-presence state.
+Add live rider location sharing and a simple group map for mounted-phone
+users.
