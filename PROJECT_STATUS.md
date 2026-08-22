@@ -120,27 +120,101 @@ and screenshots, in order:
    `abandonAudioFocus()`, `connection state changed: connected ->
    disconnected`; app returned cleanly to the Join screen.
 
-No errors, warnings, or crashes at any step. This is single-device
-verification only (mic publish + connect + clean teardown) — **two-phone
-simultaneous audio has not been tested yet.**
+No errors, warnings, or crashes at any step.
+
+### Two-phone verification
+
+Two physical Android phones joining the same room over separate
+mobile-data networks: full-duplex audio, Bluetooth/wired/phone audio
+routes, mute/unmute, leave/rejoin, and automatic recovery from temporary
+network loss all confirmed working. The one gap identified there —
+**locking the screen disconnected the rider; unlocking let it recover** —
+is what this section's foreground-service work fixes.
+
+### Android background/lock-screen survival
+
+**Root cause**: nothing in our own code or in `@livekit/react-native`
+tears anything down on backgrounding (no `AppState` listener exists
+anywhere in that SDK). The disconnect was Android's own process lifecycle
+management: with no foreground service, a backgrounded/locked app has no
+claim to stay at foreground priority, so the OS (and on this device's
+OEM skin — Realme/ColorOS — especially aggressively) suspends or kills it,
+taking the WebRTC/LiveKit connection down with it. Confirmed directly:
+ColorOS's own `OplusHansManager` logs `cannot transition from D to F,
+importance=audioFocus` once the fix is in place — i.e. the OS *is* trying
+to freeze the app on lock, and is specifically blocked from doing so by
+the foreground service holding audio focus.
+
+**Implementation** (`mobile/android/app/src/main/java/com/ridezz/mobile/`):
+- `RidezzIntercomService.kt` — a foreground `Service` with no LiveKit/WebRTC
+  logic of its own; its only job is to hold the existing process at
+  foreground priority via an ongoing notification. The already-working
+  `<LiveKitRoom>` / `AudioSession` JS session is untouched and keeps running
+  in the same process.
+- `RidezzIntercomModule.kt` + `RidezzIntercomPackage.kt` — a small RN
+  native module exposing `startIntercomService()` / `stopIntercomService()`
+  as promise-based JS calls; native start/stop failures reject the promise
+  rather than being swallowed.
+- Manifest: `foregroundServiceType="microphone"` on the service, plus
+  `FOREGROUND_SERVICE`, `FOREGROUND_SERVICE_MICROPHONE`, and
+  `POST_NOTIFICATIONS` permissions. `microphone` was chosen deliberately
+  (not `mediaPlayback`) because the app's defining backgrounded behavior is
+  continuous mic capture via WebRTC, not literal media playback — declaring
+  a type that doesn't match actual behavior is also a Play Store policy
+  risk. `startForeground()` passes `FOREGROUND_SERVICE_TYPE_MICROPHONE`
+  explicitly on API 29+ (targetSdk is 36 / Android 16, so the strict
+  Android 14+ FGS-type enforcement applies).
+- `RideScreen.tsx` starts the service (and `POST_NOTIFICATIONS` is
+  requested, best-effort, in `JoinScreen.tsx`) in the same mount effect
+  that already starts `AudioSession` — i.e. while the Activity is visible,
+  as part of the user's own Join Ride tap, never after backgrounding.
+  Stopped in the matching cleanup on Leave Ride. A failed service start
+  doesn't block the ride (foreground audio still works) — it's surfaced as
+  a visible warning instead ("Won't survive a locked screen: ...").
+  `stopForeground(STOP_FOREGROUND_REMOVE)` is called explicitly in
+  `onDestroy()` so the ongoing notification doesn't linger after Leave Ride.
+- Notification: "Ridezz" / "Intercom active", `IMPORTANCE_LOW` channel (no
+  sound, no badge, no heads-up), ongoing/non-dismissable while active, tap
+  reopens the app, removed on Leave Ride. No controls on it yet.
+- Screen is never forced awake — riders can lock normally, matching the
+  product requirement.
+
+**Physical verification** (single device, RMX3853/Realme, screen genuinely
+confirmed locked via `dumpsys power`/`dumpsys window` at each step, not
+just assumed):
+- **1 minute locked**: passed (ran to 3+ minutes) — after unlocking, UI
+  still showed Connected, 1 rider, mute state preserved, **no reconnect**.
+- **5 minutes locked**: passed — `dumpsys` showed the service running
+  continuously the entire time (no restart, no gap) and the screen
+  genuinely locked (`isKeyguardShowing=true`) for the full duration.
+- **Both phones locked simultaneously**: **not tested** — only one
+  physical device was available this session. Needs a second device.
+- **Network interruption while locked**: passed — toggled Wi-Fi off/on
+  (15s) while the phone stayed locked; the room remained Connected
+  afterward with no full reconnect cycle. One non-fatal artifact: a
+  dev-build-only "Uncaught (in promise)" LogBox warning appeared, tracing
+  to an internal WebSocket `error` Event surfacing from
+  `livekit-client`/`react-native-webrtc`'s own reconnection handling
+  during the network transition — not something in our code, doesn't
+  reproduce in release builds (LogBox is dev-only), and didn't affect the
+  ride. Worth watching, not a blocker.
+
+**OEM-specific note**: on this device, `dumpsys activity services
+<package>` and `dumpsys notification` both occasionally returned stale/
+empty results that contradicted ground truth (confirmed by cross-checking
+the unfiltered dump, the actual notification shade, and `ps`/`dumpsys
+power`/`dumpsys window`). Trust the unfiltered/visual checks over the
+filtered ones on ColorOS.
 
 ## Not done yet (known gaps)
 
-- **Two-phone physical testing has not happened yet.** Single-device join
-  (connect, publish, mute, leave) is verified working end-to-end. Two
-  phones talking to each other simultaneously, on separate networks, is
-  still untested.
-- **No Android foreground service for background audio — known
-  limitation, deliberately deferred.** The app currently only keeps
-  publishing/receiving audio while in the foreground. Locking the screen or
-  backgrounding the app on Android will very likely suspend the mic/audio
-  session (Android reclaims audio resources from backgrounded apps without
-  a foreground service, and Android 14+ specifically requires a
-  `microphone`-typed foreground service for this).
+- **Both-phones-locked simultaneously untested** — needs a second device.
 - **No `server/` implementation.** Token issuance backend is not built;
   the app still uses LiveKit's Development Token Server directly.
 - No reconnection UI beyond surfacing the SDK's own connection state; no
   retry/backoff logic has been added on top of it.
+- No mute/leave controls on the ongoing notification (deliberately out of
+  scope for this task).
 - iOS not set up/tested (Android-first per product direction).
 - JDK note: system default `java` resolves to JDK 23
   (`C:\Program Files\Java\jdk-23`), no JDK 17/21 present. Build-verified
@@ -149,15 +223,15 @@ simultaneous audio has not been tested yet.**
 ## Verification status
 
 `tsc --noEmit`, `eslint .`, and `jest` all pass. `./gradlew assembleDebug`
-builds successfully. Metro bundling (both dev and production) resolves the
-full dependency graph without errors. Beyond static checks, the app has now
-been verified working on a real Android phone: launches without crashing,
-joins a real LiveKit Cloud room, publishes/unpublishes the microphone, and
-leaves cleanly.
+builds successfully, including the new native foreground-service module.
+Metro bundling (dev and production) resolves the full dependency graph
+without errors. Verified on a real Android phone: launches without
+crashing, joins a real LiveKit Cloud room, publishes/unpublishes the
+microphone, survives 1 and 5 minutes locked with no reconnect, survives a
+brief network interruption while locked, and leaves cleanly (service
+stopped, notification removed).
 
 ## Next milestone
 
-Two-phone simultaneous test: two Android phones, on separate networks,
-join the same room, talk over each other, mute/unmute, leave/rejoin, then
-implement Android locked-screen/background intercom survival based on
-what's observed.
+Prepare Ridezz for 10-rider rooms and improve per-rider connection/
+presence state.

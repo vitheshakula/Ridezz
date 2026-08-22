@@ -11,6 +11,7 @@ import {
 import { ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import type { RideSession } from './JoinScreen';
 import MuteButton from '../components/MuteButton';
+import { startIntercomService, stopIntercomService } from '../services/intercomService';
 
 interface RideScreenProps {
   session: RideSession;
@@ -34,13 +35,34 @@ const MEDIA_DEVICE_FAILURE_LABELS: Record<MediaDeviceFailure, string> = {
 
 export default function RideScreen({ session, onLeave }: RideScreenProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
+  const [backgroundWarning, setBackgroundWarning] = useState<string | null>(null);
 
-  // Starts/stops the native audio engine that routes call audio through
-  // whatever the phone is currently using (speaker/wired/Bluetooth).
+  // Starts/stops (a) the Android foreground service that keeps this process at foreground
+  // priority so a locked screen doesn't freeze/kill the room, and (b) the native audio engine
+  // that routes call audio through whatever the phone is currently using (speaker/wired/
+  // Bluetooth). Runs while the Activity is still visible, as part of the user's Join Ride tap --
+  // never started after the app has already gone into the background.
+  //
+  // A failed intercom-service start doesn't block the ride -- foreground audio still works,
+  // it just won't survive a locked screen -- but it's surfaced rather than swallowed.
   useEffect(() => {
+    let cancelled = false;
+
+    startIntercomService().catch((e: Error) => {
+      if (!cancelled) {
+        setBackgroundWarning(
+          `Won't survive a locked screen: ${e.message}`,
+        );
+      }
+    });
     AudioSession.startAudioSession();
+
     return () => {
+      cancelled = true;
       AudioSession.stopAudioSession();
+      stopIntercomService().catch(() => {
+        // Nothing meaningful to do with a stop failure once we're already leaving.
+      });
     };
   }, []);
 
@@ -58,7 +80,12 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
         }
       }}
     >
-      <RideRoom session={session} connectError={connectError} onLeave={onLeave} />
+      <RideRoom
+        session={session}
+        connectError={connectError}
+        backgroundWarning={backgroundWarning}
+        onLeave={onLeave}
+      />
     </LiveKitRoom>
   );
 }
@@ -66,10 +93,11 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
 interface RideRoomProps {
   session: RideSession;
   connectError: string | null;
+  backgroundWarning: string | null;
   onLeave: () => void;
 }
 
-function RideRoom({ session, connectError, onLeave }: RideRoomProps) {
+function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoomProps) {
   const insets = useSafeAreaInsets();
   const connectionState = useConnectionState();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
@@ -103,6 +131,9 @@ function RideRoom({ session, connectError, onLeave }: RideRoomProps) {
       <Text style={styles.riderCount}>
         {riderCount} {riderCount === 1 ? 'rider' : 'riders'}
       </Text>
+      {backgroundWarning ? (
+        <Text style={styles.backgroundWarning}>{backgroundWarning}</Text>
+      ) : null}
 
       <View style={styles.riderList}>
         <Text style={styles.riderName}>{session.riderName} (you)</Text>
@@ -156,6 +187,12 @@ const styles = StyleSheet.create({
     color: '#9ca3af',
     textAlign: 'center',
     marginTop: 4,
+  },
+  backgroundWarning: {
+    fontSize: 13,
+    color: '#d29922',
+    textAlign: 'center',
+    marginTop: 12,
   },
   riderList: {
     marginTop: 24,

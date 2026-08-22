@@ -44,6 +44,27 @@ async function ensureMicrophonePermission(): Promise<boolean> {
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
+/** Best-effort only: without this the "Intercom active" notification just won't show on
+ * Android 13+, but the ride and background survival both still work regardless. */
+async function requestNotificationPermission(): Promise<void> {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+  try {
+    await PermissionsAndroid.request(
+      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
+      {
+        title: 'Show ride status',
+        message: 'Ridezz shows an ongoing notification while your intercom is active.',
+        buttonPositive: 'Allow',
+        buttonNegative: 'Deny',
+      },
+    );
+  } catch {
+    // Older Android versions don't have this permission at all -- ignore.
+  }
+}
+
 export default function JoinScreen({ onJoined }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const [riderName, setRiderName] = useState('');
@@ -72,6 +93,7 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
         setError('Microphone permission is required to join a ride.');
         return;
       }
+      await requestNotificationPermission();
       const details = await joinRoom(trimmedName, trimmedCode);
       onJoined({ ...details, riderName: trimmedName, roomCode: trimmedCode });
     } catch (e) {
