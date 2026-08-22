@@ -65,6 +65,22 @@ async function requestNotificationPermission(): Promise<void> {
   }
 }
 
+/** Best-effort and non-blocking: location sharing is a nice-to-have on top of
+ * the core voice intercom, never a requirement to join. A denial just leaves
+ * the Map tab showing this rider as not sharing location -- everything else
+ * about the ride works normally. */
+async function requestLocationPermission(): Promise<void> {
+  if (Platform.OS !== 'android') {
+    return;
+  }
+  await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
+    title: 'Share your location',
+    message: 'Ridezz can show mounted riders where everyone in the group is. Optional.',
+    buttonPositive: 'Allow',
+    buttonNegative: 'Deny',
+  });
+}
+
 export default function JoinScreen({ onJoined }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const [riderName, setRiderName] = useState('');
@@ -94,6 +110,7 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
         return;
       }
       await requestNotificationPermission();
+      await requestLocationPermission();
       const details = await joinRoom(trimmedName, trimmedCode);
       onJoined({ ...details, riderName: trimmedName, roomCode: trimmedCode });
     } catch (e) {

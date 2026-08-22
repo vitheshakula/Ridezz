@@ -13,12 +13,14 @@ import androidx.core.app.NotificationCompat
 
 /**
  * Keeps the Ridezz process at foreground priority for the duration of an active ride, so Android
- * doesn't freeze/kill it (and with it, the LiveKit room + WebRTC mic capture) when the Activity is
- * backgrounded or the screen locks.
+ * doesn't freeze/kill it (and with it, the LiveKit room + WebRTC mic capture, and GPS location
+ * updates) when the Activity is backgrounded or the screen locks.
  *
- * This service does not talk to LiveKit itself -- the existing `<LiveKitRoom>` / `AudioSession`
- * JS-side session is left untouched and keeps running in the same process. This service's only
- * job is to hold that process at foreground priority via the notification below.
+ * This service does not talk to LiveKit or GPS itself -- the existing `<LiveKitRoom>` /
+ * `AudioSession` / location-watching JS-side code is left untouched and keeps running in the
+ * same process. This service's only job is to hold that process at foreground priority via the
+ * notification below. foregroundServiceType covers both microphone and location so continued
+ * access to each is recognized as foreground, not background, use.
  *
  * Start/stop is driven entirely from JS (see RidezzIntercomModule), tied to the user's own
  * Join Ride / Leave Ride actions while the Activity is visible -- never started for the first
@@ -47,11 +49,17 @@ class RidezzIntercomService : Service() {
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
     val notification = buildNotification()
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+    // FOREGROUND_SERVICE_TYPE_LOCATION exists since API 29, but
+    // FOREGROUND_SERVICE_TYPE_MICROPHONE only since API 30 (checked against this project's
+    // installed platforms/*/data/api-versions.xml) -- gate on the higher of the two rather
+    // than passing a type constant the running OS might not recognize. Below API 30 we fall
+    // back to the manifest-declared foregroundServiceType (still honored from API 29 on;
+    // simply unsupported/ignored pre-29, which is correct since typed FGS didn't exist yet).
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
       startForeground(
         NOTIFICATION_ID,
         notification,
-        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE,
+        ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION,
       )
     } else {
       startForeground(NOTIFICATION_ID, notification)

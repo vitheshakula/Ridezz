@@ -14,14 +14,18 @@ import type { RideSession } from './JoinScreen';
 import MuteButton from '../components/MuteButton';
 import RiderRow from '../components/RiderRow';
 import PresenceToast from '../components/PresenceToast';
+import RiderMap from '../components/RiderMap';
 import { startIntercomService, stopIntercomService } from '../services/intercomService';
 import { useRiderPresenceToasts } from '../hooks/useRiderPresenceToasts';
+import { useRiderLocations } from '../hooks/useRiderLocations';
 import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderPresence';
 
 interface RideScreenProps {
   session: RideSession;
   onLeave: () => void;
 }
+
+type RideTab = 'intercom' | 'map';
 
 const CONNECTION_STATE_LABELS: Record<ConnectionState, string> = {
   [ConnectionState.Connecting]: 'Connecting',
@@ -47,7 +51,7 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
   // that routes call audio through whatever the phone is currently using (speaker/wired/
   // Bluetooth). Runs while the Activity is still visible, as part of the user's Join Ride tap --
   // never started after the app has already gone into the background. Untouched by the rider
-  // presence work below: it doesn't depend on participant count or state.
+  // presence/map work below: it doesn't depend on participant count, state, or location.
   //
   // A failed intercom-service start doesn't block the ride -- foreground audio still works,
   // it just won't survive a locked screen -- but it's surfaced rather than swallowed.
@@ -110,6 +114,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+  const [tab, setTab] = useState<RideTab>('intercom');
 
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const hasCheckedCapacityRef = useRef(false);
@@ -151,6 +156,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
   const presenceToast = useRiderPresenceToasts(riderIdentities);
 
+  // Publishes our GPS fixes over LiveKit's data channel and keeps the latest known
+  // location per rider (including ourselves). Location is a nice-to-have on top of the
+  // core voice room -- a denied permission or GPS failure never affects the intercom.
+  const { locations, locationPermissionGranted } = useRiderLocations(
+    room,
+    localParticipant.identity,
+    session.riderName,
+  );
+
   const statusLabel = connectError
     ? 'Error'
     : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
@@ -186,12 +200,43 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         <Text style={styles.backgroundWarning}>{backgroundWarning}</Text>
       ) : null}
 
-      <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
-        <RiderRow participant={localParticipant} isLocal />
-        {sortedRemoteParticipants.map(p => (
-          <RiderRow key={p.identity} participant={p} isLocal={false} />
-        ))}
-      </ScrollView>
+      <View style={styles.tabs}>
+        <Pressable
+          style={[styles.tabButton, tab === 'intercom' && styles.tabButtonActive]}
+          onPress={() => setTab('intercom')}
+        >
+          <Text style={[styles.tabButtonText, tab === 'intercom' && styles.tabButtonTextActive]}>
+            INTERCOM
+          </Text>
+        </Pressable>
+        <Pressable
+          style={[styles.tabButton, tab === 'map' && styles.tabButtonActive]}
+          onPress={() => setTab('map')}
+        >
+          <Text style={[styles.tabButtonText, tab === 'map' && styles.tabButtonTextActive]}>
+            MAP
+          </Text>
+        </Pressable>
+      </View>
+
+      {tab === 'intercom' ? (
+        <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
+          <RiderRow participant={localParticipant} isLocal />
+          {sortedRemoteParticipants.map(p => (
+            <RiderRow key={p.identity} participant={p} isLocal={false} />
+          ))}
+        </ScrollView>
+      ) : (
+        <View style={styles.mapContainer}>
+          {locationPermissionGranted === false ? (
+            <Text style={styles.locationWarning}>
+              Location sharing is off (permission denied). Your position won't appear on the
+              map, but the intercom still works normally.
+            </Text>
+          ) : null}
+          <RiderMap locations={locations} localIdentity={localParticipant.identity} />
+        </View>
+      )}
 
       <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
@@ -243,15 +288,52 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     marginTop: 12,
   },
+  tabs: {
+    flexDirection: 'row',
+    marginTop: 16,
+    backgroundColor: '#161b22',
+    borderRadius: 10,
+    padding: 4,
+  },
+  tabButton: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  tabButtonActive: {
+    backgroundColor: '#21262d',
+  },
+  tabButtonText: {
+    color: '#9ca3af',
+    fontSize: 13,
+    fontWeight: '700',
+    letterSpacing: 1,
+  },
+  tabButtonTextActive: {
+    color: '#ffffff',
+  },
   riderList: {
-    marginTop: 20,
-    maxHeight: 260,
+    flex: 1,
+    marginTop: 16,
   },
   riderListContent: {
     paddingVertical: 4,
   },
+  mapContainer: {
+    flex: 1,
+    marginTop: 16,
+    borderRadius: 12,
+    overflow: 'hidden',
+  },
+  locationWarning: {
+    fontSize: 13,
+    color: '#d29922',
+    padding: 12,
+    backgroundColor: '#161b22',
+  },
   leaveButton: {
-    marginTop: 24,
+    marginTop: 16,
     backgroundColor: '#21262d',
     borderWidth: 1,
     borderColor: '#f85149',

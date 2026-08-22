@@ -279,8 +279,141 @@ and 10 simultaneous riders — these are architecturally implemented and
 unit-tested but need a second (and ideally several more) physical
 device(s) to confirm cross-device.
 
+### Live rider location sharing and group map
+
+**Libraries chosen**: `react-native-maps@1.29.0` (Android renders via Google
+Maps — confirmed Fabric/New-Architecture compatible via its own
+`codegenConfig`) and `@react-native-community/geolocation@3.4.0` (a real
+TurboModule, confirmed via its `Spec extends TurboModule` typing). Both
+autolink cleanly; `react-native-maps` additionally pulls in
+`play-services-maps`/`play-services-location`/`play-services-base` as
+transitive Gradle deps.
+
+**Google Maps API key handling**: `react-native-maps` needs a
+`com.google.android.geo.API_KEY` manifest meta-data entry to render actual
+map tiles on Android. No key was invented or committed. Instead:
+`mobile/android/app/build.gradle` reads `MAPS_API_KEY` from
+`local.properties` (already gitignored) and exposes it as a Gradle
+`manifestPlaceholder`, consumed in `AndroidManifest.xml` as `${mapsApiKey}`.
+`mobile/android/local.properties.example` documents how to get a real key
+(Google Cloud Console → enable "Maps SDK for Android" → restrict to package
+`com.ridezz.mobile` + debug/release SHA-1). Without a key set, the app
+builds and runs fine — the map tab shows the native map surface with a
+"Google" watermark but no tiles, which is expected and does not affect the
+intercom.
+
+**Permissions / foreground service**: `ACCESS_FINE_LOCATION`,
+`ACCESS_COARSE_LOCATION`, and `FOREGROUND_SERVICE_LOCATION` added to
+`AndroidManifest.xml`. **No `ACCESS_BACKGROUND_LOCATION`** — while the
+screen is locked, GPS access happens through the same already-running
+`RidezzIntercomService` that keeps the mic alive, and Android treats
+location used by an active location-typed foreground service as foreground
+access. `RidezzIntercomService`'s `startForeground()` call now declares
+`FOREGROUND_SERVICE_TYPE_MICROPHONE or FOREGROUND_SERVICE_TYPE_LOCATION`
+(manifest `foregroundServiceType="microphone|location"`). While making this
+change, found and fixed a real pre-existing bug: the API-level gate for
+that `startForeground()` overload was `Build.VERSION_CODES.Q` (29), but
+`FOREGROUND_SERVICE_TYPE_MICROPHONE` actually requires API 30 (R) —
+confirmed directly against this project's installed
+`platforms/android-36/data/api-versions.xml` (`FOREGROUND_SERVICE_TYPE_LOCATION`
+is `since="29"`, `FOREGROUND_SERVICE_TYPE_MICROPHONE` is `since="30"`).
+Fixed the gate to `Build.VERSION_CODES.R`. Runtime location permission is
+requested in `JoinScreen.tsx`, best-effort and non-blocking (denial doesn't
+stop the ride — it just disables location/map for that rider, surfaced as
+a warning banner on the Map tab).
+
+**Update policy**: `distanceFilter: 15` meters, `interval: 4000` /
+`fastestInterval: 3000` ms, `enableHighAccuracy: false`. Deliberately not a
+maximum-precision, high-frequency GPS lock — motorcycles move in relatively
+continuous lines and riders care about "roughly where is everyone," not
+sub-second tracking, so this trades some freshness for meaningfully less
+battery/radio use. Documented in `useRiderLocations.ts`.
+
+**LiveKit data protocol**: dedicated topic `ridezz.location`, small
+versioned JSON payload `{v, lat, lng, accuracy, timestamp}`, sent via
+`publishData(..., { reliable: false, topic })` (lossy/unreliable — only the
+newest fix matters, no need to retransmit a stale one). Sender identity
+comes from the LiveKit `Participant` object attached to `RoomEvent.DataReceived`
+(`participant.identity` / `participant.name`), never from data inside the
+payload itself. `decodeLocationPayload()` in `mobile/src/utils/riderLocation.ts`
+validates every incoming packet — non-object, wrong version, out-of-range
+lat/lng, missing/absurd/future timestamp — and returns `null` (silently
+dropped) rather than throwing, so a malformed or hostile packet can never
+crash the app or corrupt state. On `ParticipantDisconnected`, a rider's last
+known position is kept and marked `connected: false` (never erased) so the
+UI can show "offline," not a fake live position. Freshness classification
+(`classifyFreshness`): Live &lt;10s, Stale 10–60s, Offline (disconnected or
+&gt;60s).
+
+**A real bug found and fixed this session**: the local rider's own location
+entry was initially keyed under an empty-string identity, because
+`localParticipant.identity` isn't populated by the LiveKit server until
+shortly after connect, and the original `useRiderLocations` effect closed
+over that value directly (re-subscribing the GPS watch when identity later
+changed wasn't reliable — and on a stationary phone, the OS's own location
+provider often won't deliver a *new* fix to justify the resubscription
+anyway, so the stale empty-keyed entry never got corrected). Fixed by
+reading identity/name through a `ref` updated on every render, so a single
+long-lived GPS watch always attributes fixes to whichever identity is
+*currently* known, without needing to tear down and restart the underlying
+OS-level location subscription. Verified via live device logs
+(`mobile/__tests__` doesn't cover this — it's a hook-level, not pure-function,
+concern) that a freshly-joined rider's own location now appears in state
+correctly keyed within seconds of connecting.
+
+**Map UI**: `RiderMap.tsx` — Intercom/Map segmented tabs in `RideScreen`,
+markers for local + remote riders (local rider in blue, others colored by
+freshness: green/live, amber/stale, grey/offline at reduced opacity), tap a
+marker for a minimal callout (name, online/offline, "Updated Ns ago",
+accuracy, and — for other riders — haversine distance phrased "X away",
+deliberately **not** "ahead/behind," since there's no real route/heading
+model to justify that). "Fit Group" and "Center Me" buttons are the only
+camera control; the map does not auto-fit or auto-follow continuously. A
+one-time initial camera placement fires when the local rider's first GPS
+fix arrives (since `MapView`'s `initialRegion` prop only applies once, at
+mount, before any fix exists yet).
+
+**Physical verification (single device, RMX3853)**: confirmed end-to-end via
+live `adb logcat` — permission granted, GPS/network location acquired,
+correctly keyed into a `RiderLocation` under the real LiveKit identity
+within seconds of joining, `locationPermissionGranted` state correct. GPS
+continued to register with the OS across the existing foreground service
+(no separate verification needed here beyond the prior 1/5-minute
+locked-screen tests, since this reuses that same already-verified
+mechanism). **Not visually confirmed**: whether a marker actually renders
+on top of the map surface. With `MAPS_API_KEY` unset (no real key
+available this session), `MapView`'s `onMapReady` callback never fires —
+confirmed directly by instrumenting it — meaning the underlying native
+Google Maps object never finishes initializing without a valid,
+billing-enabled key. This is standard Google Maps SDK behavior (the
+watermark logo is a static asset shown regardless of key validity; actual
+map/marker/camera functionality is not), not a defect in Ridezz's code.
+**A real Google Maps API key is required to visually verify markers, "Fit
+Group," and "Center Me" on this or any device.** Two-phone tests (seeing a
+peer's marker move, staleness after locking, recovery after a network
+drop) were **not performed** — only one physical device was available this
+session, same limitation as prior tasks.
+
+**Tests** (`mobile/__tests__/riderLocation.test.ts`, 23 cases, pure
+functions only): payload encode/decode round-trip, malformed JSON,
+unsupported version, out-of-range/missing/future-timestamp rejection,
+optional accuracy, upsert/replace/disconnect semantics, a 10-rider state,
+live/stale/offline classification (including disconnected overriding a
+fresh timestamp), haversine distance, and distance formatting. No
+dev-only mocked-rider-row rendering mode was built (the task marked this
+optional).
+
 ## Not done yet (known gaps)
 
+- **No Google Maps API key configured.** `mobile/android/local.properties`
+  needs a `MAPS_API_KEY` entry (see
+  `mobile/android/local.properties.example`) before map tiles, markers, or
+  the "Fit Group"/"Center Me" camera controls can be visually verified —
+  confirmed this session that `MapView`'s `onMapReady` never fires without
+  one, so the native map object doesn't finish initializing at all.
+- **Location/map cross-device behavior untested** — a peer's marker
+  appearing/moving, staleness after locking, and recovery after a network
+  drop all need a second physical device.
 - **Both-phones-locked simultaneously untested** — needs a second device.
 - **Cross-device rider presence untested** — remote Speaking/Muted/quality
   indicators and join/leave/rejoin toasts, and true 10-simultaneous-rider
@@ -304,16 +437,20 @@ device(s) to confirm cross-device.
 
 ## Verification status
 
-`tsc --noEmit`, `eslint .`, and `jest` (23 tests, all passing) all pass.
+`tsc --noEmit`, `eslint .`, and `jest` (47 tests, all passing) all pass.
 `./gradlew assembleDebug` builds successfully. Metro bundling (dev and
 production) resolves the full dependency graph without errors. Verified on
 a real Android phone: launches without crashing, joins a real LiveKit
 Cloud room, publishes/unpublishes the microphone, survives 1 and 5 minutes
 locked with no reconnect, survives a brief network interruption while
-locked, leaves cleanly, and — for this task — correctly shows rider
-capacity/presence UI and preserves the background-service lifecycle.
+locked, leaves cleanly, correctly shows rider capacity/presence UI and
+preserves the background-service lifecycle, and — for this task — acquires
+GPS location, correctly attributes it to the local rider's real LiveKit
+identity, and classifies freshness/staleness correctly. Map tile/marker
+rendering itself needs a real Google Maps API key to verify visually (see
+known gaps above).
 
 ## Next milestone
 
-Add live rider location sharing and a simple group map for mounted-phone
-users.
+Add audible rider join/leave/reconnect cues and prepare a polished Ridezz
+build for tomorrow's road test.
