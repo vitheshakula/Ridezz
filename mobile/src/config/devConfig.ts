@@ -8,7 +8,9 @@
  * `services/livekit.ts`. This flow is temporary and will be replaced by `server/`'s own token
  * endpoint before production.
  *
- * Fill in the real value below before joining a room will work.
+ * This is the Sandbox ID itself (e.g. "ridezz-jpbfuv"), not the sandbox URL
+ * shown in the dashboard (https://ridezz-jpbfuv.sandbox.livekit.io) -- the
+ * ID is sent as the X-Sandbox-ID header to LiveKit's fixed sandbox
+ * endpoint, so passing the URL instead gets a 404.
  */
-export const LIVEKIT_DEVELOPMENT_TOKEN_SERVER_ID: string =
-  'https://ridezz-jpbfuv.sandbox.livekit.io';
+export const LIVEKIT_DEVELOPMENT_TOKEN_SERVER_ID: string = 'ridezz-jpbfuv';
