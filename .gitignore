@@ -26,3 +26,7 @@ Thumbs.db
 # Build output
 dist/
 build/
+
+dev.db
+dev.db-journal
+dist/

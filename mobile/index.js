@@ -10,10 +10,13 @@
 import './src/polyfills';
 // Must run before any LiveKit/WebRTC objects are created.
 import { registerGlobals } from '@livekit/react-native';
+
+registerGlobals();
+
 import { AppRegistry } from 'react-native';
 import App from './App';
 import { name as appName } from './app.json';
 
-registerGlobals();
+
 
 AppRegistry.registerComponent(appName, () => App);

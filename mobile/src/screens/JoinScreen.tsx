@@ -10,12 +10,17 @@ import {
   TextInput,
   View,
   TouchableOpacity,
+  Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { joinRoom, type ConnectionDetails } from '../services/livekit';
+import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 
-export interface RideSession extends ConnectionDetails {
+const API_URL = 'http://localhost:5000/api';
+
+export interface RideSession {
+  serverUrl: string;
+  token: string;
   riderName: string;
   roomCode: string;
 }
@@ -25,67 +30,47 @@ interface JoinScreenProps {
   navigation?: any;
 }
 
-async function ensureMicrophonePermission(): Promise<boolean> {
+async function requestAllRidePermissions(): Promise<boolean> {
   if (Platform.OS !== 'android') {
     return true;
   }
-  const alreadyGranted = await PermissionsAndroid.check(
-    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-  );
-  if (alreadyGranted) {
-    return true;
-  }
-  const result = await PermissionsAndroid.request(
-    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
-    {
-      title: 'Microphone access',
-      message: 'Ridezz needs your microphone so other riders can hear you.',
-      buttonPositive: 'Allow',
-      buttonNegative: 'Deny',
-    },
-  );
-  return result === PermissionsAndroid.RESULTS.GRANTED;
-}
 
-async function requestNotificationPermission(): Promise<void> {
-  if (Platform.OS !== 'android') {
-    return;
+  const permissionsToRequest: any[] = [
+    PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+    PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+    PermissionsAndroid.PERMISSIONS.ACCESS_COARSE_LOCATION,
+  ];
+
+  if (Platform.Version >= 33) {
+    permissionsToRequest.push('android.permission.POST_NOTIFICATIONS');
   }
+
+  if (Platform.Version >= 31) {
+    permissionsToRequest.push('android.permission.BLUETOOTH_CONNECT');
+  }
+
   try {
-    await PermissionsAndroid.request(
-      PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
-      {
-        title: 'Show ride status',
-        message: 'Ridezz shows an ongoing notification while your intercom is active.',
-        buttonPositive: 'Allow',
-        buttonNegative: 'Deny',
-      },
-    );
-  } catch {
-    // Ignore older Android versions
-  }
-}
+    const statuses = await PermissionsAndroid.requestMultiple(permissionsToRequest);
 
-async function requestLocationPermission(): Promise<void> {
-  if (Platform.OS !== 'android') {
-    return;
+    const micGranted =
+      statuses[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] ===
+      PermissionsAndroid.RESULTS.GRANTED;
+
+    return micGranted;
+  } catch (err) {
+    console.warn('Failed to prompt permissions:', err);
+    return false;
   }
-  await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
-    title: 'Share your location',
-    message: 'Ridezz can show mounted riders where everyone in the group is. Optional.',
-    buttonPositive: 'Allow',
-    buttonNegative: 'Deny',
-  });
 }
 
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
-  
-  // Default to authenticated rider's name if present
+
+  const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.rider_name || '');
   const [roomCode, setRoomCode] = useState('');
-  const [isJoining, setIsJoining] = useState(false);
+  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -94,9 +79,6 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     }
   }, [user]);
 
-  const canJoin =
-    riderName.trim().length > 0 && roomCode.trim().length > 0 && !isJoining;
-
   const handleLogout = async () => {
     await logout();
     if (navigation?.navigate) {
@@ -104,34 +86,66 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     }
   };
 
-  const handleJoinRide = useCallback(async () => {
-    if (isJoining) {
-      return;
-    }
+  const handleAction = useCallback(async () => {
+    if (isLoading) return;
+
     const trimmedName = riderName.trim();
-    const trimmedCode = roomCode.trim();
-    if (!trimmedName || !trimmedCode) {
+    const trimmedCode = roomCode.trim().toUpperCase();
+
+    if (!trimmedName) {
+      setError('Please enter your rider name.');
       return;
     }
 
-    setIsJoining(true);
+    if (mode === 'join' && !trimmedCode) {
+      setError('Please enter the 6-character room code.');
+      return;
+    }
+
+    setIsLoading(true);
     setError(null);
+
     try {
-      const hasMicPermission = await ensureMicrophonePermission();
-      if (!hasMicPermission) {
-        setError('Microphone permission is required to join a ride.');
+      const micAllowed = await requestAllRidePermissions();
+      if (!micAllowed) {
+        setError('Microphone permission is required to talk.');
+        Alert.alert(
+          'Microphone Required',
+          'Ridezz cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
+          [{ text: 'OK' }]
+        );
+        setIsLoading(false);
         return;
       }
-      await requestNotificationPermission();
-      await requestLocationPermission();
-      const details = await joinRoom(trimmedName, trimmedCode);
-      onJoined({ ...details, riderName: trimmedName, roomCode: trimmedCode });
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not join the room. Try again.');
+
+      let response;
+      if (mode === 'create') {
+        response = await axios.post(`${API_URL}/rooms/create`, {
+          riderName: trimmedName,
+          userId: user?.id,
+        });
+      } else {
+        response = await axios.post(`${API_URL}/rooms/join`, {
+          roomCode: trimmedCode,
+          riderName: trimmedName,
+        });
+      }
+
+      const { roomCode: activeCode, token, serverUrl } = response.data;
+
+      onJoined({
+        serverUrl,
+        token,
+        riderName: trimmedName,
+        roomCode: activeCode,
+      });
+    } catch (err: any) {
+      const message = err.response?.data?.message || 'Could not connect to ride room.';
+      setError(message);
     } finally {
-      setIsJoining(false);
+      setIsLoading(false);
     }
-  }, [isJoining, riderName, roomCode, onJoined]);
+  }, [isLoading, riderName, roomCode, mode, user, onJoined]);
 
   return (
     <KeyboardAvoidingView
@@ -141,7 +155,6 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      {/* Top Bar with User Info & Logout Button */}
       <View style={styles.topBar}>
         <View>
           <Text style={styles.activeRiderLabel}>Logged In As</Text>
@@ -156,6 +169,31 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         <Text style={styles.title}>RIDEZZ</Text>
         <Text style={styles.subtitle}>Group ride intercom</Text>
 
+        <View style={styles.tabContainer}>
+          <TouchableOpacity
+            style={[styles.tab, mode === 'join' && styles.activeTab]}
+            onPress={() => {
+              setMode('join');
+              setError(null);
+            }}
+          >
+            <Text style={[styles.tabText, mode === 'join' && styles.activeTabText]}>
+              JOIN ROOM
+            </Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[styles.tab, mode === 'create' && styles.activeTab]}
+            onPress={() => {
+              setMode('create');
+              setError(null);
+            }}
+          >
+            <Text style={[styles.tabText, mode === 'create' && styles.activeTabText]}>
+              CREATE ROOM
+            </Text>
+          </TouchableOpacity>
+        </View>
+
         <View style={styles.form}>
           <Text style={styles.label}>Rider Name</Text>
           <TextInput
@@ -165,34 +203,39 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
             placeholder="e.g. Alex"
             placeholderTextColor="#6b7280"
             autoCapitalize="words"
-            autoCorrect={false}
-            editable={!isJoining}
+            editable={!isLoading}
           />
 
-          <Text style={styles.label}>Room Code</Text>
-          <TextInput
-            style={styles.input}
-            value={roomCode}
-            onChangeText={setRoomCode}
-            placeholder="e.g. TEST01"
-            placeholderTextColor="#6b7280"
-            autoCapitalize="characters"
-            autoCorrect={false}
-            editable={!isJoining}
-          />
+          {mode === 'join' && (
+            <>
+              <Text style={styles.label}>6-Character Room Code</Text>
+              <TextInput
+                style={[styles.input, styles.codeInput]}
+                value={roomCode}
+                onChangeText={(val) => setRoomCode(val.toUpperCase())}
+                placeholder="e.g. 8K2M9X"
+                placeholderTextColor="#6b7280"
+                autoCapitalize="characters"
+                maxLength={6}
+                editable={!isLoading}
+              />
+            </>
+          )}
         </View>
 
         {error ? <Text style={styles.error}>{error}</Text> : null}
 
         <Pressable
-          style={[styles.joinButton, !canJoin && styles.joinButtonDisabled]}
-          disabled={!canJoin}
-          onPress={handleJoinRide}
+          style={[styles.mainButton, isLoading && styles.buttonDisabled]}
+          disabled={isLoading}
+          onPress={handleAction}
         >
-          {isJoining ? (
+          {isLoading ? (
             <ActivityIndicator color="#000000" />
           ) : (
-            <Text style={styles.joinButtonText}>Join Ride</Text>
+            <Text style={styles.mainButtonText}>
+              {mode === 'create' ? 'Create & Start Ride' : 'Join Ride'}
+            </Text>
           )}
         </Pressable>
       </View>
@@ -256,17 +299,41 @@ const styles = StyleSheet.create({
     color: '#888',
     textAlign: 'center',
     marginTop: 4,
-    marginBottom: 36,
+    marginBottom: 28,
     textTransform: 'uppercase',
   },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#1e1e1e',
+    borderRadius: 10,
+    padding: 4,
+    marginBottom: 20,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: '#2e2e2e',
+  },
+  tabText: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: '#888',
+  },
+  activeTabText: {
+    color: '#22c55e',
+  },
   form: {
-    marginBottom: 24,
+    marginBottom: 20,
   },
   label: {
     fontSize: 13,
     color: '#aaa',
     marginBottom: 6,
-    marginTop: 14,
+    marginTop: 12,
     fontWeight: '600',
   },
   input: {
@@ -279,23 +346,29 @@ const styles = StyleSheet.create({
     fontSize: 15,
     color: '#ffffff',
   },
+  codeInput: {
+    textAlign: 'center',
+    letterSpacing: 4,
+    fontSize: 20,
+    fontWeight: '700',
+  },
   error: {
     color: '#ef4444',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
-  joinButton: {
+  mainButton: {
     backgroundColor: '#22c55e',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
   },
-  joinButtonDisabled: {
+  buttonDisabled: {
     backgroundColor: '#2a2a2a',
     opacity: 0.6,
   },
-  joinButtonText: {
+  mainButtonText: {
     color: '#000000',
     fontSize: 17,
     fontWeight: '700',
