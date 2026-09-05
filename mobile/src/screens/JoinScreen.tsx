@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import React, { useCallback, useState, useEffect } from 'react';
 import {
   ActivityIndicator,
   KeyboardAvoidingView,
@@ -9,9 +9,11 @@ import {
   Text,
   TextInput,
   View,
+  TouchableOpacity,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { joinRoom, type ConnectionDetails } from '../services/livekit';
+import { useAuth } from '../context/AuthContext';
 
 export interface RideSession extends ConnectionDetails {
   riderName: string;
@@ -20,6 +22,7 @@ export interface RideSession extends ConnectionDetails {
 
 interface JoinScreenProps {
   onJoined: (session: RideSession) => void;
+  navigation?: any;
 }
 
 async function ensureMicrophonePermission(): Promise<boolean> {
@@ -36,7 +39,7 @@ async function ensureMicrophonePermission(): Promise<boolean> {
     PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
     {
       title: 'Microphone access',
-      message: 'Rideaze needs your microphone so other riders can hear you.',
+      message: 'Ridezz needs your microphone so other riders can hear you.',
       buttonPositive: 'Allow',
       buttonNegative: 'Deny',
     },
@@ -44,8 +47,6 @@ async function ensureMicrophonePermission(): Promise<boolean> {
   return result === PermissionsAndroid.RESULTS.GRANTED;
 }
 
-/** Best-effort only: without this the "Intercom active" notification just won't show on
- * Android 13+, but the ride and background survival both still work regardless. */
 async function requestNotificationPermission(): Promise<void> {
   if (Platform.OS !== 'android') {
     return;
@@ -55,41 +56,53 @@ async function requestNotificationPermission(): Promise<void> {
       PermissionsAndroid.PERMISSIONS.POST_NOTIFICATIONS,
       {
         title: 'Show ride status',
-        message: 'Rideaze shows an ongoing notification while your intercom is active.',
+        message: 'Ridezz shows an ongoing notification while your intercom is active.',
         buttonPositive: 'Allow',
         buttonNegative: 'Deny',
       },
     );
   } catch {
-    // Older Android versions don't have this permission at all -- ignore.
+    // Ignore older Android versions
   }
 }
 
-/** Best-effort and non-blocking: location sharing is a nice-to-have on top of
- * the core voice intercom, never a requirement to join. A denial just leaves
- * the Map tab showing this rider as not sharing location -- everything else
- * about the ride works normally. */
 async function requestLocationPermission(): Promise<void> {
   if (Platform.OS !== 'android') {
     return;
   }
   await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION, {
     title: 'Share your location',
-    message: 'Rideaze can show mounted riders where everyone in the group is. Optional.',
+    message: 'Ridezz can show mounted riders where everyone in the group is. Optional.',
     buttonPositive: 'Allow',
     buttonNegative: 'Deny',
   });
 }
 
-export default function JoinScreen({ onJoined }: JoinScreenProps) {
+export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
-  const [riderName, setRiderName] = useState('');
+  const { user, logout } = useAuth();
+  
+  // Default to authenticated rider's name if present
+  const [riderName, setRiderName] = useState(user?.rider_name || '');
   const [roomCode, setRoomCode] = useState('');
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  useEffect(() => {
+    if (user?.rider_name) {
+      setRiderName(user.rider_name);
+    }
+  }, [user]);
+
   const canJoin =
     riderName.trim().length > 0 && roomCode.trim().length > 0 && !isJoining;
+
+  const handleLogout = async () => {
+    await logout();
+    if (navigation?.navigate) {
+      navigation.navigate('LoginPage');
+    }
+  };
 
   const handleJoinRide = useCallback(async () => {
     if (isJoining) {
@@ -124,12 +137,23 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
     <KeyboardAvoidingView
       style={[
         styles.container,
-        { paddingTop: insets.top + 24, paddingBottom: insets.bottom + 24 },
+        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 },
       ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
+      {/* Top Bar with User Info & Logout Button */}
+      <View style={styles.topBar}>
+        <View>
+          <Text style={styles.activeRiderLabel}>Logged In As</Text>
+          <Text style={styles.activeRiderName}>{user?.rider_name || 'Rider'}</Text>
+        </View>
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+          <Text style={styles.logoutBtnText}>Log Out</Text>
+        </TouchableOpacity>
+      </View>
+
       <View style={styles.content}>
-        <Text style={styles.title}>Rideaze</Text>
+        <Text style={styles.title}>RIDEZZ</Text>
         <Text style={styles.subtitle}>Group ride intercom</Text>
 
         <View style={styles.form}>
@@ -166,7 +190,7 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
           onPress={handleJoinRide}
         >
           {isJoining ? (
-            <ActivityIndicator color="#ffffff" />
+            <ActivityIndicator color="#000000" />
           ) : (
             <Text style={styles.joinButtonText}>Join Ride</Text>
           )}
@@ -179,7 +203,41 @@ export default function JoinScreen({ onJoined }: JoinScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d1117',
+    backgroundColor: '#121212',
+  },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: 24,
+    paddingBottom: 16,
+    borderBottomWidth: 1,
+    borderBottomColor: '#222',
+  },
+  activeRiderLabel: {
+    fontSize: 11,
+    color: '#888',
+    textTransform: 'uppercase',
+    letterSpacing: 1,
+  },
+  activeRiderName: {
+    fontSize: 15,
+    fontWeight: '700',
+    color: '#22c55e',
+    marginTop: 2,
+  },
+  logoutBtn: {
+    backgroundColor: '#261b1b',
+    borderWidth: 1,
+    borderColor: '#7f1d1d',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+  },
+  logoutBtnText: {
+    color: '#f87171',
+    fontSize: 13,
+    fontWeight: '600',
   },
   content: {
     flex: 1,
@@ -187,55 +245,59 @@ const styles = StyleSheet.create({
     paddingHorizontal: 24,
   },
   title: {
-    fontSize: 40,
-    fontWeight: '700',
-    color: '#ffffff',
+    fontSize: 38,
+    fontWeight: '900',
+    color: '#22c55e',
     textAlign: 'center',
+    letterSpacing: 2,
   },
   subtitle: {
-    fontSize: 16,
-    color: '#9ca3af',
+    fontSize: 14,
+    color: '#888',
     textAlign: 'center',
     marginTop: 4,
-    marginBottom: 40,
+    marginBottom: 36,
+    textTransform: 'uppercase',
   },
   form: {
     marginBottom: 24,
   },
   label: {
-    fontSize: 14,
-    color: '#9ca3af',
+    fontSize: 13,
+    color: '#aaa',
     marginBottom: 6,
-    marginTop: 16,
+    marginTop: 14,
+    fontWeight: '600',
   },
   input: {
-    backgroundColor: '#161b22',
+    backgroundColor: '#1e1e1e',
     borderWidth: 1,
-    borderColor: '#30363d',
+    borderColor: '#333',
     borderRadius: 10,
     paddingHorizontal: 16,
     paddingVertical: 14,
-    fontSize: 16,
+    fontSize: 15,
     color: '#ffffff',
   },
   error: {
-    color: '#f85149',
+    color: '#ef4444',
     fontSize: 14,
     marginBottom: 16,
     textAlign: 'center',
   },
   joinButton: {
-    backgroundColor: '#2f81f7',
+    backgroundColor: '#22c55e',
     borderRadius: 12,
-    paddingVertical: 18,
+    paddingVertical: 16,
     alignItems: 'center',
   },
   joinButtonDisabled: {
-    backgroundColor: '#30363d',
+    backgroundColor: '#2a2a2a',
+    opacity: 0.6,
   },
   joinButtonText: {
-    color: '#ffffff',
-    fontSize: 18,
-    fontWeight: '600',
+    color: '#000000',
+    fontSize: 17,
+    fontWeight: '700',
   },
 });
