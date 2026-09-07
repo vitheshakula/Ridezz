@@ -16,7 +16,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 
-const API_URL = 'http://localhost:5000/api';
+
+import { API_URL } from '@env';
+
+export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
 
 export interface RideSession {
   serverUrl: string;

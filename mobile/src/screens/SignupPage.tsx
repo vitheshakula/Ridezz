@@ -12,8 +12,9 @@ import {
   Alert,
 } from 'react-native';
 import axios from 'axios';
+import { API_URL } from '@env';
 
-const API_URL = 'http://localhost:5000/api';
+export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
 
 export const SignupPage = ({ navigation }: any) => {
   const [riderName, setRiderName] = useState('');

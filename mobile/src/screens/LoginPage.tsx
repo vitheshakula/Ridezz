@@ -14,8 +14,9 @@ import {
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 
-// Set your backend URL (use your LAN IP or 10.0.2.2 for Android Emulator)
-const API_URL = 'http://localhost:5000/api';
+import { API_URL } from '@env';
+
+export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
 
 export const LoginPage = ({ navigation }: any) => {
   const { login } = useAuth();

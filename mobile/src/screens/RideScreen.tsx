@@ -8,6 +8,7 @@ import {
   useLocalParticipant,
   useRemoteParticipants,
   useRoomContext,
+  AndroidAudioTypePresets,
 } from '@livekit/react-native';
 import { ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import type { RideSession } from './JoinScreen';
@@ -56,6 +57,7 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
     let cancelled = false;
 
     const setupNativeAudio = async () => {
+      // 1. FOREGROUND SERVICE: Keeps Android from putting the app to sleep when riding
       try {
         await startIntercomService();
       } catch (e: any) {
@@ -63,10 +65,21 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
           setBackgroundWarning(`Won't survive a locked screen: ${e.message}`);
         }
       }
+
+      // 2. DISCORD-STYLE VOIP AUDIO ROUTING:
+      // Configures Android AudioManager into 'communication' mode.
+      // - Activates hardware Acoustic Echo Cancellation (AEC) and noise gates.
+      // - Routes voice through helmet Bluetooth headsets (SCO) instead of media music stream.
+      // - Prevents OS buffer drops and audio clock drift.
       try {
+        await AudioSession.configureAudio({
+          android: {
+            audioTypeOptions: AndroidAudioTypePresets.communication,
+          },
+        });
         await AudioSession.startAudioSession();
       } catch (err) {
-        console.warn('AudioSession error:', err);
+        console.warn('AudioSession initialization error:', err);
       }
     };
 
@@ -87,10 +100,34 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
       video={false}
       connect={true}
       options={{
+        // 3. HARDWARE VOICE CAPTURE PIPELINE:
+        // Controls how the phone reads from the microphone before encoding.
+        audioCaptureDefaults: {
+          autoGainControl: true,  // AGC: Normalizes volume (boosts quiet speech, compresses shouting)
+          echoCancellation: true, // Prevents acoustic feedback if someone isn't wearing headphones
+          noiseSuppression: true, // Built-in WebRTC noise floor suppressor
+          channelCount: 1,        // Mono voice: Cuts CPU & network usage in half compared to stereo
+        },
+        // 4. OPUS ENCODING & VAD (VOICE ACTIVITY DETECTION):
         publishDefaults: {
+          // 24 kbps is the exact bitrate Discord uses for high-fidelity speech clarity
           audioPreset: {
             maxBitrate: 24000,
           },
+          // DTX (Discontinuous Transmission): Acts as an automatic audio gate.
+          // WebRTC pauses packet transmission when the rider is quiet, eliminating
+          // constant background static and preserving mobile cellular data.
+          dtx: true,
+          // Disables RED encapsulation to prevent buffer queues and fast-forward bursts
+          red: false,
+        },
+        // 5. CELLULAR HANDOFF RETRY POLICY:
+        // Automatically reconnects WebRTC sockets if switching cell towers without kicking user
+        reconnectPolicy: {
+          nextRetryDelayInMs: (retryContext) => {
+            return Math.min(100 * Math.pow(1.5, retryContext.retryCount), 2000);
+          },
+          maxAttempts: Infinity,
         },
       }}
       onError={(e) => setConnectError(e.message)}
@@ -147,6 +184,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     );
   });
 
+  // Capacity check
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected || hasCheckedCapacityRef.current) {
       return;
@@ -192,6 +230,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     session.riderName,
   );
 
+  // Mute / Unmute Toggle
   const handleToggleMute = useCallback(async () => {
     if (room.state !== ConnectionState.Connected) {
       Alert.alert('Please wait', 'Connecting to audio stream...');
@@ -212,6 +251,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   return (
     <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+      {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
 
       <Text style={styles.title}>RIDEZZ</Text>
@@ -272,8 +312,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         </View>
       )}
 
+      {/* Mic toggle */}
       <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
+      {/* Leave button */}
       <Pressable style={styles.leaveButton} onPress={onLeave}>
         <Text style={styles.leaveButtonText}>Leave Ride</Text>
       </Pressable>
@@ -314,5 +356,5 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     alignItems: 'center',
   },
-  leaveButtonText: { color: '#f85149', fontSize: 16, fontWeight: '600' },
+  leaveButtonText: { color: '#f87171', fontSize: 16, fontWeight: '600' },
 });
