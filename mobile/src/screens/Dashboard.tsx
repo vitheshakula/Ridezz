@@ -36,7 +36,7 @@ export const Dashboard = ({ navigation, onJoined }: any) => {
   if (!user) {
     return (
       <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#121212" />
+        <StatusBar barStyle="light-content" />
 
         <View style={styles.centerContent}>
           <View style={styles.logoBadge}>
@@ -71,7 +71,7 @@ export const Dashboard = ({ navigation, onJoined }: any) => {
   // 🔹 If rider IS logged in: Show Room Code Entry
   return (
     <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#121212" />
+      <StatusBar barStyle="light-content" />
 
       {/* Top Bar */}
       <View style={styles.topBar}>

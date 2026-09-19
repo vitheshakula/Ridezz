@@ -76,44 +76,6 @@
         }
       }
     },
-    "react-native-maps": {
-      "root": "D:\\Ridezz-master\\Ridezz\\mobile\\node_modules\\react-native-maps",
-      "name": "react-native-maps",
-      "platforms": {
-        "ios": {
-          "podspecPath": "D:\\Ridezz-master\\Ridezz\\mobile\\node_modules\\react-native-maps\\react-native-maps.podspec",
-          "version": "1.29.0",
-          "configurations": [],
-          "scriptPhases": []
-        },
-        "android": {
-          "sourceDir": "D:\\Ridezz-master\\Ridezz\\mobile\\node_modules\\react-native-maps\\android",
-          "packageImportPath": "import com.rnmaps.maps.MapsPackage;",
-          "packageInstance": "new MapsPackage()",
-          "buildTypes": [],
-          "libraryName": "RNMapsSpecs",
-          "componentDescriptors": [
-            "RNMapsCalloutComponentDescriptor",
-            "RNMapsCircleComponentDescriptor",
-            "RNMapsGoogleMapViewComponentDescriptor",
-            "RNMapsGoogleMarkerComponentDescriptor",
-            "RNMapsGooglePolygonComponentDescriptor",
-            "RNMapsMapViewComponentDescriptor",
-            "RNMapsMarkerComponentDescriptor",
-            "RNMapsOverlayComponentDescriptor",
-            "RNMapsPolygonComponentDescriptor",
-            "RNMapsPolylineComponentDescriptor",
-            "RNMapsUrlTileComponentDescriptor",
-            "RNMapsWMSTileComponentDescriptor"
-          ],
-          "cmakeListsPath": "D:/Ridezz-master/Ridezz/mobile/node_modules/react-native-maps/android/src/main/jni/CMakeLists.txt",
-          "cxxModuleCMakeListsModuleName": null,
-          "cxxModuleCMakeListsPath": null,
-          "cxxModuleHeaderName": null,
-          "isPureCxxDependency": false
-        }
-      }
-    },
     "react-native-safe-area-context": {
       "root": "D:\\Ridezz-master\\Ridezz\\mobile\\node_modules\\react-native-safe-area-context",
       "name": "react-native-safe-area-context",

@@ -51,6 +51,18 @@ describe('encodeLocationPayload / decodeLocationPayload', () => {
     expect(decodeLocationPayload(bytes)).toBeNull();
   });
 
+  test('rejects non-numeric coordinates', () => {
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ v: 1, lat: '17.4', lng: 78.4, timestamp: Date.now() }),
+    );
+    expect(decodeLocationPayload(bytes)).toBeNull();
+  });
+
+  test('rejects a non-positive timestamp', () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, lat: 1, lng: 1, timestamp: 0 }));
+    expect(decodeLocationPayload(bytes)).toBeNull();
+  });
+
   test('rejects a missing timestamp', () => {
     const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, lat: 1, lng: 1 }));
     expect(decodeLocationPayload(bytes)).toBeNull();

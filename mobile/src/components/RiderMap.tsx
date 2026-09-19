@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import MapView, { Callout, Marker } from 'react-native-maps';
+import { Camera, Map, Marker } from '@maplibre/maplibre-react-native';
+import { MAPTILER_API_KEY } from '@env';
 import {
   classifyFreshness,
   formatDistance,
@@ -12,6 +13,7 @@ import {
 interface RiderMapProps {
   locations: RiderLocation[];
   localIdentity: string;
+  statusMessage?: string | null;
 }
 
 const FRESHNESS_COLOR: Record<string, string> = {
@@ -20,71 +22,137 @@ const FRESHNESS_COLOR: Record<string, string> = {
   offline: '#6b7280',
 };
 
-export default function RiderMap({ locations, localIdentity }: RiderMapProps) {
-  const mapRef = useRef<MapView>(null);
-  const localLocation = locations.find(l => l.participantIdentity === localIdentity) ?? null;
+const MAP_STATUS_TICK_MS = 5000;
+const CAMERA_ANIMATION_MS = 400;
+const CENTER_ZOOM = 15;
+const INITIAL_ZOOM = 13;
+const FIT_PADDING = { top: 80, right: 80, bottom: 80, left: 80 };
+const MAPTILER_STYLE_URL = `https://api.maptiler.com/maps/streets-v4/style.json?key=${encodeURIComponent(
+  MAPTILER_API_KEY || '',
+)}`;
 
-  // MapView's initialRegion prop only applies once at mount, and localLocation is
-  // typically still null at that point (the first GPS fix hasn't arrived yet). Center on
-  // it a single time, as soon as it does -- this is an initial placement, not the
-  // continuous auto-fit the task explicitly avoids.
+type LngLat = [number, number];
+
+function hasValidCoordinate(location: RiderLocation): boolean {
+  return (
+    Number.isFinite(location.latitude) &&
+    location.latitude >= -90 &&
+    location.latitude <= 90 &&
+    Number.isFinite(location.longitude) &&
+    location.longitude >= -180 &&
+    location.longitude <= 180
+  );
+}
+
+function toLngLat(location: Pick<RiderLocation, 'latitude' | 'longitude'>): LngLat {
+  return [location.longitude, location.latitude];
+}
+
+function getLocationsBounds(locations: RiderLocation[]): [number, number, number, number] {
+  const longitudes = locations.map(location => location.longitude);
+  const latitudes = locations.map(location => location.latitude);
+  return [
+    Math.min(...longitudes),
+    Math.min(...latitudes),
+    Math.max(...longitudes),
+    Math.max(...latitudes),
+  ];
+}
+
+function getBoundsCenter(bounds: [number, number, number, number]): LngLat {
+  const [west, south, east, north] = bounds;
+  return [(west + east) / 2, (south + north) / 2];
+}
+
+function areBoundsTooTight(bounds: [number, number, number, number]): boolean {
+  const [west, south, east, north] = bounds;
+  return Math.abs(east - west) < 0.0001 && Math.abs(north - south) < 0.0001;
+}
+
+export default function RiderMap({ locations, localIdentity, statusMessage }: RiderMapProps) {
+  const cameraRef = useRef<ElementRef<typeof Camera>>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const validLocations = useMemo(() => locations.filter(hasValidCoordinate), [locations]);
+  const localLocation = validLocations.find(l => l.participantIdentity === localIdentity) ?? null;
+
+  useEffect(() => {
+    const interval = setInterval(() => setNowMs(Date.now()), MAP_STATUS_TICK_MS);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Center on the first local GPS fix once. After that, manual map panning wins.
   const hasCenteredOnceRef = useRef(false);
   useEffect(() => {
     if (hasCenteredOnceRef.current || !localLocation) {
       return;
     }
     hasCenteredOnceRef.current = true;
-    mapRef.current?.animateToRegion(
-      {
-        latitude: localLocation.latitude,
-        longitude: localLocation.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      },
-      400,
-    );
+    cameraRef.current?.easeTo({
+      center: toLngLat(localLocation),
+      zoom: CENTER_ZOOM,
+      duration: CAMERA_ANIMATION_MS,
+    });
   }, [localLocation]);
 
+  const centerOnLocation = useCallback((location: RiderLocation) => {
+    cameraRef.current?.easeTo({
+      center: toLngLat(location),
+      zoom: CENTER_ZOOM,
+      duration: CAMERA_ANIMATION_MS,
+    });
+  }, []);
+
   const handleFitGroup = useCallback(() => {
-    if (locations.length === 0) {
+    const usableLocations = validLocations.filter(
+      location => classifyFreshness(location, nowMs) !== 'offline',
+    );
+
+    if (usableLocations.length === 0) {
       return;
     }
-    mapRef.current?.fitToCoordinates(
-      locations.map(l => ({ latitude: l.latitude, longitude: l.longitude })),
-      { edgePadding: { top: 80, right: 80, bottom: 80, left: 80 }, animated: true },
-    );
-  }, [locations]);
+
+    if (usableLocations.length === 1) {
+      centerOnLocation(usableLocations[0]);
+      return;
+    }
+
+    const bounds = getLocationsBounds(usableLocations);
+    if (areBoundsTooTight(bounds)) {
+      cameraRef.current?.easeTo({
+        center: getBoundsCenter(bounds),
+        zoom: CENTER_ZOOM,
+        duration: CAMERA_ANIMATION_MS,
+      });
+      return;
+    }
+
+    cameraRef.current?.fitBounds(bounds, {
+      padding: FIT_PADDING,
+      duration: CAMERA_ANIMATION_MS,
+    });
+  }, [centerOnLocation, nowMs, validLocations]);
 
   const handleCenterMe = useCallback(() => {
     if (!localLocation) {
       return;
     }
-    mapRef.current?.animateToRegion(
-      {
-        latitude: localLocation.latitude,
-        longitude: localLocation.longitude,
-        latitudeDelta: 0.01,
-        longitudeDelta: 0.01,
-      },
-      400,
-    );
-  }, [localLocation]);
-
-  const initialRegion = localLocation
-    ? {
-        latitude: localLocation.latitude,
-        longitude: localLocation.longitude,
-        latitudeDelta: 0.05,
-        longitudeDelta: 0.05,
-      }
-    : undefined;
+    centerOnLocation(localLocation);
+  }, [centerOnLocation, localLocation]);
 
   return (
     <View style={styles.container}>
-      <MapView ref={mapRef} style={styles.map} initialRegion={initialRegion}>
-        {locations.map(location => {
+      <Map style={styles.map} mapStyle={MAPTILER_STYLE_URL}>
+        <Camera
+          ref={cameraRef}
+          initialViewState={
+            localLocation
+              ? { center: toLngLat(localLocation), zoom: INITIAL_ZOOM }
+              : { zoom: 2 }
+          }
+        />
+        {validLocations.map((location, index) => {
           const isLocal = location.participantIdentity === localIdentity;
-          const freshness = classifyFreshness(location, Date.now());
+          const freshness = classifyFreshness(location, nowMs);
           const distance =
             !isLocal && localLocation
               ? haversineDistanceMeters(localLocation, location)
@@ -92,21 +160,28 @@ export default function RiderMap({ locations, localIdentity }: RiderMapProps) {
 
           return (
             <Marker
-              key={location.participantIdentity}
-              coordinate={{ latitude: location.latitude, longitude: location.longitude }}
-              pinColor={isLocal ? '#2f81f7' : FRESHNESS_COLOR[freshness]}
-              opacity={freshness === 'offline' ? 0.5 : 1}
+              key={`${location.participantIdentity || 'rider'}-${index}`}
+              id={`${location.participantIdentity || 'rider'}-${index}`}
+              lngLat={toLngLat(location)}
+              anchor="bottom"
             >
-              <RiderCallout
+              <RiderMarker
                 location={location}
                 isLocal={isLocal}
                 freshness={freshness}
                 distance={distance}
+                nowMs={nowMs}
               />
             </Marker>
           );
         })}
-      </MapView>
+      </Map>
+
+      {statusMessage ? (
+        <View style={styles.statusOverlay}>
+          <Text style={styles.statusOverlayText}>{statusMessage}</Text>
+        </View>
+      ) : null}
 
       <View style={styles.controls}>
         <Pressable style={styles.controlButton} onPress={handleFitGroup}>
@@ -124,34 +199,40 @@ export default function RiderMap({ locations, localIdentity }: RiderMapProps) {
   );
 }
 
-interface RiderCalloutProps {
+interface RiderMarkerProps {
   location: RiderLocation;
   isLocal: boolean;
   freshness: 'live' | 'stale' | 'offline';
   distance: number | null;
+  nowMs: number;
 }
 
-function RiderCallout({ location, isLocal, freshness, distance }: RiderCalloutProps) {
+function RiderMarker({ location, isLocal, freshness, distance, nowMs }: RiderMarkerProps) {
   const statusText = freshness === 'offline' ? 'Offline' : 'Online';
-  const ageText = formatUpdatedAgo(Date.now() - location.timestamp);
+  const ageText = formatUpdatedAgo(nowMs - location.timestamp);
+  const displayName = location.participantName.trim() || location.participantIdentity || 'Rider';
+  const markerColor = isLocal ? '#2f81f7' : FRESHNESS_COLOR[freshness];
 
   return (
-    <Callout tooltip={false} style={styles.callout}>
-      <View style={styles.calloutContent}>
-        <Text style={styles.calloutName}>
-          {location.participantName}
+    <View style={[styles.markerWrap, freshness === 'offline' && styles.markerOffline]}>
+      <View style={styles.markerCard}>
+        <Text style={styles.markerName} numberOfLines={1}>
+          {displayName}
           {isLocal ? ' (you)' : ''}
         </Text>
-        <Text style={styles.calloutDetail}>{statusText}</Text>
-        <Text style={styles.calloutDetail}>{ageText}</Text>
+        <Text style={styles.markerDetail}>{statusText}</Text>
+        <Text style={styles.markerDetail}>{ageText}</Text>
         {location.accuracy !== undefined ? (
-          <Text style={styles.calloutDetail}>Accuracy ±{Math.round(location.accuracy)}m</Text>
+          <Text style={styles.markerDetail}>Accuracy +/-{Math.round(location.accuracy)}m</Text>
         ) : null}
         {distance !== null ? (
-          <Text style={styles.calloutDetail}>{formatDistance(distance)}</Text>
+          <Text style={styles.markerDetail}>{formatDistance(distance)}</Text>
         ) : null}
       </View>
-    </Callout>
+      <View style={[styles.markerPin, { backgroundColor: markerColor }]}>
+        <View style={styles.markerPinCore} />
+      </View>
+    </View>
   );
 }
 
@@ -186,19 +267,64 @@ const styles = StyleSheet.create({
     fontSize: 15,
     fontWeight: '600',
   },
-  callout: {
-    minWidth: 150,
+  statusOverlay: {
+    position: 'absolute',
+    top: 12,
+    left: 12,
+    right: 12,
+    backgroundColor: '#161b22',
+    borderWidth: 1,
+    borderColor: '#30363d',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
-  calloutContent: {
-    padding: 4,
+  statusOverlayText: {
+    color: '#c9d1d9',
+    fontSize: 13,
+    fontWeight: '600',
+    textAlign: 'center',
   },
-  calloutName: {
+  markerWrap: {
+    alignItems: 'center',
+    maxWidth: 180,
+  },
+  markerOffline: {
+    opacity: 0.55,
+  },
+  markerCard: {
+    backgroundColor: '#ffffff',
+    borderRadius: 8,
+    paddingVertical: 6,
+    paddingHorizontal: 8,
+    borderWidth: 1,
+    borderColor: '#d0d7de',
+    marginBottom: 4,
+    minWidth: 116,
+  },
+  markerName: {
+    color: '#24292f',
     fontWeight: '700',
-    fontSize: 15,
+    fontSize: 13,
     marginBottom: 2,
   },
-  calloutDetail: {
-    fontSize: 12,
+  markerDetail: {
+    fontSize: 11,
     color: '#57606a',
+  },
+  markerPin: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    borderWidth: 3,
+    borderColor: '#ffffff',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  markerPinCore: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#ffffff',
   },
 });

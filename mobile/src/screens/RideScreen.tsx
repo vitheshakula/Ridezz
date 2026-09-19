@@ -587,6 +587,30 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     session.riderName,
   );
 
+  const mapStatusMessage = useMemo(() => {
+    if (locationPermissionGranted === null) {
+      return 'Checking location permission...';
+    }
+    if (locationPermissionGranted === false) {
+      return "Location sharing is unavailable. The intercom still works normally.";
+    }
+
+    const hasLocalLocation = locations.some(
+      location => location.participantIdentity === localParticipant.identity,
+    );
+    if (!hasLocalLocation) {
+      return 'Waiting for your GPS location...';
+    }
+
+    const hasRemoteLocation = locations.some(
+      location => location.participantIdentity !== localParticipant.identity,
+    );
+    if (!hasRemoteLocation) {
+      return 'No rider locations yet.';
+    }
+
+    return null;
+  }, [locationPermissionGranted, locations, localParticipant.identity]);
   // Mute / Unmute Toggle
   const handleToggleMute = useCallback(async () => {
     if (room.state !== ConnectionState.Connected) {
@@ -698,7 +722,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               Location sharing is off (permission denied). Your position won't appear on the map, but the intercom still works normally.
             </Text>
           ) : null}
-          <RiderMap locations={locations} localIdentity={localParticipant.identity} />
+          <RiderMap
+            locations={locations}
+            localIdentity={localParticipant.identity}
+            statusMessage={mapStatusMessage}
+          />
         </View>
       )}
 
