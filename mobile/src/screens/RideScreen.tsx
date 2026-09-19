@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
@@ -8,6 +8,7 @@ import {
   useLocalParticipant,
   useRemoteParticipants,
   useRoomContext,
+  AndroidAudioTypePresets,
 } from '@livekit/react-native';
 import { ConnectionState, MediaDeviceFailure } from 'livekit-client';
 import type { RideSession } from './JoinScreen';
@@ -52,33 +53,42 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
   const [backgroundWarning, setBackgroundWarning] = useState<string | null>(null);
 
-  // Starts/stops (a) the Android foreground service that keeps this process at foreground
-  // priority so a locked screen doesn't freeze/kill the room, and (b) the native audio engine
-  // that routes call audio through whatever the phone is currently using (speaker/wired/
-  // Bluetooth). Runs while the Activity is still visible, as part of the user's Join Ride tap --
-  // never started after the app has already gone into the background. Untouched by the rider
-  // presence/map work below: it doesn't depend on participant count, state, or location.
-  //
-  // A failed intercom-service start doesn't block the ride -- foreground audio still works,
-  // it just won't survive a locked screen -- but it's surfaced rather than swallowed.
   useEffect(() => {
     let cancelled = false;
 
-    startIntercomService().catch((e: Error) => {
-      if (!cancelled) {
-        setBackgroundWarning(
-          `Won't survive a locked screen: ${e.message}`,
-        );
+    const setupNativeAudio = async () => {
+      // 1. FOREGROUND SERVICE: Keeps Android from putting the app to sleep when riding
+      try {
+        await startIntercomService();
+      } catch (e: any) {
+        if (!cancelled) {
+          setBackgroundWarning(`Won't survive a locked screen: ${e.message}`);
+        }
       }
-    });
-    AudioSession.startAudioSession();
+
+      // 2. DISCORD-STYLE VOIP AUDIO ROUTING:
+      // Configures Android AudioManager into 'communication' mode.
+      // - Activates hardware Acoustic Echo Cancellation (AEC) and noise gates.
+      // - Routes voice through helmet Bluetooth headsets (SCO) instead of media music stream.
+      // - Prevents OS buffer drops and audio clock drift.
+      try {
+        await AudioSession.configureAudio({
+          android: {
+            audioTypeOptions: AndroidAudioTypePresets.communication,
+          },
+        });
+        await AudioSession.startAudioSession();
+      } catch (err) {
+        console.warn('AudioSession initialization error:', err);
+      }
+    };
+
+    setupNativeAudio();
 
     return () => {
       cancelled = true;
       AudioSession.stopAudioSession();
-      stopIntercomService().catch(() => {
-        // Nothing meaningful to do with a stop failure once we're already leaving.
-      });
+      stopIntercomService().catch(() => {});
     };
   }, []);
 
@@ -86,14 +96,44 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
     <LiveKitRoom
       serverUrl={session.serverUrl}
       token={session.token}
-      // Mic publish is held off until the capacity check in RideRoom passes -- see there.
-      audio={false}
+      audio={true}
       video={false}
-      connect
+      connect={true}
+      options={{
+        // 3. HARDWARE VOICE CAPTURE PIPELINE:
+        // Controls how the phone reads from the microphone before encoding.
+        audioCaptureDefaults: {
+          autoGainControl: true,  // AGC: Normalizes volume (boosts quiet speech, compresses shouting)
+          echoCancellation: true, // Prevents acoustic feedback if someone isn't wearing headphones
+          noiseSuppression: true, // Built-in WebRTC noise floor suppressor
+          channelCount: 1,        // Mono voice: Cuts CPU & network usage in half compared to stereo
+        },
+        // 4. OPUS ENCODING & VAD (VOICE ACTIVITY DETECTION):
+        publishDefaults: {
+          // 24 kbps is the exact bitrate Discord uses for high-fidelity speech clarity
+          audioPreset: {
+            maxBitrate: 24000,
+          },
+          // DTX (Discontinuous Transmission): Acts as an automatic audio gate.
+          // WebRTC pauses packet transmission when the rider is quiet, eliminating
+          // constant background static and preserving mobile cellular data.
+          dtx: true,
+          // Disables RED encapsulation to prevent buffer queues and fast-forward bursts
+          red: false,
+        },
+        // 5. CELLULAR HANDOFF RETRY POLICY:
+        // Automatically reconnects WebRTC sockets if switching cell towers without kicking user
+        reconnectPolicy: {
+          nextRetryDelayInMs: (retryContext) => {
+            return Math.min(100 * Math.pow(1.5, retryContext.retryCount), 2000);
+          },
+          maxAttempts: Infinity,
+        },
+      }}
       onError={(e) => setConnectError(e.message)}
       onMediaDeviceFailure={(failure) => {
         if (failure) {
-          setConnectError(`Microphone unavailable (${MEDIA_DEVICE_FAILURE_LABELS[failure]}).`);
+          setConnectError(`Microphone unavailable (${MEDIA_DEVICE_FAILURE_LABELS[failure] || failure}).`);
         }
       }}
     >
@@ -137,21 +177,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     }
   }, [connectionState, session.roomCode]);
 
-  useConnectionCues(connectionState, transition => {
+  useConnectionCues(connectionState, (transition) => {
     logDiagnosticEvent(
       transition === 'lost' ? 'connection_lost' : 'reconnected',
       transition === 'lost' ? 'Connection lost — reconnecting' : 'Connection restored',
     );
   });
 
-  // Ridezz's MVP cap is 10 riders per room. The Development Token Server has no way to set
-  // server-side room capacity, so this is a client-side check made the moment we connect: if
-  // we'd be the 11th participant, disconnect immediately with a clear reason rather than
-  // silently publishing audio into an over-capacity room. This can't close every race (two
-  // riders joining in the same instant could both slip through) -- production-grade
-  // authoritative enforcement moves to the future Ridezz token backend, which can refuse to
-  // mint a token at all once a room is full. Only after this check passes do we publish the
-  // microphone, which is why <LiveKitRoom> above is given audio={false}.
+  // Capacity check
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected || hasCheckedCapacityRef.current) {
       return;
@@ -164,11 +197,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       const timer = setTimeout(onLeave, 2500);
       return () => clearTimeout(timer);
     }
-
-    localParticipant.setMicrophoneEnabled(true).catch(() => {
-      // Surfaced via onMediaDeviceFailure already.
-    });
-  }, [connectionState, room, localParticipant, onLeave]);
+  }, [connectionState, room, onLeave]);
 
   const sortedRemoteParticipants = useMemo(
     () => sortByJoinOrder(remoteParticipants),
@@ -176,59 +205,56 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 
   const riderIdentities = useMemo(
-    () => sortedRemoteParticipants.map(p => ({ identity: p.identity, name: p.name || p.identity })),
+    () => sortedRemoteParticipants.map((p) => ({ identity: p.identity, name: p.name || p.identity })),
     [sortedRemoteParticipants],
   );
+
   const handlePresenceEvent = useCallback((event: PresenceEvent) => {
     if (event.type === 'left') {
       audioCues.riderLeft();
       logDiagnosticEvent('rider_left', `${event.name} left`);
     } else {
       audioCues.riderJoined();
-      logDiagnosticEvent('rider_joined', event.type === 'rejoined' ? `${event.name} rejoined` : `${event.name} joined`);
+      logDiagnosticEvent(
+        'rider_joined',
+        event.type === 'rejoined' ? `${event.name} rejoined` : `${event.name} joined`,
+      );
     }
   }, []);
+
   const presenceToast = useRiderPresenceToasts(riderIdentities, handlePresenceEvent);
 
-  // Publishes our GPS fixes over LiveKit's data channel and keeps the latest known
-  // location per rider (including ourselves). Location is a nice-to-have on top of the
-  // core voice room -- a denied permission or GPS failure never affects the intercom.
   const { locations, locationPermissionGranted } = useRiderLocations(
     room,
     localParticipant.identity,
     session.riderName,
   );
 
-  const statusLabel = connectError
-    ? 'Error'
-    : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
+  // Mute / Unmute Toggle
+  const handleToggleMute = useCallback(async () => {
+    if (room.state !== ConnectionState.Connected) {
+      Alert.alert('Please wait', 'Connecting to audio stream...');
+      return;
+    }
 
-  const handleToggleMute = useCallback(() => {
-    localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled).catch(() => {
-      // setMicrophoneEnabled already surfaces failures via onMediaDeviceFailure.
-    });
-  }, [localParticipant, isMicrophoneEnabled]);
+    try {
+      await localParticipant.setMicrophoneEnabled(!isMicrophoneEnabled);
+    } catch (err: any) {
+      console.warn('Mute toggle error:', err);
+      Alert.alert('Microphone Notice', err.message || 'Unable to toggle mute.');
+    }
+  }, [room.state, localParticipant, isMicrophoneEnabled]);
 
   const riderCount = remoteParticipants.length + 1;
   const displayedError = capacityError ?? connectError;
-
-  const handleLeavePress = useCallback(() => {
-    Alert.alert('Leave ride?', 'You’ll stop sharing audio and location with the group.', [
-      { text: 'Cancel', style: 'cancel' },
-      { text: 'Leave Ride', style: 'destructive', onPress: onLeave },
-    ]);
-  }, [onLeave]);
+  const statusLabel = connectError ? 'Error' : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
 
   return (
-    <View
-      style={[
-        styles.container,
-        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 },
-      ]}
-    >
+    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+      {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
 
-      <Text style={styles.title}>RIDEAZE</Text>
+      <Text style={styles.title}>RIDEZZ</Text>
       <Text style={styles.roomLabel}>Room: {session.roomCode.toUpperCase()}</Text>
 
       <Text style={[styles.status, displayedError && styles.statusError]}>
@@ -237,20 +263,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       <Text style={styles.riderCount}>
         {riderCount} / {MAX_RIDERS} riders
       </Text>
-      {backgroundWarning ? (
-        <Text style={styles.backgroundWarning}>{backgroundWarning}</Text>
-      ) : null}
+      {backgroundWarning ? <Text style={styles.backgroundWarning}>{backgroundWarning}</Text> : null}
 
       <View style={styles.utilityRow}>
         <View style={styles.keepAwakeRow}>
           <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
           <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
         </View>
-        <Pressable
-          style={styles.diagnosticsLink}
-          onPress={() => setDiagnosticsVisible(true)}
-          hitSlop={12}
-        >
+        <Pressable style={styles.diagnosticsLink} onPress={() => setDiagnosticsVisible(true)} hitSlop={12}>
           <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
         </Pressable>
       </View>
@@ -277,7 +297,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       {tab === 'intercom' ? (
         <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
           <RiderRow participant={localParticipant} isLocal />
-          {sortedRemoteParticipants.map(p => (
+          {sortedRemoteParticipants.map((p) => (
             <RiderRow key={p.identity} participant={p} isLocal={false} />
           ))}
         </ScrollView>
@@ -285,149 +305,56 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         <View style={styles.mapContainer}>
           {locationPermissionGranted === false ? (
             <Text style={styles.locationWarning}>
-              Location sharing is off (permission denied). Your position won't appear on the
-              map, but the intercom still works normally.
+              Location sharing is off (permission denied). Your position won't appear on the map, but the intercom still works normally.
             </Text>
           ) : null}
           <RiderMap locations={locations} localIdentity={localParticipant.identity} />
         </View>
       )}
 
+      {/* Mic toggle */}
       <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
-      <Pressable style={styles.leaveButton} onPress={handleLeavePress}>
+      {/* Leave button */}
+      <Pressable style={styles.leaveButton} onPress={onLeave}>
         <Text style={styles.leaveButtonText}>Leave Ride</Text>
       </Pressable>
 
-      <DiagnosticsModal
-        visible={diagnosticsVisible}
-        onClose={() => setDiagnosticsVisible(false)}
-      />
+      <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#0d1117',
-    paddingHorizontal: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: '700',
-    color: '#ffffff',
-    textAlign: 'center',
-    letterSpacing: 2,
-  },
-  roomLabel: {
-    fontSize: 16,
-    color: '#9ca3af',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  status: {
-    fontSize: 16,
-    color: '#3fb950',
-    textAlign: 'center',
-    marginTop: 16,
-    fontWeight: '600',
-  },
-  statusError: {
-    color: '#f85149',
-  },
-  riderCount: {
-    fontSize: 14,
-    color: '#9ca3af',
-    textAlign: 'center',
-    marginTop: 4,
-  },
-  backgroundWarning: {
-    fontSize: 13,
-    color: '#d29922',
-    textAlign: 'center',
-    marginTop: 12,
-  },
-  utilityRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 16,
-  },
-  keepAwakeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  keepAwakeLabel: {
-    color: '#c9d1d9',
-    fontSize: 14,
-    marginRight: 10,
-  },
-  diagnosticsLink: {
-    paddingVertical: 6,
-    paddingHorizontal: 4,
-  },
-  diagnosticsLinkText: {
-    color: '#58a6ff',
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  tabs: {
-    flexDirection: 'row',
-    marginTop: 16,
-    backgroundColor: '#161b22',
-    borderRadius: 10,
-    padding: 4,
-  },
-  tabButton: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
-    alignItems: 'center',
-  },
-  tabButtonActive: {
-    backgroundColor: '#21262d',
-  },
-  tabButtonText: {
-    color: '#9ca3af',
-    fontSize: 13,
-    fontWeight: '700',
-    letterSpacing: 1,
-  },
-  tabButtonTextActive: {
-    color: '#ffffff',
-  },
-  riderList: {
-    flex: 1,
-    marginTop: 16,
-  },
-  riderListContent: {
-    paddingVertical: 4,
-  },
-  mapContainer: {
-    flex: 1,
-    marginTop: 16,
-    borderRadius: 12,
-    overflow: 'hidden',
-  },
-  locationWarning: {
-    fontSize: 13,
-    color: '#d29922',
-    padding: 12,
-    backgroundColor: '#161b22',
-  },
+  container: { flex: 1, backgroundColor: '#121212', paddingHorizontal: 24 },
+  title: { fontSize: 24, fontWeight: '700', color: '#22c55e', textAlign: 'center', letterSpacing: 2 },
+  roomLabel: { fontSize: 16, color: '#9ca3af', textAlign: 'center', marginTop: 4 },
+  status: { fontSize: 16, color: '#22c55e', textAlign: 'center', marginTop: 16, fontWeight: '600' },
+  statusError: { color: '#f85149' },
+  riderCount: { fontSize: 14, color: '#9ca3af', textAlign: 'center', marginTop: 4 },
+  backgroundWarning: { fontSize: 13, color: '#d29922', textAlign: 'center', marginTop: 12 },
+  utilityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
+  keepAwakeRow: { flexDirection: 'row', alignItems: 'center' },
+  keepAwakeLabel: { color: '#c9d1d9', fontSize: 14, marginRight: 10 },
+  diagnosticsLink: { paddingVertical: 6, paddingHorizontal: 4 },
+  diagnosticsLinkText: { color: '#22c55e', fontSize: 14, fontWeight: '600' },
+  tabs: { flexDirection: 'row', marginTop: 16, backgroundColor: '#1e1e1e', borderRadius: 10, padding: 4 },
+  tabButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
+  tabButtonActive: { backgroundColor: '#2e2e2e' },
+  tabButtonText: { color: '#9ca3af', fontSize: 13, fontWeight: '700', letterSpacing: 1 },
+  tabButtonTextActive: { color: '#22c55e' },
+  riderList: { flex: 1, marginTop: 16 },
+  riderListContent: { paddingVertical: 4 },
+  mapContainer: { flex: 1, marginTop: 16, borderRadius: 12, overflow: 'hidden' },
+  locationWarning: { fontSize: 13, color: '#d29922', padding: 12, backgroundColor: '#1e1e1e' },
   leaveButton: {
     marginTop: 16,
-    backgroundColor: '#21262d',
+    backgroundColor: '#1e1e1e',
     borderWidth: 1,
-    borderColor: '#f85149',
+    borderColor: '#7f1d1d',
     borderRadius: 12,
     paddingVertical: 16,
     alignItems: 'center',
   },
-  leaveButtonText: {
-    color: '#f85149',
-    fontSize: 16,
-    fontWeight: '600',
-  },
+  leaveButtonText: { color: '#f87171', fontSize: 16, fontWeight: '600' },
 });

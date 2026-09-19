@@ -25,10 +25,11 @@
       android:roundIcon="@mipmap/ic_launcher_round"
       android:allowBackup="false"
       android:theme="@style/AppTheme"
-      android:usesCleartextTraffic="${usesCleartextTraffic}"
-      android:supportsRtl="true">
+      android:supportsRtl="true"
+      android:usesCleartextTraffic="true">
       <!-- react-native-maps (Android/Google Maps). Empty value builds fine but the Map tab
            shows a blank/grey map; see android/local.properties.example. -->
+      
       <meta-data
         android:name="com.google.android.geo.API_KEY"
         android:value="${mapsApiKey}" />

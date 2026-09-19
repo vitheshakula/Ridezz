@@ -26,3 +26,35 @@ Thumbs.db
 # Build output
 dist/
 build/
+
+dev.db
+dev.db-journal
+dist/
+
+
+# Android & Metro artifacts
+mobile/android/app/build/
+mobile/android/.gradle/
+mobile/android/app/src/main/assets/index.android.bundle
+mobile/node_modules/
+backend/node_modules/
+
+# Android root build & Gradle cache
+mobile/android/build/
+mobile/android/.idea/
+mobile/android/*.iml
+mobile/android/app/*.iml
+mobile/android/local.properties
+mobile/android/.cxx/
+
+# Android generated APKs & bundles
+*.apk
+*.aab
+
+# React Native / Metro bundle asset outputs
+mobile/android/app/src/main/res/drawable-*/
+mobile/android/app/src/main/res/raw/
+
+# All subfolder .env files
+**/.env
+**/.env.*
