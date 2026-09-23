@@ -19,6 +19,8 @@ class MainApplication : Application(), ReactApplication {
           add(RidezzIntercomPackage())
           add(RidezzAudioCuesPackage())
           add(RidezzKeepAwakePackage())
+          add(VoiceHazardPackage())
+          add(NearbyMeshPackage())
         },
     )
   }
