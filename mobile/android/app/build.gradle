@@ -131,4 +131,10 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    // Offline on-device speech recognition for hazard-word detection (VoiceHazardModule).
+    implementation 'com.alphacephei:vosk-android:0.3.47'
+
+    // Offline rider-to-rider hazard mesh (NearbyMeshModule). Needs Google Play Services on the phone.
+    implementation 'com.google.android.gms:play-services-nearby:19.3.0'
 }
