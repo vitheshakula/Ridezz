@@ -45,8 +45,9 @@ import org.json.JSONObject
  * rider id opens the connection. Once connected, a hazard packet is one small byte payload sent to
  * every connected rider -- no polling, no advertising tricks.
  *
- * Emits `onHazardReceived` (raw packet JSON) and `onMeshStatus` (JSON: active, peers, error). Logs
- * under tag "NearbyMesh" (`adb logcat -s NearbyMesh`).
+ * Emits `onHazardReceived` (raw packet JSON), `onMeshStatus` (JSON: active, peers, error), and
+ * `onPeerCountChanged` (JSON: peerCount) every time a rider connects or disconnects. Logs under
+ * tag "NearbyMesh" (`adb logcat -s NearbyMesh`).
  *
  * Limits: single hop here (the JS layer relays between riders and to/from the cloud room), and the
  * radio range is whatever Bluetooth/BLE/Wi-Fi give the phones -- typically tens of metres outdoors,
@@ -295,6 +296,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     val json = JSONObject().put("active", active).put("peers", connected.size)
     lastError?.let { json.put("error", it) }
     emit("onMeshStatus", json.toString())
+    emit("onPeerCountChanged", JSONObject().put("peerCount", connected.size).toString())
   }
 
   private fun stopInternal() {

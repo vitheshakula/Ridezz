@@ -21,6 +21,7 @@ class MainApplication : Application(), ReactApplication {
           add(RidezzKeepAwakePackage())
           add(VoiceHazardPackage())
           add(NearbyMeshPackage())
+          add(RidezzTtsPackage())
         },
     )
   }
