@@ -40,12 +40,6 @@
       android:theme="@style/AppTheme"
       android:supportsRtl="true"
       android:usesCleartextTraffic="true">
-      <!-- react-native-maps (Android/Google Maps). Empty value builds fine but the Map tab
-           shows a blank/grey map; see android/local.properties.example. -->
-      
-      <meta-data
-        android:name="com.google.android.geo.API_KEY"
-        android:value="${mapsApiKey}" />
       <activity
         android:name=".MainActivity"
         android:label="@string/app_name"

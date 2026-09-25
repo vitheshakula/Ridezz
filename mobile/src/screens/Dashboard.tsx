@@ -1,169 +1,86 @@
-import React, { useState } from 'react';
-import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
-  Alert,
-  StatusBar,
-} from 'react-native';
-import { useAuth } from '../context/AuthContext';
+import React from 'react';
+import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { color, spacing, type, primaryButtonStyle, secondaryButtonStyle } from '../theme';
 
-export const Dashboard = ({ navigation, onJoined }: any) => {
-  const { user, logout } = useAuth();
-  const [roomCode, setRoomCode] = useState('');
+const FEATURES: Array<{ icon: string; label: string }> = [
+  { icon: '🎙️', label: 'Full-duplex voice, up to 10 riders' },
+  { icon: '📍', label: 'Live group location on the map' },
+  { icon: '🔒', label: 'Keeps talking with the phone locked' },
+];
 
-  const handleJoinRide = () => {
-    if (!roomCode.trim()) {
-      Alert.alert('Enter Room', 'Please enter a ride or room code.');
-      return;
-    }
+/** Unauthenticated landing screen -- Sign In / Create Account. Only ever reached
+ * while logged out: App.tsx routes any logged-in user straight to JoinScreen. */
+export const Dashboard = ({ navigation }: any) => {
+  const insets = useSafeAreaInsets();
 
-    const payload = {
-      roomName: roomCode.trim().toUpperCase(),
-      riderName: user?.rider_name || 'Rider',
-    };
-
-    if (onJoined) {
-      onJoined(payload);
-    } else if (navigation?.navigate) {
-      navigation.navigate('ActiveRoom', payload);
-    }
-  };
-
-  // 🔹 If rider is NOT logged in: Show Welcome Screen with Login & Sign Up buttons
-  if (!user) {
-    return (
-      <View style={styles.container}>
-        <StatusBar barStyle="light-content" backgroundColor="#121212" />
-
-        <View style={styles.centerContent}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>⚡</Text>
-          </View>
-
-          <Text style={styles.welcomeTitle}>Welcome to Ridezz</Text>
-          <Text style={styles.heroSubtitle}>
-            Budget motorcycle group intercom. Connect up to 10 riders over persistent voice audio.
-          </Text>
-
-          <View style={styles.authButtonGroup}>
-            <TouchableOpacity
-              style={styles.primaryBtn}
-              onPress={() => navigation?.navigate('LoginPage')}
-            >
-              <Text style={styles.primaryBtnText}>SIGN IN</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={styles.secondaryBtn}
-              onPress={() => navigation?.navigate('SignupPage')}
-            >
-              <Text style={styles.secondaryBtnText}>CREATE ACCOUNT</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </View>
-    );
-  }
-
-  // 🔹 If rider IS logged in: Show Room Code Entry
   return (
-    <View style={styles.container}>
-      <StatusBar barStyle="light-content" backgroundColor="#121212" />
+    <View style={[styles.container, { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xxl }]}>
+      <StatusBar barStyle="light-content" />
 
-      {/* Top Bar */}
-      <View style={styles.topBar}>
-        <View>
-          <Text style={styles.riderHandle}>{user.rider_name}</Text>
-          <Text style={styles.statusIndicator}>● Ready to ride</Text>
-        </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={logout}>
-          <Text style={styles.logoutText}>Leave</Text>
-        </TouchableOpacity>
-      </View>
-
-      {/* Center Action */}
       <View style={styles.centerContent}>
-        <Text style={styles.heroTitle}>Join Intercom</Text>
+        <View style={styles.logoBadge}>
+          <Text style={styles.logoBadgeText}>⚡</Text>
+        </View>
+
+        <Text style={styles.welcomeTitle}>Welcome to Rideaze</Text>
         <Text style={styles.heroSubtitle}>
-          Connect with up to 10 riders over persistent cellular/Wi-Fi WebRTC.
+          Budget motorcycle group intercom for riders who want to stay connected on the road.
         </Text>
 
-        <TextInput
-          style={styles.roomInput}
-          placeholder="ENTER ROOM CODE (e.g. RIDE-99)"
-          placeholderTextColor="#555"
-          autoCapitalize="characters"
-          value={roomCode}
-          onChangeText={setRoomCode}
-        />
+        <View style={styles.featureList}>
+          {FEATURES.map(f => (
+            <View key={f.label} style={styles.featureRow}>
+              <Text style={styles.featureIcon}>{f.icon}</Text>
+              <Text style={styles.featureLabel}>{f.label}</Text>
+            </View>
+          ))}
+        </View>
 
-        <TouchableOpacity style={styles.primaryBtn} onPress={handleJoinRide}>
-          <Text style={styles.primaryBtnText}>CONNECT TO ROOM</Text>
-        </TouchableOpacity>
+        <View style={styles.authButtonGroup}>
+          <TouchableOpacity
+            style={primaryButtonStyle}
+            onPress={() => navigation?.navigate('LoginPage')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.primaryBtnText}>SIGN IN</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={secondaryButtonStyle}
+            onPress={() => navigation?.navigate('SignupPage')}
+            activeOpacity={0.85}
+          >
+            <Text style={styles.secondaryBtnText}>CREATE ACCOUNT</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212', padding: 24 },
-  topBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginTop: 20,
-  },
-  riderHandle: { fontSize: 20, fontWeight: '800', color: '#fff' },
-  statusIndicator: { fontSize: 12, color: '#22c55e', marginTop: 2 },
-  logoutBtn: { paddingVertical: 6, paddingHorizontal: 12, borderRadius: 6, backgroundColor: '#222' },
-  logoutText: { color: '#ef4444', fontSize: 12, fontWeight: '600' },
+  container: { flex: 1, backgroundColor: color.bg, paddingHorizontal: spacing.xxl },
   centerContent: { flex: 1, justifyContent: 'center' },
   logoBadge: {
     width: 64,
     height: 64,
     borderRadius: 32,
-    backgroundColor: '#1e1e1e',
+    backgroundColor: color.surfaceRaised,
     alignItems: 'center',
     justifyContent: 'center',
-    marginBottom: 20,
+    marginBottom: spacing.xl,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: color.border,
   },
   logoBadgeText: { fontSize: 28 },
-  welcomeTitle: { fontSize: 32, fontWeight: '900', color: '#fff', marginBottom: 8 },
-  heroTitle: { fontSize: 28, fontWeight: '900', color: '#fff', marginBottom: 8 },
-  heroSubtitle: { fontSize: 15, color: '#888', marginBottom: 32, lineHeight: 22 },
-  authButtonGroup: { width: '100%', gap: 14 },
-  roomInput: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-    paddingHorizontal: 20,
-    paddingVertical: 16,
-    color: '#fff',
-    fontSize: 16,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    marginBottom: 16,
-  },
-  primaryBtn: {
-    backgroundColor: '#22c55e',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
-  primaryBtnText: { color: '#000', fontSize: 15, fontWeight: '800', letterSpacing: 1 },
-  secondaryBtn: {
-    backgroundColor: '#1e1e1e',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  secondaryBtnText: { color: '#fff', fontSize: 15, fontWeight: '700', letterSpacing: 1 },
+  welcomeTitle: { ...type.hero, color: color.textPrimary, marginBottom: spacing.sm },
+  heroSubtitle: { ...type.subtitle, color: color.textSecondary, marginBottom: spacing.xxl, lineHeight: 21 },
+  featureList: { marginBottom: spacing.xxxl, gap: spacing.md },
+  featureRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
+  featureIcon: { fontSize: 18, width: 26 },
+  featureLabel: { ...type.caption, color: color.textSecondary, flex: 1 },
+  authButtonGroup: { width: '100%', gap: spacing.md },
+  primaryBtnText: { color: color.onAccent, fontSize: 15, fontWeight: '800', letterSpacing: 1 },
+  secondaryBtnText: { color: color.textPrimary, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
 });

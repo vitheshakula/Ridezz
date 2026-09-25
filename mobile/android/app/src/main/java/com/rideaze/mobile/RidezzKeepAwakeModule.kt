@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import android.view.WindowManager
 import com.facebook.react.bridge.Promise

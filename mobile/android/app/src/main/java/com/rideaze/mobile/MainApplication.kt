@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import android.app.Application
 import com.facebook.react.PackageList

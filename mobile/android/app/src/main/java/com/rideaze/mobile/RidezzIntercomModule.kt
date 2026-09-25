@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext

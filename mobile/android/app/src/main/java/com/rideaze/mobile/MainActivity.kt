@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate

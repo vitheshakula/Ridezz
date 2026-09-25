@@ -1,5 +1,5 @@
 {
-  "name": "com.ridezz.mobile",
+  "name": "com.rideaze.mobile",
   "version": "0.0.1",
   "private": true,
   "scripts": {
@@ -12,6 +12,7 @@
   "dependencies": {
     "@livekit/react-native": "^2.12.0",
     "@livekit/react-native-webrtc": "^144.1.2",
+    "@maplibre/maplibre-react-native": "^11.3.10",
     "@prisma/client": "^7.10.0",
     "@react-native-async-storage/async-storage": "^3.1.1",
     "@react-native-community/geolocation": "^3.4.0",
@@ -25,7 +26,6 @@
     "livekit-client": "^2.22.0",
     "react": "19.2.3",
     "react-native": "0.87.0",
-    "react-native-maps": "^1.29.0",
     "react-native-safe-area-context": "^5.5.2"
   },
   "devDependencies": {
