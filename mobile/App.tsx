@@ -14,13 +14,15 @@ import { SignupPage } from './src/screens/SignupPage';
 import { ForgotPassword } from './src/screens/ForgotPassword';
 import JoinScreen, { type RideSession } from './src/screens/JoinScreen';
 import RideScreen from './src/screens/RideScreen';
+import ProfileScreen from './src/screens/ProfileScreen';
 
 export type ScreenName =
   | 'Dashboard'
   | 'LoginPage'
   | 'SignupPage'
   | 'ForgotPassword'
-  | 'JoinScreen';
+  | 'JoinScreen'
+  | 'ProfileScreen';
 
 function MainContent() {
   const { user } = useAuth();
@@ -36,6 +38,11 @@ function MainContent() {
   // 1. In active voice room
   if (session) {
     return <RideScreen session={session} onLeave={handleLeave} />;
+  }
+
+  // 2a. Logged-in rider's profile
+  if (user && currentScreen === 'ProfileScreen') {
+    return <ProfileScreen navigation={navigation} />;
   }
 
   // 2. Logged-in user or directed to JoinScreen

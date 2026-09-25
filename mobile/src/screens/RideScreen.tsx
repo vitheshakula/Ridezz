@@ -22,6 +22,7 @@ import {
   useLocalParticipant,
   useRemoteParticipants,
   useRoomContext,
+  useSpeakingParticipants,
   AndroidAudioTypePresets,
 } from '@livekit/react-native';
 import {
@@ -63,7 +64,17 @@ import {
   type HazardType,
 } from '../services/SpeechHazardService';
 import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
-import { color, radius, spacing, type } from '../theme';
+import { brand, font, homeType } from '../homeTheme';
+import { Logo } from '../components/Logo';
+import {
+  ChevronIcon,
+  CloseIcon,
+  GearIcon,
+  LogoutIcon,
+  PeopleIcon,
+  StatusDot,
+} from '../components/HomeIcons';
+import { formatDistance, haversineDistanceMeters } from '../utils/riderLocation';
 import { useAuth } from '../context/AuthContext';
 import { geocodeDestination, updateRoomDestination } from '../services/destinationService';
 import {
@@ -127,8 +138,6 @@ interface RideScreenProps {
   session: RideSession;
   onLeave: () => void;
 }
-
-type RideTab = 'intercom' | 'map';
 
 const CONNECTION_STATE_LABELS: Record<ConnectionState, string> = {
   [ConnectionState.Connecting]: 'Connecting',
@@ -257,8 +266,17 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+  const speakers = useSpeakingParticipants();
+  const speakingIdentities = useMemo(() => speakers.map(p => p.identity), [speakers]);
+  const localSpeaking = speakers.some(p => p.isLocal);
+  const remoteSpeaking = speakers.some(p => !p.isLocal);
   const { token: authToken } = useAuth();
-  const [tab, setTab] = useState<RideTab>('intercom');
+  // Layout-only state: measured HUD / panel heights (so map overlays stay clear of them),
+  // whether the rider list is expanded, and the settings sheet.
+  const [hudHeight, setHudHeight] = useState(0);
+  const [panelHeight, setPanelHeight] = useState(0);
+  const [panelExpanded, setPanelExpanded] = useState(false);
+  const [settingsVisible, setSettingsVisible] = useState(false);
   const [currentDestination, setCurrentDestination] = useState<RideDestination | null>(
     session.destination ?? null,
   );
@@ -719,164 +737,316 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const displayedError = capacityError ?? connectError;
   const statusLabel = connectError ? 'Error' : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
 
-  // Secondary status lines (mesh, hazard heard/sent) are collapsed into one row of small
-  // single-line chips instead of the old stack of full-width lines -- that stack, at variable
-  // height depending on how long the latest hazard transcript was, is what kept shifting the
-  // Mute/Leave buttons around during testing (a 2-line "Heard: ..." pushes everything below it
-  // down). Each chip is capped to one line with an ellipsis, so the header's height is now
-  // predictable regardless of what the hazard system heard.
-  const secondaryChips: Array<{ key: string; text: string; tone: 'default' | 'warning' }> = [];
-  secondaryChips.push({
-    key: 'mesh',
-    text: meshStatus.active
-      ? `Mesh: ${meshStatus.peers} nearby`
-      : 'Mesh: idle',
-    tone: 'default',
-  });
-  if (lastHeard) {
-    secondaryChips.push({ key: 'heard', text: `Heard: "${lastHeard}"`, tone: 'default' });
-  }
-  if (lastSent) {
-    secondaryChips.push({ key: 'sent', text: `Sent: ${lastSent}`, tone: 'default' });
-  }
-
   const warningLines = [
     backgroundWarning,
     meshError ?? meshStatus.error ? `Mesh problem: ${meshError ?? meshStatus.error}` : null,
     voiceError ? `Hazard voice detection off: ${voiceError}` : null,
   ].filter(Boolean) as string[];
 
+  // --- Presentation-only values (all derived from the state above) ------------------------------
+  const onlineCount = riderCount;
+  const connectionTone =
+    connectionState === ConnectionState.Connected && !connectError
+      ? brand.success
+      : connectionState === ConnectionState.Reconnecting ||
+          connectionState === ConnectionState.SignalReconnecting ||
+          connectionState === ConnectionState.Connecting
+        ? brand.warning
+        : brand.danger;
+  const transportLabel = transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING';
+  const meshProblem = meshError ?? meshStatus.error;
+  const meshLabel = meshProblem
+    ? 'MESH UNAVAILABLE'
+    : meshStatus.active
+      ? `MESH ACTIVE · ${meshStatus.peers} NEARBY`
+      : 'MESH IDLE';
+  const meshTone = meshProblem ? brand.warning : meshStatus.active ? brand.primary : brand.outline;
+
+  const voiceState: { label: string; tone: string } = (() => {
+    if (
+      connectionState === ConnectionState.Reconnecting ||
+      connectionState === ConnectionState.SignalReconnecting
+    ) {
+      return { label: 'RECONNECTING', tone: brand.warning };
+    }
+    if (connectionState === ConnectionState.Disconnected) {
+      return { label: meshMode ? 'VOICE OFFLINE' : 'OFFLINE', tone: brand.danger };
+    }
+    if (connectionState === ConnectionState.Connecting) {
+      return { label: 'CONNECTING', tone: brand.warning };
+    }
+    if (!isMicrophoneEnabled) {
+      return { label: 'MUTED', tone: brand.danger };
+    }
+    if (localSpeaking) {
+      return { label: 'TALKING', tone: brand.success };
+    }
+    if (remoteSpeaking) {
+      return { label: 'ANOTHER RIDER TALKING', tone: brand.primary };
+    }
+    return { label: 'ACTIVE', tone: brand.primary };
+  })();
+
+  const localLocation = locations.find(l => l.participantIdentity === localParticipant.identity);
+  const distanceLabelFor = (identity: string): string | null => {
+    const remote = locations.find(l => l.participantIdentity === identity);
+    return localLocation && remote
+      ? formatDistance(haversineDistanceMeters(localLocation, remote))
+      : null;
+  };
+
+  const hudBottom = insets.top + 8 + hudHeight;
+  const bannerTop = hudBottom + 8;
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.md }]}>
+    <View style={styles.container}>
+      <View style={StyleSheet.absoluteFill}>
+        <RiderMap
+          locations={locations}
+          localIdentity={localParticipant.identity}
+          statusMessage={mapStatusMessage}
+          destination={currentDestination}
+          topInset={hudBottom}
+          bottomInset={panelHeight}
+          speakingIdentities={speakingIdentities}
+          onChangeDestination={
+            session.isHost
+              ? () => {
+                  setDestinationQuery(currentDestination?.name ?? '');
+                  setDestinationError(null);
+                  setDestinationEditorVisible(true);
+                }
+              : undefined
+          }
+        />
+      </View>
+
       {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
       {bannerAlert ? (
         <HazardAlertBanner
           packet={bannerAlert.packet}
           kind={bannerAlert.kind}
-          top={insets.top + 8}
+          top={bannerTop}
           onDismiss={dismissHazard}
         />
       ) : null}
 
-      <View style={styles.header}>
-        <View style={styles.headerTopRow}>
-          <View>
-            <Text style={styles.title}>RIDEAZE</Text>
-            <Text style={styles.roomLabel}>Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS} riders</Text>
-          </View>
-          <View style={[styles.hudPill, transport === 'mesh' ? styles.hudPillMesh : styles.hudPillCloud]}>
-            <Text style={[styles.hudText, transport === 'mesh' && styles.hudTextMesh]}>
-              {transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING'}
+      <View
+        style={[styles.hud, { top: insets.top + 8 }]}
+        onLayout={e => setHudHeight(e.nativeEvent.layout.height)}
+      >
+        <View style={styles.hudTop}>
+          <Logo size={34} />
+          <View style={styles.hudTitleBlock}>
+            <Text style={styles.hudTitle}>RIDEAZE</Text>
+            <Text style={styles.hudRoom} numberOfLines={1}>
+              Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS} riders
             </Text>
           </View>
+          <View style={styles.timerPill}>
+            <RideTimer />
+          </View>
+          <Pressable
+            style={styles.iconButton}
+            onPress={() => setSettingsVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Ride settings"
+          >
+            <GearIcon size={22} color={brand.textPrimary} />
+          </Pressable>
         </View>
-
-        <Text style={[styles.status, displayedError && styles.statusError]} numberOfLines={1}>
-          {displayedError ? `Error: ${displayedError}` : statusLabel}
-          {transport !== 'cloud' ? ` · ${offlinePeerCount} offline nearby` : ''}
-        </Text>
 
         <View style={styles.chipRow}>
-          {secondaryChips.map(chip => (
-            <View key={chip.key} style={styles.chip}>
-              <Text style={styles.chipText} numberOfLines={1} ellipsizeMode="tail">
-                {chip.text}
-              </Text>
-            </View>
-          ))}
+          <View style={styles.chip}>
+            <StatusDot color={connectionTone} size={8} />
+            <Text style={styles.chipText} numberOfLines={1}>
+              {statusLabel.toUpperCase()} · {transportLabel}
+            </Text>
+          </View>
+          <View style={styles.chip}>
+            <PeopleIcon size={14} color={brand.textSecondary} />
+            <Text style={styles.chipText}>
+              {riderCount}/{MAX_RIDERS}
+            </Text>
+          </View>
+          <View style={[styles.chip, { borderColor: meshTone }]}>
+            <Text style={[styles.chipText, { color: meshTone }]} numberOfLines={1}>
+              {meshLabel}
+            </Text>
+          </View>
         </View>
 
-        {warningLines.length > 0 ? (
-          <Text style={styles.warningText} numberOfLines={1} ellipsizeMode="tail">
+        {displayedError ? (
+          <Text style={[styles.hudNotice, { color: brand.danger }]} numberOfLines={2}>
+            Error: {displayedError}
+          </Text>
+        ) : warningLines.length > 0 ? (
+          <Text style={[styles.hudNotice, { color: brand.warning }]} numberOfLines={2}>
             {warningLines[0]}
           </Text>
+        ) : transport !== 'cloud' ? (
+          <Text style={[styles.hudNotice, { color: brand.textSecondary }]} numberOfLines={1}>
+            {offlinePeerCount} offline nearby
+          </Text>
         ) : null}
+      </View>
 
-        <View style={styles.utilityRow}>
-          <View style={styles.keepAwakeRow}>
-            <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
-            <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
+      <View
+        style={[styles.panel, { paddingBottom: insets.bottom + 12 }]}
+        onLayout={e => setPanelHeight(e.nativeEvent.layout.height)}
+      >
+        <View style={styles.panelHandle} />
+
+        <Pressable
+          style={styles.panelHeader}
+          onPress={() => setPanelExpanded(v => !v)}
+          accessibilityRole="button"
+          accessibilityLabel={panelExpanded ? 'Hide riders' : 'Show riders'}
+        >
+          <View>
+            <Text style={styles.panelTitle}>
+              {riderCount} {riderCount === 1 ? 'RIDER' : 'RIDERS'} · {onlineCount} ONLINE
+            </Text>
+            <Text style={[styles.panelSub, { color: meshTone }]}>{meshLabel}</Text>
           </View>
-          <Pressable style={styles.diagnosticsLink} onPress={() => setDiagnosticsVisible(true)} hitSlop={12}>
-            <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
-          </Pressable>
-        </View>
+          <ChevronIcon size={22} color={brand.textSecondary} up={!panelExpanded} />
+        </Pressable>
 
-        <View style={styles.tabs}>
-          <Pressable
-            style={[styles.tabButton, tab === 'intercom' && styles.tabButtonActive]}
-            onPress={() => setTab('intercom')}
+        {panelExpanded ? (
+          <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
+            <RiderRow participant={localParticipant} isLocal />
+            {sortedRemoteParticipants.map(p => (
+              <RiderRow
+                key={p.identity}
+                participant={p}
+                isLocal={false}
+                distanceLabel={distanceLabelFor(p.identity)}
+              />
+            ))}
+          </ScrollView>
+        ) : (
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            style={styles.avatarStrip}
+            contentContainerStyle={styles.avatarStripContent}
           >
-            <Text style={[styles.tabButtonText, tab === 'intercom' && styles.tabButtonTextActive]}>
-              INTERCOM
+            {[localParticipant, ...sortedRemoteParticipants].map(p => {
+              const label = (p.name || p.identity || '?').trim();
+              const speaking = speakingIdentities.includes(p.identity);
+              return (
+                <View
+                  key={p.identity}
+                  style={[styles.stripAvatar, speaking && styles.stripAvatarSpeaking]}
+                  accessibilityLabel={label}
+                >
+                  <Text style={styles.stripInitial}>{label.charAt(0).toUpperCase() || '?'}</Text>
+                </View>
+              );
+            })}
+          </ScrollView>
+        )}
+
+        <View style={styles.controlsRow}>
+          <View style={styles.controlSide}>
+            <Pressable
+              style={styles.leaveButton}
+              onPress={onLeave}
+              accessibilityRole="button"
+              accessibilityLabel="Leave Ride"
+            >
+              <LogoutIcon size={20} color="#f87171" />
+              <Text style={styles.leaveButtonText}>Leave Ride</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.controlCenter}>
+            <MuteButton
+              muted={!isMicrophoneEnabled}
+              onPress={handleToggleMute}
+              size="large"
+              talking={localSpeaking}
+            />
+            <Text style={[styles.voiceState, { color: voiceState.tone }]} numberOfLines={1}>
+              {voiceState.label}
             </Text>
-          </Pressable>
-          <Pressable
-            style={[styles.tabButton, tab === 'map' && styles.tabButtonActive]}
-            onPress={() => setTab('map')}
-          >
-            <Text style={[styles.tabButtonText, tab === 'map' && styles.tabButtonTextActive]}>
-              MAP
-            </Text>
-          </Pressable>
+          </View>
+
+          <View style={styles.controlSide}>
+            <Pressable
+              style={styles.sideButton}
+              onPress={() => setPanelExpanded(v => !v)}
+              accessibilityRole="button"
+              accessibilityLabel={panelExpanded ? 'Hide riders' : 'Show riders'}
+            >
+              <PeopleIcon size={22} color={brand.textPrimary} />
+              <Text style={styles.sideButtonText}>{riderCount}</Text>
+            </Pressable>
+          </View>
         </View>
       </View>
 
-      {tab === 'intercom' ? (
-        <>
-          <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
-            <RiderRow participant={localParticipant} isLocal />
-            {sortedRemoteParticipants.map((p) => (
-              <RiderRow key={p.identity} participant={p} isLocal={false} />
-            ))}
-          </ScrollView>
-          <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="large" />
-        </>
-      ) : (
-        <View style={styles.mapContainer}>
-          {locationPermissionGranted === false ? (
-            <Text style={styles.locationWarning}>
-              Location sharing is off (permission denied). Your position won't appear on the map, but the intercom still works normally.
-            </Text>
-          ) : null}
-          <RiderMap
-            locations={locations}
-            localIdentity={localParticipant.identity}
-            statusMessage={mapStatusMessage}
-            destination={currentDestination}
-          />
-          {session.isHost ? (
-            <Pressable
-              style={styles.changeDestinationButton}
-              accessibilityRole="button"
-              accessibilityLabel="Change destination"
-              hitSlop={8}
-              onPress={() => {
-                setDestinationQuery(currentDestination?.name ?? '');
-                setDestinationError(null);
-                setDestinationEditorVisible(true);
-              }}
-            >
-              <Text style={styles.changeDestinationButtonText}>Change destination</Text>
-            </Pressable>
-          ) : null}
-          {/* Floating, compact on the Map tab -- the map is the primary content here, so the
-              mic control shrinks to a reachable corner button instead of a full-size sibling
-              that would otherwise claim a third of the screen. Positioned mid-right, clear of
-              RiderMap's own top status overlay and its bottom Fit Group / Center Me controls. */}
-          <View style={styles.floatingMuteWrap} pointerEvents="box-none">
-            <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="small" />
-          </View>
-        </View>
-      )}
-
-      {/* Leave button */}
-      <Pressable style={styles.leaveButton} onPress={onLeave}>
-        <Text style={styles.leaveButtonText}>Leave Ride</Text>
-      </Pressable>
-
       <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+
+      <Modal
+        visible={settingsVisible}
+        transparent
+        animationType="slide"
+        onRequestClose={() => setSettingsVisible(false)}
+      >
+        <Pressable style={styles.sheetBackdrop} onPress={() => setSettingsVisible(false)}>
+          <Pressable
+            style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}
+            onPress={() => {}}
+          >
+            <View style={styles.sheetHeader}>
+              <Text style={styles.sheetTitle}>Ride settings</Text>
+              <Pressable
+                style={styles.iconButton}
+                onPress={() => setSettingsVisible(false)}
+                accessibilityRole="button"
+                accessibilityLabel="Close settings"
+              >
+                <CloseIcon size={20} color={brand.textSecondary} />
+              </Pressable>
+            </View>
+
+            <View style={styles.sheetRow}>
+              <Text style={styles.sheetRowLabel}>Keep screen awake</Text>
+              <Switch
+                value={keepAwakeEnabled}
+                onValueChange={setKeepAwakeEnabled}
+                trackColor={{ false: brand.surfaceHighest, true: brand.primaryBorder }}
+                thumbColor={keepAwakeEnabled ? brand.primary : brand.outline}
+              />
+            </View>
+
+            <Pressable
+              style={styles.sheetRow}
+              onPress={() => {
+                setSettingsVisible(false);
+                setDiagnosticsVisible(true);
+              }}
+              accessibilityRole="button"
+            >
+              <Text style={styles.sheetRowLabel}>Diagnostics</Text>
+              <Text style={styles.sheetRowAction}>Open</Text>
+            </Pressable>
+
+            {lastHeard ? (
+              <Text style={styles.sheetNote} numberOfLines={2}>
+                Heard: "{lastHeard}"
+              </Text>
+            ) : null}
+            {lastSent ? (
+              <Text style={styles.sheetNote} numberOfLines={2}>
+                Sent: {lastSent}
+              </Text>
+            ) : null}
+          </Pressable>
+        </Pressable>
+      </Modal>
 
       <Modal
         visible={destinationEditorVisible}
@@ -899,7 +1069,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               value={destinationQuery}
               onChangeText={setDestinationQuery}
               placeholder="Search for a place"
-              placeholderTextColor={color.textMuted}
+              placeholderTextColor={brand.outline}
               editable={!destinationUpdating}
               autoCapitalize="words"
               autoFocus
@@ -919,7 +1089,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
                 onPress={handleChangeDestination}
               >
                 {destinationUpdating ? (
-                  <ActivityIndicator color={color.onAccent} />
+                  <ActivityIndicator color={brand.onPrimary} />
                 ) : (
                   <Text style={styles.destinationSaveText}>Update route</Text>
                 )}
@@ -932,132 +1102,226 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 }
 
+/** Elapsed time since this rider joined the ride. Owns its own 1s tick so the rest of the
+ * screen doesn't re-render every second. */
+function RideTimer() {
+  const [startedAt] = useState(() => Date.now());
+  const [now, setNow] = useState(startedAt);
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const total = Math.max(0, Math.floor((now - startedAt) / 1000));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return <Text style={styles.timerText}>{h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}</Text>;
+}
+
+const SURFACE = 'rgba(17, 25, 35, 0.94)';
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bg, paddingHorizontal: spacing.xl },
-  header: { marginBottom: spacing.sm },
-  headerTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
+  container: { flex: 1, backgroundColor: brand.bg },
+  hud: {
+    position: 'absolute',
+    left: 12,
+    right: 12,
+    padding: 10,
+    borderRadius: 18,
+    backgroundColor: SURFACE,
+    borderWidth: 1,
+    borderColor: brand.inputBorder,
+    gap: 8,
   },
-  title: { ...type.title, fontSize: 20, color: color.accent, letterSpacing: 1.5 },
-  roomLabel: { ...type.caption, color: color.textMuted, marginTop: spacing.xs / 2 },
-  hudPill: { paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1 },
-  hudPillCloud: { borderColor: color.accentBorder, backgroundColor: color.accentMuted },
-  hudPillMesh: { borderColor: color.warningBorder, backgroundColor: color.warningMuted },
-  hudText: { color: color.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
-  hudTextMesh: { color: color.warning },
-  status: {
-    fontSize: 14,
-    color: color.textSecondary,
-    marginTop: spacing.sm,
-    fontWeight: '600',
+  hudTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  hudTitleBlock: { flex: 1 },
+  hudTitle: { ...homeType.headlineSmall, fontSize: 18, lineHeight: 22, color: brand.textPrimary, letterSpacing: 1 },
+  hudRoom: { ...homeType.labelSmall, color: brand.primary },
+  timerPill: {
+    minHeight: 32,
+    justifyContent: 'center',
+    paddingHorizontal: 10,
+    borderRadius: 999,
+    backgroundColor: brand.darkest,
+    borderWidth: 1,
+    borderColor: brand.inputBorder,
   },
-  statusError: { color: color.danger },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
+  timerText: { fontFamily: font.heading, fontSize: 14, lineHeight: 18, color: brand.textPrimary },
+  iconButton: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: brand.darkest,
+    borderWidth: 1,
+    borderColor: brand.inputBorder,
+  },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
   chip: {
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.sm,
-    paddingVertical: spacing.xs / 2,
-    paddingHorizontal: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
     maxWidth: '100%',
-  },
-  chipText: { fontSize: 11, color: color.textSecondary },
-  warningText: { fontSize: 12, color: color.warning, marginTop: spacing.sm },
-  utilityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md },
-  keepAwakeRow: { flexDirection: 'row', alignItems: 'center' },
-  keepAwakeLabel: { color: color.textSecondary, fontSize: 13, marginRight: spacing.sm },
-  diagnosticsLink: { paddingVertical: spacing.xs, paddingHorizontal: spacing.xs },
-  diagnosticsLinkText: { color: color.accent, fontSize: 13, fontWeight: '600' },
-  tabs: { flexDirection: 'row', marginTop: spacing.md, backgroundColor: color.surface, borderRadius: radius.md, padding: spacing.xs },
-  tabButton: { flex: 1, paddingVertical: spacing.md - 2, borderRadius: radius.sm, alignItems: 'center' },
-  tabButtonActive: { backgroundColor: color.surfaceRaised },
-  tabButtonText: { color: color.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  tabButtonTextActive: { color: color.accent },
-  riderList: { flex: 1, marginTop: spacing.md },
-  riderListContent: { paddingVertical: spacing.xs },
-  mapContainer: { flex: 1, marginTop: spacing.md, borderRadius: radius.lg, overflow: 'hidden' },
-  floatingMuteWrap: {
-    position: 'absolute',
-    top: '50%',
-    right: spacing.lg,
-    marginTop: -32,
-    zIndex: 2,
-    elevation: 4,
-  },
-  changeDestinationButton: {
-    position: 'absolute',
-    top: 112,
-    right: spacing.md,
-    zIndex: 3,
-    elevation: 6,
-    backgroundColor: color.surfaceRaised,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 999,
+    backgroundColor: brand.darkest,
     borderWidth: 1,
-    borderColor: color.accentBorder,
-    borderRadius: radius.md,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
+    borderColor: brand.inputBorder,
   },
-  changeDestinationButtonText: { color: color.accent, fontSize: 12, fontWeight: '700' },
+  chipText: { ...homeType.labelSmall, color: brand.textSecondary, flexShrink: 1 },
+  hudNotice: { ...homeType.bodySmall },
+
+  panel: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingTop: 8,
+    paddingHorizontal: 16,
+    backgroundColor: 'rgba(12, 20, 30, 0.97)',
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderTopWidth: 1,
+    borderColor: brand.inputBorder,
+    elevation: 12,
+  },
+  panelHandle: {
+    alignSelf: 'center',
+    width: 40,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: brand.surfaceHighest,
+  },
+  panelHeader: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  panelTitle: { ...homeType.labelLarge, color: brand.textPrimary, letterSpacing: 0.6 },
+  panelSub: { ...homeType.labelSmall },
+  riderList: { maxHeight: 190 },
+  riderListContent: { paddingBottom: 4 },
+  avatarStrip: { flexGrow: 0 },
+  avatarStripContent: { gap: 8, paddingVertical: 4 },
+  stripAvatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    borderWidth: 2,
+    borderColor: brand.success,
+    backgroundColor: brand.darkest,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  stripAvatarSpeaking: { backgroundColor: 'rgba(34, 197, 94, 0.25)' },
+  stripInitial: { ...homeType.labelLarge, color: brand.textPrimary },
+
+  controlsRow: { flexDirection: 'row', alignItems: 'center', marginTop: 10 },
+  controlSide: { flex: 1, alignItems: 'center' },
+  controlCenter: { flex: 1.2, alignItems: 'center' },
+  voiceState: { ...homeType.labelSmall, marginTop: 6, textAlign: 'center' },
+  leaveButton: {
+    minWidth: 96,
+    minHeight: 56,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingHorizontal: 12,
+    borderRadius: 16,
+    backgroundColor: brand.dangerMuted,
+    borderWidth: 1,
+    borderColor: brand.dangerBorder,
+  },
+  leaveButtonText: { ...homeType.labelMedium, color: '#f87171' },
+  sideButton: {
+    minWidth: 56,
+    minHeight: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: brand.card,
+    borderWidth: 1,
+    borderColor: brand.inputBorder,
+  },
+  sideButtonText: { ...homeType.labelSmall, color: brand.textPrimary },
+
+  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'flex-end' },
+  sheet: {
+    padding: 16,
+    gap: 8,
+    backgroundColor: brand.surface,
+    borderTopLeftRadius: 24,
+    borderTopRightRadius: 24,
+    borderWidth: 1,
+    borderColor: brand.inputBorder,
+  },
+  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
+  sheetRow: {
+    minHeight: 52,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingHorizontal: 14,
+    borderRadius: 14,
+    backgroundColor: brand.card,
+  },
+  sheetRowLabel: { ...homeType.labelLarge, color: brand.textPrimary },
+  sheetRowAction: { ...homeType.labelMedium, color: brand.primary },
+  sheetNote: { ...homeType.bodySmall, color: brand.textSecondary, paddingHorizontal: 4 },
+
   modalBackdrop: {
     flex: 1,
     backgroundColor: 'rgba(0, 0, 0, 0.72)',
     justifyContent: 'center',
-    padding: spacing.xxl,
+    padding: 24,
   },
   destinationModalCard: {
-    backgroundColor: color.surface,
-    borderRadius: radius.lg,
+    backgroundColor: brand.surface,
+    borderRadius: 18,
     borderWidth: 1,
-    borderColor: color.border,
-    padding: spacing.xl,
+    borderColor: brand.inputBorder,
+    padding: 20,
   },
-  destinationModalTitle: { ...type.title, color: color.textPrimary, fontSize: 20 },
+  destinationModalTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
   destinationModalDescription: {
-    ...type.body,
-    color: color.textSecondary,
-    marginTop: spacing.sm,
-    marginBottom: spacing.lg,
+    ...homeType.bodyMedium,
+    color: brand.textSecondary,
+    marginTop: 8,
+    marginBottom: 16,
   },
   destinationInput: {
-    backgroundColor: color.surfaceRaised,
+    ...homeType.bodyLarge,
+    minHeight: 52,
+    backgroundColor: brand.darkest,
     borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.md,
-    color: color.textPrimary,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    borderColor: brand.inputBorder,
+    borderRadius: 14,
+    color: brand.textPrimary,
+    paddingHorizontal: 16,
   },
-  destinationError: { color: color.danger, fontSize: 13, marginTop: spacing.sm },
+  destinationError: { ...homeType.bodySmall, color: brand.danger, marginTop: 8 },
   destinationModalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
-    gap: spacing.md,
-    marginTop: spacing.xl,
+    gap: 12,
+    marginTop: 20,
   },
-  destinationCancelButton: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
-  destinationCancelText: { color: color.textSecondary, fontWeight: '600' },
+  destinationCancelButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 16 },
+  destinationCancelText: { ...homeType.labelLarge, color: brand.textSecondary },
   destinationSaveButton: {
     minWidth: 120,
-    minHeight: 44,
-    backgroundColor: color.accent,
-    borderRadius: radius.md,
+    minHeight: 48,
+    backgroundColor: brand.primary,
+    borderRadius: 14,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
+    paddingHorizontal: 16,
   },
-  destinationSaveText: { color: color.onAccent, fontWeight: '700' },
-  locationWarning: { fontSize: 13, color: color.warning, padding: spacing.md, backgroundColor: color.surface },
-  leaveButton: {
-    marginTop: spacing.md,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.dangerBorder,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md + 2,
-    alignItems: 'center',
-  },
-  leaveButtonText: { color: '#f87171', fontSize: 15, fontWeight: '600' },
+  destinationSaveText: { ...homeType.labelLarge, color: brand.onPrimary },
 });

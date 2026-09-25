@@ -1,6 +1,8 @@
 import { useEffect } from 'react';
-import { Pressable, StyleSheet, Text } from 'react-native';
+import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { HAZARD_LABELS, type HazardPacket } from '../services/SpeechHazardService';
+import { brand, font, homeType } from '../homeTheme';
+import { CRITICAL_HAZARDS, HazardGlyph } from './HazardIcons';
 
 /** How long a hazard banner stays up before it dismisses itself. */
 export const HAZARD_BANNER_MS = 5000;
@@ -22,18 +24,34 @@ export default function HazardAlertBanner({ packet, kind, top, onDismiss }: Haza
     return () => clearTimeout(timer);
   }, [packet.id, onDismiss]);
 
-  const label = HAZARD_LABELS[packet.hazard].toUpperCase();
+  const label = HAZARD_LABELS[packet.hazard];
+  const isSent = kind === 'sent';
+  // Received alerts: red for critical categories, amber for cautions. Sent: green confirmation.
+  const tone = isSent ? brand.success : CRITICAL_HAZARDS.has(packet.hazard) ? brand.danger : brand.warning;
+  const heading = isSent ? 'HAZARD SENT' : CRITICAL_HAZARDS.has(packet.hazard) ? 'CRITICAL HAZARD' : 'ROAD HAZARD';
 
   return (
     <Pressable
-      style={[styles.banner, kind === 'sent' ? styles.bannerSent : styles.bannerReceived, { top }]}
+      style={[styles.banner, { top, borderColor: tone }]}
       onPress={onDismiss}
       accessibilityRole="alert"
       accessibilityLiveRegion="assertive"
+      accessibilityLabel={
+        isSent ? `Hazard sent: ${label}` : `${packet.senderName}: ${label}`
+      }
     >
-      <Text style={styles.title}>
-        {kind === 'sent' ? `HAZARD SENT: ${label}` : `${packet.senderName.toUpperCase()}: ${label}`}
-      </Text>
+      <View style={[styles.glyph, { backgroundColor: tone }]}>
+        <HazardGlyph type={packet.hazard} size={28} color={brand.darkest} />
+      </View>
+      <View style={styles.text}>
+        <Text style={[styles.heading, { color: tone }]}>{heading}</Text>
+        <Text style={styles.label} numberOfLines={1}>
+          {label}
+        </Text>
+        <Text style={styles.by} numberOfLines={1}>
+          {isSent ? 'Sent to your group' : `Reported by ${packet.senderName}`}
+        </Text>
+      </View>
     </Pressable>
   );
 }
@@ -45,14 +63,18 @@ const styles = StyleSheet.create({
     right: 16,
     zIndex: 10,
     elevation: 10,
-    borderRadius: 12,
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 16,
     borderWidth: 2,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    padding: 12,
+    backgroundColor: brand.card,
   },
-  // Received: this rider did not send it -- an alert from someone else, in red.
-  bannerReceived: { backgroundColor: '#dc2626', borderColor: '#ef4444' },
-  // Sent: this rider's own detected hazard -- a confirmation, not an alert, in green.
-  bannerSent: { backgroundColor: '#16a34a', borderColor: '#22c55e' },
-  title: { color: '#ffffff', fontSize: 18, fontWeight: '800', letterSpacing: 1 },
+  glyph: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  text: { flex: 1 },
+  heading: { ...homeType.labelSmall },
+  label: { fontFamily: font.heading, fontSize: 20, lineHeight: 26, color: brand.textPrimary },
+  by: { ...homeType.bodySmall, color: brand.textSecondary },
 });

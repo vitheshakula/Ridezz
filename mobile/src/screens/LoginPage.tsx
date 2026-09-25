@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
@@ -13,7 +12,9 @@ import {
 import { useAuth } from '../context/AuthContext';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { login as loginRequest } from '../services/AuthService';
-import { color, radius, spacing, type, cardStyle, primaryButtonStyle, inputStyle } from '../theme';
+import { brand } from '../homeTheme';
+import { Logo } from '../components/Logo';
+import { authStyles } from './authStyles';
 import { describeAuthError } from '../utils/authErrors';
 import { validateSignIn, type SignInErrors } from '../utils/authValidation';
 
@@ -60,14 +61,12 @@ export const LoginPage = ({ navigation }: any) => {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>⚡</Text>
-          </View>
+          <Logo size={72} />
           <Text style={styles.appTitle}>RIDEAZE</Text>
           <Text style={styles.subTitle}>Group Voice Intercom</Text>
         </View>
 
-        <View style={cardStyle}>
+        <View style={styles.card}>
           <Text style={styles.cardTitle}>Sign In</Text>
 
           <Text style={styles.label}>Gmail Address</Text>
@@ -75,7 +74,7 @@ export const LoginPage = ({ navigation }: any) => {
             testID="login-email"
             style={[styles.input, errors.email && styles.inputError]}
             placeholder="rider@gmail.com"
-            placeholderTextColor={color.textMuted}
+            placeholderTextColor={brand.outline}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
@@ -95,7 +94,7 @@ export const LoginPage = ({ navigation }: any) => {
               testID="login-password"
               style={styles.passwordInput}
               placeholder="••••••••"
-              placeholderTextColor={color.textMuted}
+              placeholderTextColor={brand.outline}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
@@ -128,13 +127,13 @@ export const LoginPage = ({ navigation }: any) => {
 
           <TouchableOpacity
             testID="login-submit"
-            style={[primaryButtonStyle, isLoading && styles.buttonDisabled]}
+            style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={isLoading}
             activeOpacity={0.85}
           >
             {isLoading ? (
-              <ActivityIndicator color={color.onAccent} />
+              <ActivityIndicator color={brand.onPrimary} />
             ) : (
               <Text style={styles.primaryButtonText}>Sign In</Text>
             )}
@@ -162,50 +161,4 @@ export const LoginPage = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bg },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xxl },
-  header: { alignItems: 'center', marginBottom: spacing.xxl },
-  logoBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: color.surfaceRaised,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-    borderWidth: 1,
-    borderColor: color.border,
-  },
-  logoBadgeText: { fontSize: 22 },
-  appTitle: { ...type.hero, fontSize: 30, color: color.accent },
-  subTitle: { ...type.label, color: color.textMuted, marginTop: spacing.xs },
-  cardTitle: { ...type.title, color: color.textPrimary, marginBottom: spacing.xl },
-  label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.md, textTransform: 'none' },
-  input: { ...inputStyle, marginBottom: spacing.lg },
-  inputError: { borderColor: color.danger, marginBottom: spacing.sm },
-  fieldError: { color: color.danger, fontSize: 12, marginBottom: spacing.md },
-  formError: { color: color.danger, fontSize: 13, textAlign: 'center', marginBottom: spacing.md },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.surfaceRaised,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: color.border,
-    marginBottom: spacing.sm,
-  },
-  passwordInput: { flex: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2, color: color.textPrimary, fontSize: 15 },
-  toggleBtn: { paddingHorizontal: spacing.md + 2 },
-  toggleText: { color: color.accent, fontWeight: '600', fontSize: 12 },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: spacing.xxl, marginTop: spacing.xs },
-  forgotText: { color: color.textSecondary, fontSize: 13 },
-  buttonDisabled: { opacity: 0.6 },
-  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '700' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.xl },
-  dividerLine: { flex: 1, height: 1, backgroundColor: color.border },
-  dividerText: { color: color.textMuted, fontSize: 12, marginHorizontal: spacing.md, fontWeight: '600' },
-  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center' },
-  switchAuthText: { color: color.textSecondary, fontSize: 14 },
-  linkText: { color: color.accent, fontWeight: '600' },
-});
+const styles = authStyles;
