@@ -5,6 +5,7 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+<<<<<<< HEAD
   StyleSheet,
   Text,
   TextInput,
@@ -17,16 +18,36 @@ import BrandLockup from '../components/BrandLockup';
 import { color, inputStyle, primaryButtonStyle, radius, spacing, type } from '../theme';
 
 export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
+=======
+} from 'react-native';
+import { useAuth } from '../context/AuthContext';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { register } from '../services/AuthService';
+import { color, radius, spacing, type, cardStyle, primaryButtonStyle, inputStyle } from '../theme';
+import { describeAuthError } from '../utils/authErrors';
+import { validateRegistration, type RegistrationErrors } from '../utils/authValidation';
+>>>>>>> master
 
 export const SignupPage = ({ navigation }: any) => {
+  const { login } = useAuth();
   const [riderName, setRiderName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState<RegistrationErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const clearError = (field: keyof RegistrationErrors) => {
+    setFormError(null);
+    if (errors[field]) {
+      setErrors(current => ({ ...current, [field]: undefined }));
+    }
+  };
 
   const handleSignup = async () => {
+<<<<<<< HEAD
     if (!riderName.trim()) {
       Alert.alert('Choose a rider name', 'This is how your crew will see you in the room.');
       return;
@@ -41,11 +62,18 @@ export const SignupPage = ({ navigation }: any) => {
     }
     if (password !== confirmPassword) {
       Alert.alert('Passwords do not match', 'Re-enter the same password in both fields.');
+=======
+    const problems = validateRegistration(riderName, email, password, confirmPassword);
+    setErrors(problems);
+    setFormError(null);
+    if (Object.keys(problems).length > 0) {
+>>>>>>> master
       return;
     }
 
     setIsLoading(true);
     try {
+<<<<<<< HEAD
       await axios.post(
         `${API_BASE_URL}/auth/signup`,
         {
@@ -62,6 +90,14 @@ export const SignupPage = ({ navigation }: any) => {
     } catch (error: any) {
       const message = error.response?.data?.message || 'We could not create your account right now.';
       Alert.alert('Could not create account', message);
+=======
+      // The server signs the new rider in as part of registering, so no second trip to Sign In.
+      const result = await register(riderName, email, password);
+      await login(result.token, result.user);
+      navigation?.navigate('JoinScreen');
+    } catch (error) {
+      setFormError(describeAuthError(error, 'Registration failed. Please try again.'));
+>>>>>>> master
     } finally {
       setIsLoading(false);
     }
@@ -91,14 +127,31 @@ export const SignupPage = ({ navigation }: any) => {
         <View style={styles.formCard}>
           <Text style={styles.label}>Rider name</Text>
           <TextInput
+<<<<<<< HEAD
             style={styles.input}
             placeholder="What should your crew call you?"
+=======
+            testID="signup-name"
+            style={[styles.input, errors.name && styles.inputError]}
+            placeholder="e.g. GhostRider, Alex"
+>>>>>>> master
             placeholderTextColor={color.textMuted}
+            autoComplete="name"
+            textContentType="nickname"
             value={riderName}
+<<<<<<< HEAD
             onChangeText={setRiderName}
             autoCapitalize="words"
+=======
+            onChangeText={value => {
+              setRiderName(value);
+              clearError('name');
+            }}
+>>>>>>> master
           />
+          {errors.name ? <Text style={styles.fieldError}>{errors.name}</Text> : null}
 
+<<<<<<< HEAD
           <Text style={styles.label}>Email address</Text>
           <TextInput
             style={styles.input}
@@ -107,39 +160,88 @@ export const SignupPage = ({ navigation }: any) => {
             keyboardType="email-address"
             autoCapitalize="none"
             autoComplete="email"
+=======
+          <Text style={styles.label}>Gmail Address</Text>
+          <TextInput
+            testID="signup-email"
+            style={[styles.input, errors.email && styles.inputError]}
+            placeholder="rider@gmail.com"
+            placeholderTextColor={color.textMuted}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            textContentType="emailAddress"
+>>>>>>> master
             value={email}
-            onChangeText={setEmail}
+            onChangeText={value => {
+              setEmail(value);
+              clearError('email');
+            }}
           />
+          {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
 
+<<<<<<< HEAD
           <View style={styles.labelRow}>
             <Text style={styles.label}>Password</Text>
             <Text style={styles.helper}>8+ characters</Text>
           </View>
           <View style={styles.passwordContainer}>
+=======
+          <Text style={styles.label}>Password (min. 8 characters)</Text>
+          <View style={[styles.passwordContainer, errors.password && styles.inputError]}>
+>>>>>>> master
             <TextInput
+              testID="signup-password"
               style={styles.passwordInput}
               placeholder="Create a password"
               placeholderTextColor={color.textMuted}
               secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
               value={password}
-              onChangeText={setPassword}
+              onChangeText={value => {
+                setPassword(value);
+                clearError('password');
+              }}
             />
             <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.toggleBtn}>
               <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
+          {errors.password ? <Text style={styles.fieldError}>{errors.password}</Text> : null}
 
           <Text style={styles.label}>Confirm password</Text>
           <TextInput
+<<<<<<< HEAD
             style={styles.input}
             placeholder="Enter it once more"
+=======
+            testID="signup-confirm"
+            style={[styles.input, errors.confirmPassword && styles.inputError]}
+            placeholder="••••••••"
+>>>>>>> master
             placeholderTextColor={color.textMuted}
             secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="new-password"
+            textContentType="newPassword"
             value={confirmPassword}
-            onChangeText={setConfirmPassword}
+            onChangeText={value => {
+              setConfirmPassword(value);
+              clearError('confirmPassword');
+            }}
+            onSubmitEditing={handleSignup}
           />
+          {errors.confirmPassword ? <Text style={styles.fieldError}>{errors.confirmPassword}</Text> : null}
+
+          {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 
           <TouchableOpacity
+            testID="signup-submit"
             style={[primaryButtonStyle, styles.submitBtn, isLoading && styles.buttonDisabled]}
             onPress={handleSignup}
             disabled={isLoading}
@@ -152,7 +254,22 @@ export const SignupPage = ({ navigation }: any) => {
             )}
           </TouchableOpacity>
 
+<<<<<<< HEAD
           <TouchableOpacity style={styles.switchAuthBtn} onPress={() => navigation.navigate('LoginPage')}>
+=======
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <GoogleSignInButton mode="signup" navigation={navigation} disabled={isLoading} />
+
+          <TouchableOpacity
+            style={styles.switchAuthBtn}
+            onPress={() => navigation.navigate('LoginPage')}
+          >
+>>>>>>> master
             <Text style={styles.switchAuthText}>
               Already registered? <Text style={styles.linkText}>Sign in</Text>
             </Text>
@@ -183,6 +300,9 @@ const styles = StyleSheet.create({
   label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
   helper: { ...type.caption, color: color.textMuted, marginTop: spacing.sm, marginBottom: spacing.sm },
   input: { ...inputStyle, marginBottom: spacing.lg },
+  inputError: { borderColor: color.danger, marginBottom: spacing.sm },
+  fieldError: { color: color.danger, fontSize: 12, marginBottom: spacing.md },
+  formError: { color: color.danger, fontSize: 13, textAlign: 'center', marginBottom: spacing.md },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -203,9 +323,18 @@ const styles = StyleSheet.create({
   toggleBtn: { minHeight: 52, justifyContent: 'center', paddingHorizontal: spacing.lg },
   toggleText: { color: color.accent, fontWeight: '700', fontSize: 13 },
   submitBtn: { marginTop: spacing.sm },
+<<<<<<< HEAD
   buttonDisabled: { opacity: 0.55 },
   primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
   switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center', paddingVertical: spacing.xs },
+=======
+  buttonDisabled: { opacity: 0.6 },
+  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '700' },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.xl },
+  dividerLine: { flex: 1, height: 1, backgroundColor: color.border },
+  dividerText: { color: color.textMuted, fontSize: 12, marginHorizontal: spacing.md, fontWeight: '600' },
+  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center' },
+>>>>>>> master
   switchAuthText: { color: color.textSecondary, fontSize: 14 },
   linkText: { color: color.accent, fontWeight: '700' },
 });

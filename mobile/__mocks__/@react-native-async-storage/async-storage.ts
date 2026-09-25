@@ -1,14 +1,18 @@
-const storage = new Map<string, string>();
+// Manual Jest mock for @react-native-async-storage/async-storage.
+//
+// The real package ships untranspiled ES modules and needs a native module, so importing it under
+// Jest fails outright. This keeps values in memory, which is all AuthContext / AuthService need.
+const store = new Map<string, string>();
 
 export default {
-  getItem: jest.fn(async (key: string) => storage.get(key) ?? null),
+  getItem: jest.fn(async (key: string) => store.get(key) ?? null),
   setItem: jest.fn(async (key: string, value: string) => {
-    storage.set(key, value);
+    store.set(key, value);
   }),
   removeItem: jest.fn(async (key: string) => {
-    storage.delete(key);
+    store.delete(key);
   }),
   clear: jest.fn(async () => {
-    storage.clear();
+    store.clear();
   }),
 };

@@ -14,16 +14,19 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import type { RideDestination } from '../components/RiderMap';
+<<<<<<< HEAD
 import BrandLockup from '../components/BrandLockup';
 import { color, radius, spacing, type, primaryButtonStyle, inputStyle } from '../theme';
 
 import { API_URL } from '@env';
+=======
+import { color, radius, spacing, type, cardStyle, primaryButtonStyle } from '../theme';
+import { api } from '../services/AuthService';
+>>>>>>> master
 import { geocodeDestination } from '../services/destinationService';
-
-export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
+import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 
 export interface RideSession {
   serverUrl: string;
@@ -86,15 +89,15 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const { user, token, logout } = useAuth();
 
   const [mode, setMode] = useState<'join' | 'create'>('join');
-  const [riderName, setRiderName] = useState(user?.rider_name || '');
+  const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
   const [destination, setDestination] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.rider_name) {
-      setRiderName(user.rider_name);
+    if (user?.name) {
+      setRiderName(user.name);
     }
   }, [user]);
 
@@ -155,20 +158,21 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           }
         }
 
-        response = await axios.post(
-          `${API_BASE_URL}/rooms/create`,
+        response = await api.post(
+          '/rooms/create',
           {
+            riderName: trimmedName,
             destinationName: destinationFix?.name ?? undefined,
             destinationLat: destinationFix?.latitude ?? undefined,
             destinationLng: destinationFix?.longitude ?? undefined,
           },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 },
+          { timeout: 8000 },
         );
       } else {
-        response = await axios.post(
-          `${API_BASE_URL}/rooms/join`,
-          { roomCode: trimmedCode },
-          { headers: { Authorization: `Bearer ${token}` }, timeout: 8000 },
+        response = await api.post(
+          '/rooms/join',
+          { roomCode: trimmedCode, riderName: trimmedName },
+          { timeout: 8000 },
         );
       }
 
@@ -182,13 +186,17 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         isHost: Boolean(isHost),
         destination: destinationFromRoomResponse(response.data),
       });
-    } catch (err: any) {
-      const message = err.response?.data?.message || 'Could not connect to ride room.';
-      setError(message);
+    } catch (err) {
+      if (isUnauthorized(err)) {
+        await logout();
+        navigation?.navigate('LoginPage');
+        return;
+      }
+      setError(describeAuthError(err, 'Could not connect to ride room.'));
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined]);
+  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined, logout, navigation]);
 
   return (
     <KeyboardAvoidingView
@@ -199,6 +207,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.topBar}>
+<<<<<<< HEAD
         <BrandLockup compact />
         <View style={styles.profileArea}>
           <View style={styles.profileCopy}>
@@ -213,6 +222,11 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
             <Text style={styles.logoutBtnText}>Log out</Text>
           </TouchableOpacity>
+=======
+        <View>
+          <Text style={styles.activeRiderLabel}>Logged In As</Text>
+          <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
+>>>>>>> master
         </View>
       </View>
 
