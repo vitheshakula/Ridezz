@@ -11,7 +11,8 @@ export const ForgotPassword = ({ navigation }: any) => {
         <Text style={styles.eyebrow}>ACCOUNT ACCESS</Text>
         <Text style={styles.title}>Password reset is coming soon.</Text>
         <Text style={styles.description}>
-          For now, contact your Rideaze server administrator to restore access to your account.
+          For now, contact your Rideaze server administrator to restore access
+          to your account.
         </Text>
         <TouchableOpacity
           style={styles.backButton}
@@ -26,7 +27,12 @@ export const ForgotPassword = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bg, padding: spacing.xxl, paddingTop: spacing.huge },
+  container: {
+    flex: 1,
+    backgroundColor: color.bg,
+    padding: spacing.xxl,
+    paddingTop: spacing.huge,
+  },
   card: {
     marginTop: 'auto',
     marginBottom: 'auto',
@@ -37,8 +43,18 @@ const styles = StyleSheet.create({
     padding: spacing.xxl,
   },
   eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
-  title: { ...type.title, fontSize: 28, lineHeight: 34, color: color.textPrimary, marginBottom: spacing.md },
-  description: { ...type.body, color: color.textSecondary, marginBottom: spacing.xxl },
+  title: {
+    ...type.title,
+    fontSize: 28,
+    lineHeight: 34,
+    color: color.textPrimary,
+    marginBottom: spacing.md,
+  },
+  description: {
+    ...type.body,
+    color: color.textSecondary,
+    marginBottom: spacing.xxl,
+  },
   backButton: {
     minHeight: 50,
     backgroundColor: color.surfaceRaised,

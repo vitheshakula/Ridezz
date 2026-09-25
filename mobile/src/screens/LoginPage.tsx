@@ -1,33 +1,29 @@
 import React, { useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-<<<<<<< HEAD
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
 } from 'react-native';
-import axios from 'axios';
-import { API_URL } from '@env';
 import BrandLockup from '../components/BrandLockup';
-import { useAuth } from '../context/AuthContext';
-import { color, inputStyle, primaryButtonStyle, radius, spacing, type } from '../theme';
-
-export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
-=======
-} from 'react-native';
-import { useAuth } from '../context/AuthContext';
 import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { useAuth } from '../context/AuthContext';
 import { login as loginRequest } from '../services/AuthService';
-import { color, radius, spacing, type, cardStyle, primaryButtonStyle, inputStyle } from '../theme';
+import {
+  color,
+  inputStyle,
+  primaryButtonStyle,
+  radius,
+  spacing,
+  type,
+} from '../theme';
 import { describeAuthError } from '../utils/authErrors';
 import { validateSignIn, type SignInErrors } from '../utils/authValidation';
->>>>>>> master
 
 export const LoginPage = ({ navigation }: any) => {
   const { login } = useAuth();
@@ -46,38 +42,22 @@ export const LoginPage = ({ navigation }: any) => {
   };
 
   const handleLogin = async () => {
-<<<<<<< HEAD
-    if (!email.trim() || !password) {
-      Alert.alert('Check your details', 'Enter both your email and password to continue.');
-=======
     const problems = validateSignIn(email, password);
     setErrors(problems);
     setFormError(null);
     if (problems.email || problems.password) {
->>>>>>> master
       return;
     }
 
     setIsLoading(true);
     try {
-<<<<<<< HEAD
-      const response = await axios.post(
-        `${API_BASE_URL}/auth/login`,
-        { email: email.trim().toLowerCase(), password },
-        { timeout: 5000 },
-      );
-      await login(response.data.token, response.data.user);
-      navigation?.navigate('JoinScreen');
-    } catch (error: any) {
-      const message = error.response?.data?.message || 'Check your email and password, then try again.';
-      Alert.alert('Could not sign in', message);
-=======
       const result = await loginRequest(email, password);
       await login(result.token, result.user);
       navigation?.navigate('JoinScreen');
     } catch (error) {
-      setFormError(describeAuthError(error, 'Sign in failed. Please try again.'));
->>>>>>> master
+      setFormError(
+        describeAuthError(error, 'Sign in failed. Please try again.'),
+      );
     } finally {
       setIsLoading(false);
     }
@@ -88,10 +68,16 @@ export const LoginPage = ({ navigation }: any) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
         <View style={styles.topBar}>
           <BrandLockup />
-          <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} hitSlop={12}>
+          <TouchableOpacity
+            onPress={() => navigation.navigate('Dashboard')}
+            hitSlop={12}
+          >
             <Text style={styles.topBarAction}>Home</Text>
           </TouchableOpacity>
         </View>
@@ -99,21 +85,13 @@ export const LoginPage = ({ navigation }: any) => {
         <View style={styles.intro}>
           <Text style={styles.eyebrow}>WELCOME BACK</Text>
           <Text style={styles.pageTitle}>Ready for the next ride?</Text>
-          <Text style={styles.pageDescription}>Sign in to create a room or join your crew.</Text>
+          <Text style={styles.pageDescription}>
+            Sign in to create a room or join your crew.
+          </Text>
         </View>
 
-<<<<<<< HEAD
         <View style={styles.formCard}>
-          <Text style={styles.label}>Email address</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="you@example.com"
-            placeholderTextColor={color.textMuted}
-            keyboardType="email-address"
-            autoCapitalize="none"
-            autoComplete="email"
-=======
-          <Text style={styles.label}>Gmail Address</Text>
+          <Text style={styles.label}>Gmail address</Text>
           <TextInput
             testID="login-email"
             style={[styles.input, errors.email && styles.inputError]}
@@ -124,31 +102,33 @@ export const LoginPage = ({ navigation }: any) => {
             autoCorrect={false}
             autoComplete="email"
             textContentType="emailAddress"
->>>>>>> master
             value={email}
             onChangeText={value => {
               setEmail(value);
               clearError('email');
             }}
           />
-          {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
+          {errors.email ? (
+            <Text style={styles.fieldError}>{errors.email}</Text>
+          ) : null}
 
           <Text style={styles.label}>Password</Text>
-          <View style={[styles.passwordContainer, errors.password && styles.inputError]}>
+          <View
+            style={[
+              styles.passwordContainer,
+              errors.password && styles.inputError,
+            ]}
+          >
             <TextInput
               testID="login-password"
               style={styles.passwordInput}
               placeholder="Enter your password"
               placeholderTextColor={color.textMuted}
               secureTextEntry={!showPassword}
-<<<<<<< HEAD
-              autoComplete="password"
-=======
               autoCapitalize="none"
               autoCorrect={false}
               autoComplete="password"
               textContentType="password"
->>>>>>> master
               value={password}
               onChangeText={value => {
                 setPassword(value);
@@ -156,11 +136,18 @@ export const LoginPage = ({ navigation }: any) => {
               }}
               onSubmitEditing={handleLogin}
             />
-            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.toggleBtn}>
-              <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
+            <TouchableOpacity
+              onPress={() => setShowPassword(!showPassword)}
+              style={styles.toggleBtn}
+            >
+              <Text style={styles.toggleText}>
+                {showPassword ? 'Hide' : 'Show'}
+              </Text>
             </TouchableOpacity>
           </View>
-          {errors.password ? <Text style={styles.fieldError}>{errors.password}</Text> : null}
+          {errors.password ? (
+            <Text style={styles.fieldError}>{errors.password}</Text>
+          ) : null}
 
           <TouchableOpacity
             style={styles.forgotBtn}
@@ -181,28 +168,29 @@ export const LoginPage = ({ navigation }: any) => {
             {isLoading ? (
               <ActivityIndicator color={color.onAccent} />
             ) : (
-              <Text style={styles.primaryButtonText}>Sign in</Text>
+              <Text style={styles.primaryButtonText}>Sign In</Text>
             )}
           </TouchableOpacity>
 
-<<<<<<< HEAD
-          <TouchableOpacity style={styles.switchAuthBtn} onPress={() => navigation.navigate('SignupPage')}>
-=======
           <View style={styles.dividerRow}>
             <View style={styles.dividerLine} />
             <Text style={styles.dividerText}>OR</Text>
             <View style={styles.dividerLine} />
           </View>
 
-          <GoogleSignInButton mode="login" navigation={navigation} disabled={isLoading} />
+          <GoogleSignInButton
+            mode="login"
+            navigation={navigation}
+            disabled={isLoading}
+          />
 
           <TouchableOpacity
             style={styles.switchAuthBtn}
             onPress={() => navigation.navigate('SignupPage')}
           >
->>>>>>> master
             <Text style={styles.switchAuthText}>
-              New to Rideaze? <Text style={styles.linkText}>Create an account</Text>
+              New to Rideaze?{' '}
+              <Text style={styles.linkText}>Create an account</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -213,13 +201,26 @@ export const LoginPage = ({ navigation }: any) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.bg },
-  scrollContent: { flexGrow: 1, padding: spacing.xxl, paddingTop: spacing.xxxl },
-  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  scrollContent: {
+    flexGrow: 1,
+    padding: spacing.xxl,
+    paddingTop: spacing.xxxl,
+    paddingBottom: spacing.huge,
+  },
+  topBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   topBarAction: { ...type.label, color: color.textSecondary },
   intro: { marginTop: spacing.huge, marginBottom: spacing.xxxl },
   eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
   pageTitle: { ...type.hero, color: color.textPrimary, maxWidth: 330 },
-  pageDescription: { ...type.body, color: color.textSecondary, marginTop: spacing.md },
+  pageDescription: {
+    ...type.body,
+    color: color.textSecondary,
+    marginTop: spacing.md,
+  },
   formCard: {
     backgroundColor: color.surface,
     borderWidth: 1,
@@ -227,11 +228,29 @@ const styles = StyleSheet.create({
     borderRadius: radius.xl,
     padding: spacing.xl,
   },
-  label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
-  input: { ...inputStyle, marginBottom: spacing.lg },
-  inputError: { borderColor: color.danger, marginBottom: spacing.sm },
-  fieldError: { color: color.danger, fontSize: 12, marginBottom: spacing.md },
-  formError: { color: color.danger, fontSize: 13, textAlign: 'center', marginBottom: spacing.md },
+  label: {
+    ...type.label,
+    color: color.textSecondary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.sm,
+  },
+  input: { ...inputStyle, marginBottom: spacing.sm },
+  inputError: { borderColor: color.danger },
+  fieldError: {
+    ...type.caption,
+    color: color.danger,
+    marginBottom: spacing.md,
+  },
+  formError: {
+    ...type.caption,
+    color: color.danger,
+    backgroundColor: color.dangerMuted,
+    borderWidth: 1,
+    borderColor: color.dangerBorder,
+    borderRadius: radius.sm,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+  },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -249,23 +268,38 @@ const styles = StyleSheet.create({
     color: color.textPrimary,
     fontSize: 16,
   },
-  toggleBtn: { minHeight: 52, justifyContent: 'center', paddingHorizontal: spacing.lg },
+  toggleBtn: {
+    minHeight: 52,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
   toggleText: { color: color.accent, fontWeight: '700', fontSize: 13 },
-  forgotBtn: { alignSelf: 'flex-end', marginBottom: spacing.xxl, marginTop: spacing.xs },
-<<<<<<< HEAD
+  forgotBtn: {
+    alignSelf: 'flex-end',
+    marginBottom: spacing.xl,
+    marginTop: spacing.xs,
+    minHeight: 36,
+    justifyContent: 'center',
+  },
   forgotText: { color: color.textSecondary, fontSize: 13, fontWeight: '600' },
   buttonDisabled: { opacity: 0.55 },
   primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
-  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center', paddingVertical: spacing.xs },
-=======
-  forgotText: { color: color.textSecondary, fontSize: 13 },
-  buttonDisabled: { opacity: 0.6 },
-  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '700' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.xl },
+  dividerRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.xl,
+  },
   dividerLine: { flex: 1, height: 1, backgroundColor: color.border },
-  dividerText: { color: color.textMuted, fontSize: 12, marginHorizontal: spacing.md, fontWeight: '600' },
-  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center' },
->>>>>>> master
+  dividerText: {
+    ...type.overline,
+    color: color.textMuted,
+    marginHorizontal: spacing.md,
+  },
+  switchAuthBtn: {
+    marginTop: spacing.xl,
+    alignItems: 'center',
+    paddingVertical: spacing.xs,
+  },
   switchAuthText: { color: color.textSecondary, fontSize: 14 },
   linkText: { color: color.accent, fontWeight: '700' },
 });

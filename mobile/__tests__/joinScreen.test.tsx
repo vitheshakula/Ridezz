@@ -59,7 +59,8 @@ const type = (root: ReactTestInstance, placeholder: string, value: string) =>
 
 /** The pressable wrapping the Text with this exact label. */
 function pressableLabelled(root: ReactTestInstance, label: string) {
-  const text = root.findAllByType(Text).find(t => t.props.children === label);
+  // The tab and the submit button can share a label (e.g. "JOIN RIDE"); the submit button renders last.
+  const text = root.findAllByType(Text).filter(t => t.props.children === label).pop();
   if (!text) {
     throw new Error(`no text "${label}"`);
   }
@@ -101,7 +102,7 @@ describe('JoinScreen', () => {
       );
       const root = render();
       type(root, 'e.g. 8K2M9X', 'abc234');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       // No hand-built Authorization header: the shared client adds the bearer token itself.
       expect(post).toHaveBeenCalledWith('/rooms/join', { roomCode: 'ABC234', riderName: 'Alex' }, { timeout: 8000 });
@@ -119,14 +120,14 @@ describe('JoinScreen', () => {
       post.mockResolvedValue(roomReply());
       const root = render();
       type(root, 'e.g. 8K2M9X', 'ABC234');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(onJoined.mock.calls[0][0].destination).toBeNull();
     });
 
     it('asks for a code before contacting the server', async () => {
       const root = render();
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(screenText()).toContain('Please enter the 6-character room code.');
       expect(post).not.toHaveBeenCalled();
@@ -141,7 +142,7 @@ describe('JoinScreen', () => {
       );
       const root = render();
       type(root, 'e.g. 8K2M9X', 'ZZZZZZ');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(screenText()).toContain('Ride room not found. Check the 6-character code.');
       expect(onJoined).not.toHaveBeenCalled();
@@ -152,7 +153,7 @@ describe('JoinScreen', () => {
   describe('creating a room', () => {
     const openCreateTab = (root: ReactTestInstance) =>
       ReactTestRenderer.act(() => {
-        pressableLabelled(root, 'CREATE ROOM').props.onPress();
+        pressableLabelled(root, 'CREATE RIDE').props.onPress();
       });
 
     it('looks the destination up, sends it with the rider name, and starts the ride as host', async () => {
@@ -168,7 +169,7 @@ describe('JoinScreen', () => {
       const root = render();
       openCreateTab(root);
       type(root, 'e.g. Golconda Fort, Hyderabad', 'Golconda Fort');
-      await press(root, 'Create & Start Ride');
+      await press(root, 'CREATE RIDE');
 
       expect(geocode).toHaveBeenCalledWith('Golconda Fort');
       expect(post).toHaveBeenCalledWith(
@@ -188,7 +189,7 @@ describe('JoinScreen', () => {
       post.mockResolvedValue(roomReply({ isHost: true }));
       const root = render();
       openCreateTab(root);
-      await press(root, 'Create & Start Ride');
+      await press(root, 'CREATE RIDE');
 
       expect(geocode).not.toHaveBeenCalled();
       expect(post).toHaveBeenCalledWith(
@@ -204,7 +205,7 @@ describe('JoinScreen', () => {
       const root = render();
       openCreateTab(root);
       type(root, 'e.g. Golconda Fort, Hyderabad', 'asdfghjkl');
-      await press(root, 'Create & Start Ride');
+      await press(root, 'CREATE RIDE');
 
       expect(screenText()).toContain('Couldn');
       expect(screenText()).toContain('asdfghjkl');
@@ -220,7 +221,7 @@ describe('JoinScreen', () => {
       );
       const root = render();
       type(root, 'e.g. 8K2M9X', 'ABC234');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(mockLogout).toHaveBeenCalledTimes(1);
       expect(navigation.navigate).toHaveBeenCalledWith('LoginPage');
@@ -232,7 +233,7 @@ describe('JoinScreen', () => {
       mockAuth.token = null;
       const root = render();
       type(root, 'e.g. 8K2M9X', 'ABC234');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(screenText()).toContain('Your session has expired. Please sign in again.');
       expect(post).not.toHaveBeenCalled();
@@ -244,7 +245,7 @@ describe('JoinScreen', () => {
       );
       const root = render();
       type(root, 'e.g. 8K2M9X', 'ABC234');
-      await press(root, 'Join Ride');
+      await press(root, 'JOIN RIDE');
 
       expect(mockLogout).not.toHaveBeenCalled();
       expect(navigation.navigate).not.toHaveBeenCalled();

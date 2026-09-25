@@ -2,7 +2,8 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { loginWithGoogle, type GoogleMode } from '../services/AuthService';
-import { radius, spacing } from '../theme';
+import { spacing } from '../theme';
+import { font, homeRadius } from '../homeTheme';
 import { describeAuthError, errorCode } from '../utils/authErrors';
 
 interface GoogleSignInButtonProps {
@@ -74,13 +75,13 @@ export function GoogleSignInButton({
 const styles = StyleSheet.create({
   button: {
     backgroundColor: '#ffffff',
-    borderRadius: radius.lg,
-    paddingVertical: spacing.lg,
+    borderRadius: homeRadius.button,
+    minHeight: 52,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonDisabled: { opacity: 0.6 },
   content: { flexDirection: 'row', alignItems: 'center' },
-  glyph: { fontSize: 18, fontWeight: '800', color: '#4285f4', marginRight: spacing.md },
-  label: { fontSize: 16, fontWeight: '600', color: '#1f1f1f' },
+  glyph: { fontFamily: font.heading, fontSize: 18, color: '#4285f4', marginRight: spacing.md },
+  label: { fontFamily: font.label, fontSize: 16, color: '#1f1f1f' },
 });

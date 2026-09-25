@@ -1,6 +1,7 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
@@ -9,23 +10,24 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
   TouchableOpacity,
-  Alert,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from '../context/AuthContext';
-import type { RideDestination } from '../components/RiderMap';
-<<<<<<< HEAD
 import BrandLockup from '../components/BrandLockup';
-import { color, radius, spacing, type, primaryButtonStyle, inputStyle } from '../theme';
-
-import { API_URL } from '@env';
-=======
-import { color, radius, spacing, type, cardStyle, primaryButtonStyle } from '../theme';
+import { BottomNav } from '../components/BottomNav';
+import type { RideDestination } from '../components/RiderMap';
+import { useAuth } from '../context/AuthContext';
 import { api } from '../services/AuthService';
->>>>>>> master
 import { geocodeDestination } from '../services/destinationService';
+import {
+  color,
+  inputStyle,
+  primaryButtonStyle,
+  radius,
+  spacing,
+  type,
+} from '../theme';
 import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 
 export interface RideSession {
@@ -65,21 +67,20 @@ async function requestAllRidePermissions(): Promise<boolean> {
   if (Platform.Version >= 33) {
     permissionsToRequest.push('android.permission.POST_NOTIFICATIONS');
   }
-
   if (Platform.Version >= 31) {
     permissionsToRequest.push('android.permission.BLUETOOTH_CONNECT');
   }
 
   try {
-    const statuses = await PermissionsAndroid.requestMultiple(permissionsToRequest);
-
-    const micGranted =
+    const statuses = await PermissionsAndroid.requestMultiple(
+      permissionsToRequest,
+    );
+    return (
       statuses[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] ===
-      PermissionsAndroid.RESULTS.GRANTED;
-
-    return micGranted;
-  } catch (err) {
-    console.warn('Failed to prompt permissions:', err);
+      PermissionsAndroid.RESULTS.GRANTED
+    );
+  } catch (error) {
+    console.warn('Failed to prompt permissions:', error);
     return false;
   }
 }
@@ -87,7 +88,6 @@ async function requestAllRidePermissions(): Promise<boolean> {
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, token, logout } = useAuth();
-
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
@@ -103,14 +103,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
   const handleLogout = async () => {
     await logout();
-    if (navigation?.navigate) {
-      navigation.navigate('LoginPage');
-    }
+    navigation?.navigate('LoginPage');
   };
 
   const handleAction = useCallback(async () => {
-    if (isLoading) return;
-
+    if (isLoading) {
+      return;
+    }
     if (!token) {
       setError('Your session has expired. Please sign in again.');
       return;
@@ -123,7 +122,6 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       setError('Please enter your rider name.');
       return;
     }
-
     if (mode === 'join' && !trimmedCode) {
       setError('Please enter the 6-character room code.');
       return;
@@ -139,9 +137,8 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         Alert.alert(
           'Microphone Required',
           'Rideaze cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
-          [{ text: 'OK' }]
+          [{ text: 'OK' }],
         );
-        setIsLoading(false);
         return;
       }
 
@@ -152,8 +149,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         if (trimmedDestination) {
           destinationFix = await geocodeDestination(trimmedDestination);
           if (!destinationFix) {
-            setError(`Couldn't find "${trimmedDestination}". Try a more specific search.`);
-            setIsLoading(false);
+            setError(
+              `Couldn't find "${trimmedDestination}". Try a more specific search.`,
+            );
             return;
           }
         }
@@ -176,8 +174,12 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         );
       }
 
-      const { roomCode: activeCode, token: liveKitToken, serverUrl, isHost } = response.data;
-
+      const {
+        roomCode: activeCode,
+        token: liveKitToken,
+        serverUrl,
+        isHost,
+      } = response.data;
       onJoined({
         serverUrl,
         token: liveKitToken,
@@ -186,47 +188,64 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         isHost: Boolean(isHost),
         destination: destinationFromRoomResponse(response.data),
       });
-    } catch (err) {
-      if (isUnauthorized(err)) {
+    } catch (requestError) {
+      if (isUnauthorized(requestError)) {
         await logout();
         navigation?.navigate('LoginPage');
         return;
       }
-      setError(describeAuthError(err, 'Could not connect to ride room.'));
+      setError(
+        describeAuthError(requestError, 'Could not connect to ride room.'),
+      );
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined, logout, navigation]);
+  }, [
+    destination,
+    isLoading,
+    logout,
+    mode,
+    navigation,
+    onJoined,
+    riderName,
+    roomCode,
+    token,
+  ]);
+
+  const initial = (user?.name || 'R').trim().charAt(0).toUpperCase() || 'R';
+
+  const switchMode = (next: 'join' | 'create') => {
+    setMode(next);
+    setError(null);
+  };
 
   return (
     <KeyboardAvoidingView
-      style={[
-        styles.container,
-        { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl },
-      ]}
+      style={[styles.container, { paddingTop: insets.top + spacing.lg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.topBar}>
-<<<<<<< HEAD
         <BrandLockup compact />
         <View style={styles.profileArea}>
           <View style={styles.profileCopy}>
             <Text style={styles.activeRiderLabel}>SIGNED IN AS</Text>
-            <Text style={styles.activeRiderName}>{user?.rider_name || 'Rider'}</Text>
+            <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
           </View>
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {(user?.rider_name || 'R').trim().charAt(0).toUpperCase()}
-            </Text>
-          </View>
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
-            <Text style={styles.logoutBtnText}>Log out</Text>
+          <TouchableOpacity
+            style={styles.avatar}
+            onPress={() => navigation?.navigate('ProfileScreen')}
+            activeOpacity={0.8}
+            accessibilityLabel="Open profile"
+          >
+            <Text style={styles.avatarText}>{initial}</Text>
           </TouchableOpacity>
-=======
-        <View>
-          <Text style={styles.activeRiderLabel}>Logged In As</Text>
-          <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
->>>>>>> master
+          <TouchableOpacity
+            style={styles.logoutBtn}
+            onPress={handleLogout}
+            activeOpacity={0.8}
+          >
+            <Text style={styles.logoutBtnText}>Log Out</Text>
+          </TouchableOpacity>
         </View>
       </View>
 
@@ -234,6 +253,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         style={styles.scroll}
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
       >
         <Text style={styles.eyebrow}>YOUR NEXT SESSION</Text>
         <Text style={styles.title}>Where are we riding?</Text>
@@ -245,26 +265,30 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           <View style={styles.tabContainer}>
             <TouchableOpacity
               style={[styles.tab, mode === 'join' && styles.activeTab]}
-              onPress={() => {
-                setMode('join');
-                setError(null);
-              }}
+              onPress={() => switchMode('join')}
               activeOpacity={0.8}
             >
-              <Text style={[styles.tabText, mode === 'join' && styles.activeTabText]}>
-                Join a ride
+              <Text
+                style={[
+                  styles.tabText,
+                  mode === 'join' && styles.activeTabText,
+                ]}
+              >
+                JOIN RIDE
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={[styles.tab, mode === 'create' && styles.activeTab]}
-              onPress={() => {
-                setMode('create');
-                setError(null);
-              }}
+              onPress={() => switchMode('create')}
               activeOpacity={0.8}
             >
-              <Text style={[styles.tabText, mode === 'create' && styles.activeTabText]}>
-                Start a ride
+              <Text
+                style={[
+                  styles.tabText,
+                  mode === 'create' && styles.activeTabText,
+                ]}
+              >
+                CREATE RIDE
               </Text>
             </TouchableOpacity>
           </View>
@@ -281,7 +305,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               editable={!isLoading}
             />
 
-            {mode === 'join' && (
+            {mode === 'join' ? (
               <>
                 <View style={styles.fieldHeading}>
                   <Text style={styles.label}>Ride code</Text>
@@ -290,17 +314,16 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
                 <TextInput
                   style={[styles.input, styles.codeInput]}
                   value={roomCode}
-                  onChangeText={(val) => setRoomCode(val.toUpperCase())}
+                  onChangeText={value => setRoomCode(value.toUpperCase())}
                   placeholder="e.g. 8K2M9X"
                   placeholderTextColor={color.textMuted}
                   autoCapitalize="characters"
                   maxLength={6}
                   editable={!isLoading}
+                  onSubmitEditing={handleAction}
                 />
               </>
-            )}
-
-            {mode === 'create' && (
+            ) : (
               <>
                 <View style={styles.fieldHeading}>
                   <Text style={styles.label}>Destination</Text>
@@ -314,41 +337,62 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
                   placeholderTextColor={color.textMuted}
                   autoCapitalize="words"
                   editable={!isLoading}
+                  onSubmitEditing={handleAction}
                 />
               </>
             )}
           </View>
 
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {error ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorTitle}>
+                {mode === 'create'
+                  ? 'Unable to create ride'
+                  : 'Unable to join ride'}
+              </Text>
+              <Text style={styles.error}>{error}</Text>
+            </View>
+          ) : null}
 
           <Pressable
-            style={[primaryButtonStyle, isLoading && styles.buttonDisabled]}
+            style={({ pressed }) => [
+              primaryButtonStyle,
+              isLoading && styles.buttonDisabled,
+              pressed && !isLoading && styles.buttonPressed,
+            ]}
             disabled={isLoading}
             onPress={handleAction}
           >
-            {isLoading ? (
-              <ActivityIndicator color={color.onAccent} />
-            ) : (
-              <Text style={styles.mainButtonText}>
-                {mode === 'create' ? 'Create ride' : 'Join ride'}
-              </Text>
-            )}
+            {isLoading ? <ActivityIndicator color={color.onAccent} /> : null}
+            <Text style={styles.mainButtonText}>
+              {isLoading
+                ? mode === 'create'
+                  ? 'CREATING RIDE...'
+                  : 'JOINING RIDE...'
+                : mode === 'create'
+                ? 'CREATE RIDE'
+                : 'JOIN RIDE'}
+            </Text>
           </Pressable>
 
           <Text style={styles.safetyNote}>
-            Voice, location, and hazard detection activate only after you enter the ride.
+            Voice, location, and hazard detection activate only after you enter
+            the ride.
           </Text>
         </View>
       </ScrollView>
+
+      <BottomNav
+        active="rides"
+        onRides={() => navigation?.navigate('JoinScreen')}
+        onProfile={() => navigation?.navigate('ProfileScreen')}
+      />
     </KeyboardAvoidingView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: color.bg,
-  },
+  container: { flex: 1, backgroundColor: color.bg },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -360,8 +404,18 @@ const styles = StyleSheet.create({
   },
   profileArea: { flexDirection: 'row', alignItems: 'center' },
   profileCopy: { alignItems: 'flex-end', marginRight: spacing.sm },
-  activeRiderLabel: { ...type.overline, color: color.textMuted, fontSize: 9, lineHeight: 12 },
-  activeRiderName: { fontSize: 13, fontWeight: '700', color: color.textPrimary, marginTop: 2 },
+  activeRiderLabel: {
+    ...type.overline,
+    color: color.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  activeRiderName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: color.textPrimary,
+    marginTop: 2,
+  },
   avatar: {
     width: 34,
     height: 34,
@@ -374,14 +428,11 @@ const styles = StyleSheet.create({
   },
   avatarText: { color: color.accent, fontSize: 13, fontWeight: '800' },
   logoutBtn: {
-    paddingVertical: spacing.sm,
+    minHeight: 40,
+    justifyContent: 'center',
     paddingLeft: spacing.md,
   },
-  logoutBtnText: {
-    color: color.textMuted,
-    fontSize: 12,
-    fontWeight: '700',
-  },
+  logoutBtnText: { color: color.textMuted, fontSize: 12, fontWeight: '700' },
   scroll: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
@@ -390,11 +441,7 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.xxxl,
   },
   eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
-  title: {
-    ...type.hero,
-    color: color.textPrimary,
-    maxWidth: 340,
-  },
+  title: { ...type.hero, color: color.textPrimary, maxWidth: 340 },
   subtitle: {
     ...type.body,
     color: color.textSecondary,
@@ -427,21 +474,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: color.borderStrong,
   },
-  tabText: { ...type.label, color: color.textMuted },
-  activeTabText: {
-    color: color.textPrimary,
-  },
-  form: {
-    marginBottom: spacing.lg,
-  },
+  tabText: { ...type.label, color: color.textMuted, fontSize: 12 },
+  activeTabText: { color: color.textPrimary },
+  form: { marginBottom: spacing.lg },
   label: {
     ...type.label,
     color: color.textSecondary,
     marginBottom: spacing.sm,
     marginTop: spacing.md,
   },
-  fieldHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  fieldHint: { ...type.caption, color: color.textMuted, marginTop: spacing.md, marginBottom: spacing.sm },
+  fieldHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  fieldHint: {
+    ...type.caption,
+    color: color.textMuted,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
+  },
   input: { ...inputStyle },
   codeInput: {
     textAlign: 'center',
@@ -449,9 +501,7 @@ const styles = StyleSheet.create({
     fontSize: 21,
     fontWeight: '800',
   },
-  error: {
-    color: color.danger,
-    ...type.caption,
+  errorBox: {
     backgroundColor: color.dangerMuted,
     borderWidth: 1,
     borderColor: color.dangerBorder,
@@ -459,14 +509,15 @@ const styles = StyleSheet.create({
     padding: spacing.md,
     marginBottom: spacing.lg,
   },
-  buttonDisabled: {
-    backgroundColor: color.surfaceRaised,
-    opacity: 0.6,
+  errorTitle: { ...type.label, color: color.danger },
+  error: { ...type.caption, color: color.textPrimary, marginTop: 2 },
+  buttonDisabled: { opacity: 0.55 },
+  buttonPressed: { opacity: 0.84 },
+  mainButtonText: { color: color.onAccent, fontSize: 15, fontWeight: '800' },
+  safetyNote: {
+    ...type.caption,
+    color: color.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.lg,
   },
-  mainButtonText: {
-    color: color.onAccent,
-    fontSize: 16,
-    fontWeight: '800',
-  },
-  safetyNote: { ...type.caption, color: color.textMuted, textAlign: 'center', marginTop: spacing.lg },
 });

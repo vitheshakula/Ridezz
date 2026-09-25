@@ -1,5 +1,11 @@
 import React from 'react';
-import { StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import {
+  StatusBar,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import BrandLockup from '../components/BrandLockup';
 import {
@@ -25,7 +31,10 @@ export const Dashboard = ({ navigation }: any) => {
     <View
       style={[
         styles.container,
-        { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xl },
+        {
+          paddingTop: insets.top + spacing.xxl,
+          paddingBottom: insets.bottom + spacing.xl,
+        },
       ]}
     >
       <StatusBar barStyle="light-content" />
@@ -39,15 +48,18 @@ export const Dashboard = ({ navigation }: any) => {
         <Text style={styles.eyebrow}>BUILT FOR THE OPEN ROAD</Text>
         <Text style={styles.heroTitle}>Ride together.{`\n`}Stay in sync.</Text>
         <Text style={styles.heroSubtitle}>
-          Clear group audio, live crew location, and spoken hazard alerts—without taking your
-          hands off the bars.
+          Clear group audio, live crew location, and spoken hazard
+          alerts—without taking your hands off the bars.
         </Text>
 
         <View style={styles.featureRail}>
           {FEATURES.map((feature, index) => (
             <View
               key={feature.value}
-              style={[styles.feature, index !== FEATURES.length - 1 && styles.featureBorder]}
+              style={[
+                styles.feature,
+                index !== FEATURES.length - 1 && styles.featureBorder,
+              ]}
             >
               <Text style={styles.featureValue}>{feature.value}</Text>
               <Text style={styles.featureLabel}>{feature.label}</Text>
@@ -73,7 +85,9 @@ export const Dashboard = ({ navigation }: any) => {
           <Text style={styles.secondaryText}>Create an account</Text>
         </TouchableOpacity>
 
-        <Text style={styles.footnote}>Audio continues while your phone is locked.</Text>
+        <Text style={styles.footnote}>
+          Audio continues while your phone is locked.
+        </Text>
       </View>
     </View>
   );
@@ -110,10 +124,24 @@ const styles = StyleSheet.create({
   },
   feature: { flex: 1, paddingHorizontal: spacing.md },
   featureBorder: { borderRightWidth: 1, borderRightColor: color.border },
-  featureValue: { color: color.textPrimary, fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
-  featureLabel: { ...type.caption, color: color.textMuted, marginTop: spacing.xs },
+  featureValue: {
+    color: color.textPrimary,
+    fontSize: 15,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  featureLabel: {
+    ...type.caption,
+    color: color.textMuted,
+    marginTop: spacing.xs,
+  },
   actions: { gap: spacing.md },
   primaryText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
   secondaryText: { color: color.textPrimary, fontSize: 16, fontWeight: '700' },
-  footnote: { ...type.caption, color: color.textMuted, textAlign: 'center', marginTop: spacing.xs },
+  footnote: {
+    ...type.caption,
+    color: color.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.xs,
+  },
 });
