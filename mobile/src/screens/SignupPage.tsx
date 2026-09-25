@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import axios from 'axios';
 import { API_URL } from '@env';
+import { color, radius, spacing, type, cardStyle, primaryButtonStyle, inputStyle } from '../theme';
 
 export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
 
@@ -45,7 +46,7 @@ export const SignupPage = ({ navigation }: any) => {
     setIsLoading(true);
     try {
       await axios.post(
-        `${API_URL}/auth/signup`,
+        `${API_BASE_URL}/auth/signup`,
         {
             rider_name: riderName.trim(),
             email: email.trim().toLowerCase(),
@@ -72,18 +73,21 @@ export const SignupPage = ({ navigation }: any) => {
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
         <View style={styles.header}>
-          <Text style={styles.appTitle}>RIDEZZ</Text>
+          <View style={styles.logoBadge}>
+            <Text style={styles.logoBadgeText}>⚡</Text>
+          </View>
+          <Text style={styles.appTitle}>RIDEAZE</Text>
           <Text style={styles.subTitle}>Create Rider Profile</Text>
         </View>
 
-        <View style={styles.card}>
+        <View style={cardStyle}>
           <Text style={styles.cardTitle}>Sign Up</Text>
 
           <Text style={styles.label}>Rider Handle / Name</Text>
           <TextInput
             style={styles.input}
             placeholder="e.g. GhostRider, Alex"
-            placeholderTextColor="#666"
+            placeholderTextColor={color.textMuted}
             value={riderName}
             onChangeText={setRiderName}
           />
@@ -92,7 +96,7 @@ export const SignupPage = ({ navigation }: any) => {
           <TextInput
             style={styles.input}
             placeholder="rider@example.com"
-            placeholderTextColor="#666"
+            placeholderTextColor={color.textMuted}
             keyboardType="email-address"
             autoCapitalize="none"
             value={email}
@@ -104,7 +108,7 @@ export const SignupPage = ({ navigation }: any) => {
             <TextInput
               style={styles.passwordInput}
               placeholder="••••••••"
-              placeholderTextColor="#666"
+              placeholderTextColor={color.textMuted}
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
@@ -121,19 +125,20 @@ export const SignupPage = ({ navigation }: any) => {
           <TextInput
             style={styles.input}
             placeholder="••••••••"
-            placeholderTextColor="#666"
+            placeholderTextColor={color.textMuted}
             secureTextEntry={!showPassword}
             value={confirmPassword}
             onChangeText={setConfirmPassword}
           />
 
           <TouchableOpacity
-            style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
+            style={[primaryButtonStyle, styles.submitBtn, isLoading && styles.buttonDisabled]}
             onPress={handleSignup}
             disabled={isLoading}
+            activeOpacity={0.85}
           >
             {isLoading ? (
-              <ActivityIndicator color="#000" />
+              <ActivityIndicator color={color.onAccent} />
             ) : (
               <Text style={styles.primaryButtonText}>Create Account</Text>
             )}
@@ -154,48 +159,42 @@ export const SignupPage = ({ navigation }: any) => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212' },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: 24 },
-  header: { alignItems: 'center', marginBottom: 24 },
-  appTitle: { fontSize: 36, fontWeight: '900', color: '#22c55e', letterSpacing: 2 },
-  subTitle: { fontSize: 14, color: '#888', marginTop: 4, textTransform: 'uppercase' },
-  card: { backgroundColor: '#1e1e1e', borderRadius: 16, padding: 24, borderWidth: 1, borderColor: '#2e2e2e' },
-  cardTitle: { fontSize: 22, fontWeight: '700', color: '#fff', marginBottom: 20 },
-  label: { fontSize: 13, fontWeight: '600', color: '#aaa', marginBottom: 6 },
-  input: {
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    color: '#fff',
-    fontSize: 15,
-    marginBottom: 16,
+  container: { flex: 1, backgroundColor: color.bg },
+  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xxl },
+  header: { alignItems: 'center', marginBottom: spacing.xxl },
+  logoBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 26,
+    backgroundColor: color.surfaceRaised,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: spacing.md,
     borderWidth: 1,
-    borderColor: '#3a3a3a',
+    borderColor: color.border,
   },
+  logoBadgeText: { fontSize: 22 },
+  appTitle: { ...type.hero, fontSize: 30, color: color.accent },
+  subTitle: { ...type.label, color: color.textMuted, marginTop: spacing.xs },
+  cardTitle: { ...type.title, color: color.textPrimary, marginBottom: spacing.xl },
+  label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.md, textTransform: 'none' },
+  input: { ...inputStyle, marginBottom: spacing.lg },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#2a2a2a',
-    borderRadius: 8,
+    backgroundColor: color.surfaceRaised,
+    borderRadius: radius.md,
     borderWidth: 1,
-    borderColor: '#3a3a3a',
-    marginBottom: 16,
+    borderColor: color.border,
+    marginBottom: spacing.lg,
   },
-  passwordInput: { flex: 1, paddingHorizontal: 16, paddingVertical: 12, color: '#fff', fontSize: 15 },
-  toggleBtn: { paddingHorizontal: 14 },
-  toggleText: { color: '#22c55e', fontWeight: '600', fontSize: 12 },
-  primaryButton: {
-    backgroundColor: '#22c55e',
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginTop: 8,
-  },
+  passwordInput: { flex: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2, color: color.textPrimary, fontSize: 15 },
+  toggleBtn: { paddingHorizontal: spacing.md + 2 },
+  toggleText: { color: color.accent, fontWeight: '600', fontSize: 12 },
+  submitBtn: { marginTop: spacing.sm },
   buttonDisabled: { opacity: 0.6 },
-  primaryButtonText: { color: '#000', fontSize: 16, fontWeight: '700' },
-  switchAuthBtn: { marginTop: 20, alignItems: 'center' },
-  switchAuthText: { color: '#888', fontSize: 14 },
-  linkText: { color: '#22c55e', fontWeight: '600' },
+  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '700' },
+  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center' },
+  switchAuthText: { color: color.textSecondary, fontSize: 14 },
+  linkText: { color: color.accent, fontWeight: '600' },
 });

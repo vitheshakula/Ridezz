@@ -78,9 +78,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace "com.ridezz.mobile"
+    namespace "com.rideaze.mobile"
     defaultConfig {
-        applicationId "com.ridezz.mobile"
+        applicationId "com.rideaze.mobile"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

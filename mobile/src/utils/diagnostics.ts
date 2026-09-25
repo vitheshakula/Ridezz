@@ -7,7 +7,9 @@ export type DiagnosticEventType =
   | 'location_started'
   | 'location_permission_unavailable'
   | 'location_paused'
-  | 'location_resumed';
+  | 'location_resumed'
+  | 'location_fix_received'
+  | 'location_error';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

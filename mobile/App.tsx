@@ -1,5 +1,5 @@
 /**
- * Ridezz - Motorcycle group intercom
+ * Rideaze - Motorcycle group intercom
  *
  * @format
  */
@@ -48,7 +48,7 @@ function MainContent() {
     <>
       <StatusBar barStyle="light-content" />
       {currentScreen === 'Dashboard' && (
-        <Dashboard navigation={navigation} onJoined={setSession} />
+        <Dashboard navigation={navigation} />
       )}
       {currentScreen === 'LoginPage' && (
         <LoginPage navigation={navigation} />

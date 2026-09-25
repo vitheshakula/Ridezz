@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
+  Modal,
   PermissionsAndroid,
   Platform,
   Pressable,
@@ -8,6 +10,7 @@ import {
   StyleSheet,
   Switch,
   Text,
+  TextInput,
   View,
   type Permission,
 } from 'react-native';
@@ -60,6 +63,16 @@ import {
   type HazardType,
 } from '../services/SpeechHazardService';
 import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
+import { color, radius, spacing, type } from '../theme';
+import { useAuth } from '../context/AuthContext';
+import { geocodeDestination, updateRoomDestination } from '../services/destinationService';
+import {
+  DESTINATION_TOPIC,
+  decodeDestinationUpdate,
+  encodeDestinationUpdate,
+  participantMetadataIsHost,
+} from '../services/destinationUpdates';
+import type { RideDestination } from '../components/RiderMap';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -244,7 +257,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
+  const { token: authToken } = useAuth();
   const [tab, setTab] = useState<RideTab>('intercom');
+  const [currentDestination, setCurrentDestination] = useState<RideDestination | null>(
+    session.destination ?? null,
+  );
+  const [destinationEditorVisible, setDestinationEditorVisible] = useState(false);
+  const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
+  const [destinationUpdating, setDestinationUpdating] = useState(false);
+  const [destinationError, setDestinationError] = useState<string | null>(null);
 
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const hasCheckedCapacityRef = useRef(false);
@@ -253,6 +274,72 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
 
   useKeepAwake(keepAwakeEnabled);
+
+  useEffect(() => {
+    setCurrentDestination(session.destination ?? null);
+  }, [session.destination]);
+
+  useEffect(() => {
+    function handleDestinationData(
+      payload: Uint8Array,
+      participant?: Participant,
+      _kind?: DataPacket_Kind,
+      topic?: string,
+    ) {
+      if (
+        topic !== DESTINATION_TOPIC ||
+        !participant ||
+        !participantMetadataIsHost(participant.metadata)
+      ) {
+        return;
+      }
+      const nextDestination = decodeDestinationUpdate(payload);
+      if (nextDestination) {
+        setCurrentDestination(nextDestination);
+      }
+    }
+
+    room.on(RoomEvent.DataReceived, handleDestinationData);
+    return () => {
+      room.off(RoomEvent.DataReceived, handleDestinationData);
+    };
+  }, [room]);
+
+  const handleChangeDestination = useCallback(async () => {
+    const query = destinationQuery.trim();
+    if (!query) {
+      setDestinationError('Enter a destination.');
+      return;
+    }
+    if (!authToken) {
+      setDestinationError('Your login session has expired.');
+      return;
+    }
+
+    setDestinationUpdating(true);
+    setDestinationError(null);
+    try {
+      const geocoded = await geocodeDestination(query);
+      if (!geocoded) {
+        setDestinationError('Destination not found. Try a more specific place name.');
+        return;
+      }
+      const confirmed = await updateRoomDestination(session.roomCode, geocoded, authToken);
+      setCurrentDestination(confirmed);
+      await room.localParticipant.publishData(encodeDestinationUpdate(confirmed), {
+        reliable: true,
+        topic: DESTINATION_TOPIC,
+      });
+      setDestinationQuery(confirmed.name ?? query);
+      setDestinationEditorVisible(false);
+    } catch (error: any) {
+      setDestinationError(
+        error?.response?.data?.message || error?.message || 'Could not update the destination.',
+      );
+    } finally {
+      setDestinationUpdating(false);
+    }
+  }, [authToken, destinationQuery, room, session.roomCode]);
 
   useEffect(() => {
     if (connectionState === ConnectionState.Connected && !hasLoggedJoinRef.current) {
@@ -632,8 +719,35 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const displayedError = capacityError ?? connectError;
   const statusLabel = connectError ? 'Error' : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
 
+  // Secondary status lines (mesh, hazard heard/sent) are collapsed into one row of small
+  // single-line chips instead of the old stack of full-width lines -- that stack, at variable
+  // height depending on how long the latest hazard transcript was, is what kept shifting the
+  // Mute/Leave buttons around during testing (a 2-line "Heard: ..." pushes everything below it
+  // down). Each chip is capped to one line with an ellipsis, so the header's height is now
+  // predictable regardless of what the hazard system heard.
+  const secondaryChips: Array<{ key: string; text: string; tone: 'default' | 'warning' }> = [];
+  secondaryChips.push({
+    key: 'mesh',
+    text: meshStatus.active
+      ? `Mesh: ${meshStatus.peers} nearby`
+      : 'Mesh: idle',
+    tone: 'default',
+  });
+  if (lastHeard) {
+    secondaryChips.push({ key: 'heard', text: `Heard: "${lastHeard}"`, tone: 'default' });
+  }
+  if (lastSent) {
+    secondaryChips.push({ key: 'sent', text: `Sent: ${lastSent}`, tone: 'default' });
+  }
+
+  const warningLines = [
+    backgroundWarning,
+    meshError ?? meshStatus.error ? `Mesh problem: ${meshError ?? meshStatus.error}` : null,
+    voiceError ? `Hazard voice detection off: ${voiceError}` : null,
+  ].filter(Boolean) as string[];
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+    <View style={[styles.container, { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.md }]}>
       {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
       {bannerAlert ? (
@@ -645,76 +759,80 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         />
       ) : null}
 
-      <Text style={styles.title}>RIDEZZ</Text>
-      {transport !== 'cloud' ? (
-        <Text style={styles.offlinePeerLabel}>Riders Connected Offline: {offlinePeerCount}</Text>
-      ) : null}
-      <Text style={styles.roomLabel}>Room: {session.roomCode.toUpperCase()}</Text>
-
-      <Text style={[styles.status, displayedError && styles.statusError]}>
-        {displayedError ? `Error: ${displayedError}` : statusLabel}
-      </Text>
-      <View style={styles.hudRow}>
-        <View style={[styles.hudPill, transport === 'mesh' ? styles.hudPillMesh : styles.hudPillCloud]}>
-          <Text style={[styles.hudText, transport === 'mesh' && styles.hudTextMesh]}>
-            {transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH · VOICE OFFLINE' : 'CONNECTING'}
-          </Text>
+      <View style={styles.header}>
+        <View style={styles.headerTopRow}>
+          <View>
+            <Text style={styles.title}>RIDEAZE</Text>
+            <Text style={styles.roomLabel}>Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS} riders</Text>
+          </View>
+          <View style={[styles.hudPill, transport === 'mesh' ? styles.hudPillMesh : styles.hudPillCloud]}>
+            <Text style={[styles.hudText, transport === 'mesh' && styles.hudTextMesh]}>
+              {transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING'}
+            </Text>
+          </View>
         </View>
-      </View>
-      <Text style={styles.hudDetail}>
-        {meshStatus.active
-          ? `Mesh: ${meshStatus.peers} rider${meshStatus.peers === 1 ? '' : 's'} nearby`
-          : 'Mesh: not running'}
-      </Text>
-      {lastHeard ? <Text style={styles.hudDetail}>Heard: “{lastHeard}”</Text> : null}
-      {lastSent ? <Text style={styles.hudDetail}>Sent: {lastSent}</Text> : null}
-      <Text style={styles.riderCount}>
-        {riderCount} / {MAX_RIDERS} riders
-      </Text>
-      {backgroundWarning ? <Text style={styles.backgroundWarning}>{backgroundWarning}</Text> : null}
-      {meshError || meshStatus.error ? (
-        <Text style={styles.backgroundWarning}>Mesh problem: {meshError ?? meshStatus.error}</Text>
-      ) : null}
-      {voiceError ? (
-        <Text style={styles.backgroundWarning}>Hazard voice detection off: {voiceError}</Text>
-      ) : null}
 
-      <View style={styles.utilityRow}>
-        <View style={styles.keepAwakeRow}>
-          <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
-          <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
+        <Text style={[styles.status, displayedError && styles.statusError]} numberOfLines={1}>
+          {displayedError ? `Error: ${displayedError}` : statusLabel}
+          {transport !== 'cloud' ? ` · ${offlinePeerCount} offline nearby` : ''}
+        </Text>
+
+        <View style={styles.chipRow}>
+          {secondaryChips.map(chip => (
+            <View key={chip.key} style={styles.chip}>
+              <Text style={styles.chipText} numberOfLines={1} ellipsizeMode="tail">
+                {chip.text}
+              </Text>
+            </View>
+          ))}
         </View>
-        <Pressable style={styles.diagnosticsLink} onPress={() => setDiagnosticsVisible(true)} hitSlop={12}>
-          <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
-        </Pressable>
-      </View>
 
-      <View style={styles.tabs}>
-        <Pressable
-          style={[styles.tabButton, tab === 'intercom' && styles.tabButtonActive]}
-          onPress={() => setTab('intercom')}
-        >
-          <Text style={[styles.tabButtonText, tab === 'intercom' && styles.tabButtonTextActive]}>
-            INTERCOM
+        {warningLines.length > 0 ? (
+          <Text style={styles.warningText} numberOfLines={1} ellipsizeMode="tail">
+            {warningLines[0]}
           </Text>
-        </Pressable>
-        <Pressable
-          style={[styles.tabButton, tab === 'map' && styles.tabButtonActive]}
-          onPress={() => setTab('map')}
-        >
-          <Text style={[styles.tabButtonText, tab === 'map' && styles.tabButtonTextActive]}>
-            MAP
-          </Text>
-        </Pressable>
+        ) : null}
+
+        <View style={styles.utilityRow}>
+          <View style={styles.keepAwakeRow}>
+            <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
+            <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
+          </View>
+          <Pressable style={styles.diagnosticsLink} onPress={() => setDiagnosticsVisible(true)} hitSlop={12}>
+            <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.tabs}>
+          <Pressable
+            style={[styles.tabButton, tab === 'intercom' && styles.tabButtonActive]}
+            onPress={() => setTab('intercom')}
+          >
+            <Text style={[styles.tabButtonText, tab === 'intercom' && styles.tabButtonTextActive]}>
+              INTERCOM
+            </Text>
+          </Pressable>
+          <Pressable
+            style={[styles.tabButton, tab === 'map' && styles.tabButtonActive]}
+            onPress={() => setTab('map')}
+          >
+            <Text style={[styles.tabButtonText, tab === 'map' && styles.tabButtonTextActive]}>
+              MAP
+            </Text>
+          </Pressable>
+        </View>
       </View>
 
       {tab === 'intercom' ? (
-        <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
-          <RiderRow participant={localParticipant} isLocal />
-          {sortedRemoteParticipants.map((p) => (
-            <RiderRow key={p.identity} participant={p} isLocal={false} />
-          ))}
-        </ScrollView>
+        <>
+          <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
+            <RiderRow participant={localParticipant} isLocal />
+            {sortedRemoteParticipants.map((p) => (
+              <RiderRow key={p.identity} participant={p} isLocal={false} />
+            ))}
+          </ScrollView>
+          <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="large" />
+        </>
       ) : (
         <View style={styles.mapContainer}>
           {locationPermissionGranted === false ? (
@@ -726,12 +844,32 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             locations={locations}
             localIdentity={localParticipant.identity}
             statusMessage={mapStatusMessage}
+            destination={currentDestination}
           />
+          {session.isHost ? (
+            <Pressable
+              style={styles.changeDestinationButton}
+              accessibilityRole="button"
+              accessibilityLabel="Change destination"
+              hitSlop={8}
+              onPress={() => {
+                setDestinationQuery(currentDestination?.name ?? '');
+                setDestinationError(null);
+                setDestinationEditorVisible(true);
+              }}
+            >
+              <Text style={styles.changeDestinationButtonText}>Change destination</Text>
+            </Pressable>
+          ) : null}
+          {/* Floating, compact on the Map tab -- the map is the primary content here, so the
+              mic control shrinks to a reachable corner button instead of a full-size sibling
+              that would otherwise claim a third of the screen. Positioned mid-right, clear of
+              RiderMap's own top status overlay and its bottom Fit Group / Center Me controls. */}
+          <View style={styles.floatingMuteWrap} pointerEvents="box-none">
+            <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="small" />
+          </View>
         </View>
       )}
-
-      {/* Mic toggle */}
-      <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} />
 
       {/* Leave button */}
       <Pressable style={styles.leaveButton} onPress={onLeave}>
@@ -739,54 +877,187 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       </Pressable>
 
       <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+
+      <Modal
+        visible={destinationEditorVisible}
+        transparent
+        animationType="fade"
+        onRequestClose={() => {
+          if (!destinationUpdating) {
+            setDestinationEditorVisible(false);
+          }
+        }}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={styles.destinationModalCard}>
+            <Text style={styles.destinationModalTitle}>Change destination</Text>
+            <Text style={styles.destinationModalDescription}>
+              The new destination and route will update for everyone in this ride.
+            </Text>
+            <TextInput
+              style={styles.destinationInput}
+              value={destinationQuery}
+              onChangeText={setDestinationQuery}
+              placeholder="Search for a place"
+              placeholderTextColor={color.textMuted}
+              editable={!destinationUpdating}
+              autoCapitalize="words"
+              autoFocus
+            />
+            {destinationError ? <Text style={styles.destinationError}>{destinationError}</Text> : null}
+            <View style={styles.destinationModalActions}>
+              <Pressable
+                style={styles.destinationCancelButton}
+                disabled={destinationUpdating}
+                onPress={() => setDestinationEditorVisible(false)}
+              >
+                <Text style={styles.destinationCancelText}>Cancel</Text>
+              </Pressable>
+              <Pressable
+                style={styles.destinationSaveButton}
+                disabled={destinationUpdating}
+                onPress={handleChangeDestination}
+              >
+                {destinationUpdating ? (
+                  <ActivityIndicator color={color.onAccent} />
+                ) : (
+                  <Text style={styles.destinationSaveText}>Update route</Text>
+                )}
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#121212', paddingHorizontal: 24 },
-  hudRow: { alignItems: 'center', marginTop: 8 },
-  hudPill: { paddingVertical: 4, paddingHorizontal: 12, borderRadius: 999, borderWidth: 1 },
-  hudPillCloud: { borderColor: '#166534', backgroundColor: 'rgba(34, 197, 94, 0.12)' },
-  hudPillMesh: { borderColor: '#92400e', backgroundColor: 'rgba(245, 158, 11, 0.15)' },
-  hudText: { color: '#22c55e', fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  hudTextMesh: { color: '#f59e0b' },
-  hudDetail: { fontSize: 12, color: '#9ca3af', textAlign: 'center', marginTop: 4 },
-  title: { fontSize: 24, fontWeight: '700', color: '#22c55e', textAlign: 'center', letterSpacing: 2 },
-  offlinePeerLabel: {
-    fontSize: 13,
-    color: '#f59e0b',
-    textAlign: 'center',
-    marginTop: 2,
+  container: { flex: 1, backgroundColor: color.bg, paddingHorizontal: spacing.xl },
+  header: { marginBottom: spacing.sm },
+  headerTopRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  title: { ...type.title, fontSize: 20, color: color.accent, letterSpacing: 1.5 },
+  roomLabel: { ...type.caption, color: color.textMuted, marginTop: spacing.xs / 2 },
+  hudPill: { paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1 },
+  hudPillCloud: { borderColor: color.accentBorder, backgroundColor: color.accentMuted },
+  hudPillMesh: { borderColor: color.warningBorder, backgroundColor: color.warningMuted },
+  hudText: { color: color.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  hudTextMesh: { color: color.warning },
+  status: {
+    fontSize: 14,
+    color: color.textSecondary,
+    marginTop: spacing.sm,
     fontWeight: '600',
   },
-  roomLabel: { fontSize: 16, color: '#9ca3af', textAlign: 'center', marginTop: 4 },
-  status: { fontSize: 16, color: '#22c55e', textAlign: 'center', marginTop: 16, fontWeight: '600' },
-  statusError: { color: '#f85149' },
-  riderCount: { fontSize: 14, color: '#9ca3af', textAlign: 'center', marginTop: 4 },
-  backgroundWarning: { fontSize: 13, color: '#d29922', textAlign: 'center', marginTop: 12 },
-  utilityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 16 },
-  keepAwakeRow: { flexDirection: 'row', alignItems: 'center' },
-  keepAwakeLabel: { color: '#c9d1d9', fontSize: 14, marginRight: 10 },
-  diagnosticsLink: { paddingVertical: 6, paddingHorizontal: 4 },
-  diagnosticsLinkText: { color: '#22c55e', fontSize: 14, fontWeight: '600' },
-  tabs: { flexDirection: 'row', marginTop: 16, backgroundColor: '#1e1e1e', borderRadius: 10, padding: 4 },
-  tabButton: { flex: 1, paddingVertical: 12, borderRadius: 8, alignItems: 'center' },
-  tabButtonActive: { backgroundColor: '#2e2e2e' },
-  tabButtonText: { color: '#9ca3af', fontSize: 13, fontWeight: '700', letterSpacing: 1 },
-  tabButtonTextActive: { color: '#22c55e' },
-  riderList: { flex: 1, marginTop: 16 },
-  riderListContent: { paddingVertical: 4 },
-  mapContainer: { flex: 1, marginTop: 16, borderRadius: 12, overflow: 'hidden' },
-  locationWarning: { fontSize: 13, color: '#d29922', padding: 12, backgroundColor: '#1e1e1e' },
-  leaveButton: {
-    marginTop: 16,
-    backgroundColor: '#1e1e1e',
+  statusError: { color: color.danger },
+  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
+  chip: {
+    backgroundColor: color.surface,
     borderWidth: 1,
-    borderColor: '#7f1d1d',
-    borderRadius: 12,
-    paddingVertical: 16,
+    borderColor: color.border,
+    borderRadius: radius.sm,
+    paddingVertical: spacing.xs / 2,
+    paddingHorizontal: spacing.sm,
+    maxWidth: '100%',
+  },
+  chipText: { fontSize: 11, color: color.textSecondary },
+  warningText: { fontSize: 12, color: color.warning, marginTop: spacing.sm },
+  utilityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md },
+  keepAwakeRow: { flexDirection: 'row', alignItems: 'center' },
+  keepAwakeLabel: { color: color.textSecondary, fontSize: 13, marginRight: spacing.sm },
+  diagnosticsLink: { paddingVertical: spacing.xs, paddingHorizontal: spacing.xs },
+  diagnosticsLinkText: { color: color.accent, fontSize: 13, fontWeight: '600' },
+  tabs: { flexDirection: 'row', marginTop: spacing.md, backgroundColor: color.surface, borderRadius: radius.md, padding: spacing.xs },
+  tabButton: { flex: 1, paddingVertical: spacing.md - 2, borderRadius: radius.sm, alignItems: 'center' },
+  tabButtonActive: { backgroundColor: color.surfaceRaised },
+  tabButtonText: { color: color.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
+  tabButtonTextActive: { color: color.accent },
+  riderList: { flex: 1, marginTop: spacing.md },
+  riderListContent: { paddingVertical: spacing.xs },
+  mapContainer: { flex: 1, marginTop: spacing.md, borderRadius: radius.lg, overflow: 'hidden' },
+  floatingMuteWrap: {
+    position: 'absolute',
+    top: '50%',
+    right: spacing.lg,
+    marginTop: -32,
+    zIndex: 2,
+    elevation: 4,
+  },
+  changeDestinationButton: {
+    position: 'absolute',
+    top: 112,
+    right: spacing.md,
+    zIndex: 3,
+    elevation: 6,
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.accentBorder,
+    borderRadius: radius.md,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+  },
+  changeDestinationButtonText: { color: color.accent, fontSize: 12, fontWeight: '700' },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.72)',
+    justifyContent: 'center',
+    padding: spacing.xxl,
+  },
+  destinationModalCard: {
+    backgroundColor: color.surface,
+    borderRadius: radius.lg,
+    borderWidth: 1,
+    borderColor: color.border,
+    padding: spacing.xl,
+  },
+  destinationModalTitle: { ...type.title, color: color.textPrimary, fontSize: 20 },
+  destinationModalDescription: {
+    ...type.body,
+    color: color.textSecondary,
+    marginTop: spacing.sm,
+    marginBottom: spacing.lg,
+  },
+  destinationInput: {
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.md,
+    color: color.textPrimary,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
+  },
+  destinationError: { color: color.danger, fontSize: 13, marginTop: spacing.sm },
+  destinationModalActions: {
+    flexDirection: 'row',
+    justifyContent: 'flex-end',
+    gap: spacing.md,
+    marginTop: spacing.xl,
+  },
+  destinationCancelButton: { paddingVertical: spacing.md, paddingHorizontal: spacing.lg },
+  destinationCancelText: { color: color.textSecondary, fontWeight: '600' },
+  destinationSaveButton: {
+    minWidth: 120,
+    minHeight: 44,
+    backgroundColor: color.accent,
+    borderRadius: radius.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.lg,
+  },
+  destinationSaveText: { color: color.onAccent, fontWeight: '700' },
+  locationWarning: { fontSize: 13, color: color.warning, padding: spacing.md, backgroundColor: color.surface },
+  leaveButton: {
+    marginTop: spacing.md,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.dangerBorder,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.md + 2,
     alignItems: 'center',
   },
-  leaveButtonText: { color: '#f87171', fontSize: 16, fontWeight: '600' },
+  leaveButtonText: { color: '#f87171', fontSize: 15, fontWeight: '600' },
 });

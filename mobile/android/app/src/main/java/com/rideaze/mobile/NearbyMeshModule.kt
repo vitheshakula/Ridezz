@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter

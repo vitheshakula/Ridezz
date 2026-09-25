@@ -1,10 +1,14 @@
 import {
+  FALLING_BEHIND_METERS,
   LOCATION_PAYLOAD_VERSION,
   classifyFreshness,
+  computeCentroid,
   decodeLocationPayload,
   encodeLocationPayload,
   formatDistance,
+  formatSpeed,
   haversineDistanceMeters,
+  isFallingBehind,
   markRiderDisconnected,
   upsertRiderLocation,
   type RiderLocation,
@@ -85,6 +89,43 @@ describe('encodeLocationPayload / decodeLocationPayload', () => {
     const now = 1_700_000_000_000;
     const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, lat: 1, lng: 1, timestamp: now }));
     expect(decodeLocationPayload(bytes, now)).toEqual({ v: 1, lat: 1, lng: 1, accuracy: undefined, timestamp: now });
+  });
+
+  test('speed and heading round-trip', () => {
+    const now = 1_700_000_000_000;
+    const bytes = encodeLocationPayload({
+      lat: 17.4,
+      lng: 78.4,
+      accuracy: 5,
+      speed: 12.5,
+      heading: 270,
+      timestamp: now,
+    });
+    expect(decodeLocationPayload(bytes, now)).toEqual({
+      v: LOCATION_PAYLOAD_VERSION,
+      lat: 17.4,
+      lng: 78.4,
+      accuracy: 5,
+      speed: 12.5,
+      heading: 270,
+      timestamp: now,
+    });
+  });
+
+  test('a negative speed is dropped rather than trusted', () => {
+    const now = 1_700_000_000_000;
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ v: 1, lat: 1, lng: 1, speed: -5, timestamp: now }),
+    );
+    expect(decodeLocationPayload(bytes, now)?.speed).toBeUndefined();
+  });
+
+  test('an out-of-range heading is dropped rather than trusted', () => {
+    const now = 1_700_000_000_000;
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ v: 1, lat: 1, lng: 1, heading: 400, timestamp: now }),
+    );
+    expect(decodeLocationPayload(bytes, now)?.heading).toBeUndefined();
   });
 });
 
@@ -208,4 +249,61 @@ describe('formatDistance', () => {
   test('formats kilometer-plus distances in km', () => {
     expect(formatDistance(1234)).toBe('1.2 km away');
   });
+});
+
+describe('formatSpeed', () => {
+  test('converts m/s to rounded km/h', () => {
+    expect(formatSpeed(10)).toBe('36 km/h');
+  });
+
+  test('near-zero speed reads as Stopped, not "0 km/h"', () => {
+    expect(formatSpeed(0.1)).toBe('Stopped');
+    expect(formatSpeed(0)).toBe('Stopped');
+  });
+});
+
+describe('computeCentroid', () => {
+  test('returns null for an empty group', () => {
+    expect(computeCentroid([])).toBeNull();
+  });
+
+  test('a single point is its own centroid', () => {
+    const p = { latitude: 17.4, longitude: 78.4 };
+    expect(computeCentroid([p])).toEqual(p);
+  });
+
+  test('averages multiple points', () => {
+    const centroid = computeCentroid([
+      { latitude: 0, longitude: 0 },
+      { latitude: 2, longitude: 4 },
+    ]);
+    expect(centroid).toEqual({ latitude: 1, longitude: 2 });
+  });
+});
+
+describe('isFallingBehind', () => {
+  const centroid = { latitude: 17.4, longitude: 78.4 };
+
+  test('false when there is no centroid (e.g. rider alone in the room)', () => {
+    expect(isFallingBehind({ latitude: 17.4, longitude: 78.4 }, null)).toBe(false);
+  });
+
+  test('false for a rider close to the group', () => {
+    expect(isFallingBehind({ latitude: 17.4001, longitude: 78.4001 }, centroid)).toBe(false);
+  });
+
+  test('true for a rider well past the threshold', () => {
+    // ~0.01 degrees of latitude is roughly 1.1km, comfortably over FALLING_BEHIND_METERS.
+    expect(isFallingBehind({ latitude: 17.41, longitude: 78.4 }, centroid)).toBe(true);
+  });
+
+  test('respects a custom threshold', () => {
+    expect(
+      isFallingBehind({ latitude: 17.4001, longitude: 78.4001 }, centroid, 1),
+    ).toBe(true);
+  });
+});
+
+test('FALLING_BEHIND_METERS is a sane positive default', () => {
+  expect(FALLING_BEHIND_METERS).toBeGreaterThan(0);
 });

@@ -1,4 +1,4 @@
-package com.ridezz.mobile
+package com.rideaze.mobile
 
 import android.app.NotificationChannel
 import android.app.NotificationManager
