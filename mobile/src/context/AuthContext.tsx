@@ -1,11 +1,9 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { TOKEN_KEY, type RiderUser } from '../services/AuthService';
+import { parseStoredUser } from '../utils/authStorage';
 
-export interface RiderUser {
-  id: string;
-  rider_name: string;
-  email: string;
-}
+export type { RiderUser };
 
 interface AuthContextType {
   token: string | null;
@@ -17,7 +15,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-const TOKEN_KEY = '@ridezz_jwt_token';
 const USER_KEY = '@ridezz_user_profile';
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
@@ -32,9 +29,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         const storedToken = await AsyncStorage.getItem(TOKEN_KEY);
         const storedUser = await AsyncStorage.getItem(USER_KEY);
 
-        if (storedToken && storedUser) {
+        const restoredUser = parseStoredUser(storedUser);
+        if (storedToken && restoredUser) {
           setToken(storedToken);
-          setUser(JSON.parse(storedUser));
+          setUser(restoredUser);
         }
       } catch (error) {
         console.error('Failed to restore auth session:', error);

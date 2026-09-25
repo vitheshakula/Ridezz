@@ -13,13 +13,9 @@ import {
   Alert,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
-
-
-import { API_URL } from '@env';
-
-export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
+import { api } from '../services/AuthService';
+import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 
 export interface RideSession {
   serverUrl: string;
@@ -71,14 +67,14 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const { user, logout } = useAuth();
 
   const [mode, setMode] = useState<'join' | 'create'>('join');
-  const [riderName, setRiderName] = useState(user?.rider_name || '');
+  const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (user?.rider_name) {
-      setRiderName(user.rider_name);
+    if (user?.name) {
+      setRiderName(user.name);
     }
   }, [user]);
 
@@ -121,18 +117,11 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         return;
       }
 
-      let response;
-      if (mode === 'create') {
-        response = await axios.post(`${API_URL}/rooms/create`, {
-          riderName: trimmedName,
-          userId: user?.id,
-        });
-      } else {
-        response = await axios.post(`${API_URL}/rooms/join`, {
-          roomCode: trimmedCode,
-          riderName: trimmedName,
-        });
-      }
+      // The bearer token is attached by the API client; the server knows who is asking from it.
+      const response =
+        mode === 'create'
+          ? await api.post('/rooms/create', { riderName: trimmedName })
+          : await api.post('/rooms/join', { roomCode: trimmedCode, riderName: trimmedName });
 
       const { roomCode: activeCode, token, serverUrl } = response.data;
 
@@ -142,13 +131,18 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         riderName: trimmedName,
         roomCode: activeCode,
       });
-    } catch (err: any) {
-      const message = err.response?.data?.message || 'Could not connect to ride room.';
-      setError(message);
+    } catch (err) {
+      if (isUnauthorized(err)) {
+        // The saved sign-in has expired or the account is gone: start over from the sign-in screen.
+        await logout();
+        navigation?.navigate('LoginPage');
+        return;
+      }
+      setError(describeAuthError(err, 'Could not connect to ride room.'));
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, mode, user, onJoined]);
+  }, [isLoading, riderName, roomCode, mode, onJoined, logout, navigation]);
 
   return (
     <KeyboardAvoidingView
@@ -161,7 +155,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       <View style={styles.topBar}>
         <View>
           <Text style={styles.activeRiderLabel}>Logged In As</Text>
-          <Text style={styles.activeRiderName}>{user?.rider_name || 'Rider'}</Text>
+          <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
           <Text style={styles.logoutBtnText}>Log Out</Text>

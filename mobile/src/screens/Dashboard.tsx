@@ -22,7 +22,7 @@ export const Dashboard = ({ navigation, onJoined }: any) => {
 
     const payload = {
       roomName: roomCode.trim().toUpperCase(),
-      riderName: user?.rider_name || 'Rider',
+      riderName: user?.name || 'Rider',
     };
 
     if (onJoined) {
@@ -76,7 +76,7 @@ export const Dashboard = ({ navigation, onJoined }: any) => {
       {/* Top Bar */}
       <View style={styles.topBar}>
         <View>
-          <Text style={styles.riderHandle}>{user.rider_name}</Text>
+          <Text style={styles.riderHandle}>{user.name}</Text>
           <Text style={styles.statusIndicator}>● Ready to ride</Text>
         </View>
         <TouchableOpacity style={styles.logoutBtn} onPress={logout}>

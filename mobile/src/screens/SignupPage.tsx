@@ -9,57 +9,47 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
 } from 'react-native';
-import axios from 'axios';
-import { API_URL } from '@env';
-
-export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
+import { useAuth } from '../context/AuthContext';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
+import { register } from '../services/AuthService';
+import { describeAuthError } from '../utils/authErrors';
+import { validateRegistration, type RegistrationErrors } from '../utils/authValidation';
 
 export const SignupPage = ({ navigation }: any) => {
+  const { login } = useAuth();
   const [riderName, setRiderName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [errors, setErrors] = useState<RegistrationErrors>({});
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const clearError = (field: keyof RegistrationErrors) => {
+    setFormError(null);
+    if (errors[field]) {
+      setErrors(current => ({ ...current, [field]: undefined }));
+    }
+  };
 
   const handleSignup = async () => {
-    if (!riderName.trim()) {
-      Alert.alert('Validation Error', 'Rider Name is required.');
-      return;
-    }
-    if (!email.trim() || !email.includes('@')) {
-      Alert.alert('Validation Error', 'Please enter a valid email.');
-      return;
-    }
-    if (password.length < 8) {
-      Alert.alert('Validation Error', 'Password must be at least 8 characters.');
-      return;
-    }
-    if (password !== confirmPassword) {
-      Alert.alert('Validation Error', 'Passwords do not match.');
+    const problems = validateRegistration(riderName, email, password, confirmPassword);
+    setErrors(problems);
+    setFormError(null);
+    if (Object.keys(problems).length > 0) {
       return;
     }
 
     setIsLoading(true);
     try {
-      await axios.post(
-        `${API_URL}/auth/signup`,
-        {
-            rider_name: riderName.trim(),
-            email: email.trim().toLowerCase(),
-            password,
-        },
-        { timeout: 5000 }
-       );
-
-      Alert.alert('Success', 'Account created successfully!', [
-        { text: 'OK', onPress: () => navigation.navigate('LoginPage') },
-      ]);
-    } catch (error: any) {
-      const message = error.response?.data?.message || 'Registration failed.';
-      Alert.alert('Signup Error', message);
+      // The server signs the new rider in as part of registering, so no second trip to Sign In.
+      const result = await register(riderName, email, password);
+      await login(result.token, result.user);
+      navigation?.navigate('JoinScreen');
+    } catch (error) {
+      setFormError(describeAuthError(error, 'Registration failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -81,33 +71,56 @@ export const SignupPage = ({ navigation }: any) => {
 
           <Text style={styles.label}>Rider Handle / Name</Text>
           <TextInput
-            style={styles.input}
+            testID="signup-name"
+            style={[styles.input, errors.name && styles.inputError]}
             placeholder="e.g. GhostRider, Alex"
             placeholderTextColor="#666"
+            autoComplete="name"
+            textContentType="nickname"
             value={riderName}
-            onChangeText={setRiderName}
+            onChangeText={value => {
+              setRiderName(value);
+              clearError('name');
+            }}
           />
+          {errors.name ? <Text style={styles.fieldError}>{errors.name}</Text> : null}
 
-          <Text style={styles.label}>Email Address</Text>
+          <Text style={styles.label}>Gmail Address</Text>
           <TextInput
-            style={styles.input}
-            placeholder="rider@example.com"
+            testID="signup-email"
+            style={[styles.input, errors.email && styles.inputError]}
+            placeholder="rider@gmail.com"
             placeholderTextColor="#666"
             keyboardType="email-address"
             autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="email"
+            textContentType="emailAddress"
             value={email}
-            onChangeText={setEmail}
+            onChangeText={value => {
+              setEmail(value);
+              clearError('email');
+            }}
           />
+          {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
 
-          <Text style={styles.label}>Password (Min. 8 chars)</Text>
-          <View style={styles.passwordContainer}>
+          <Text style={styles.label}>Password (min. 8 characters)</Text>
+          <View style={[styles.passwordContainer, errors.password && styles.inputError]}>
             <TextInput
+              testID="signup-password"
               style={styles.passwordInput}
               placeholder="••••••••"
               placeholderTextColor="#666"
               secureTextEntry={!showPassword}
+              autoCapitalize="none"
+              autoCorrect={false}
+              autoComplete="new-password"
+              textContentType="newPassword"
               value={password}
-              onChangeText={setPassword}
+              onChangeText={value => {
+                setPassword(value);
+                clearError('password');
+              }}
             />
             <TouchableOpacity
               onPress={() => setShowPassword(!showPassword)}
@@ -116,18 +129,32 @@ export const SignupPage = ({ navigation }: any) => {
               <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
+          {errors.password ? <Text style={styles.fieldError}>{errors.password}</Text> : null}
 
           <Text style={styles.label}>Confirm Password</Text>
           <TextInput
-            style={styles.input}
+            testID="signup-confirm"
+            style={[styles.input, errors.confirmPassword && styles.inputError]}
             placeholder="••••••••"
             placeholderTextColor="#666"
             secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+            autoComplete="new-password"
+            textContentType="newPassword"
             value={confirmPassword}
-            onChangeText={setConfirmPassword}
+            onChangeText={value => {
+              setConfirmPassword(value);
+              clearError('confirmPassword');
+            }}
+            onSubmitEditing={handleSignup}
           />
+          {errors.confirmPassword ? <Text style={styles.fieldError}>{errors.confirmPassword}</Text> : null}
+
+          {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 
           <TouchableOpacity
+            testID="signup-submit"
             style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
             onPress={handleSignup}
             disabled={isLoading}
@@ -138,6 +165,14 @@ export const SignupPage = ({ navigation }: any) => {
               <Text style={styles.primaryButtonText}>Create Account</Text>
             )}
           </TouchableOpacity>
+
+          <View style={styles.dividerRow}>
+            <View style={styles.dividerLine} />
+            <Text style={styles.dividerText}>OR</Text>
+            <View style={styles.dividerLine} />
+          </View>
+
+          <GoogleSignInButton mode="signup" navigation={navigation} disabled={isLoading} />
 
           <TouchableOpacity
             style={styles.switchAuthBtn}
@@ -173,6 +208,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#3a3a3a',
   },
+  inputError: { borderColor: '#ef4444', marginBottom: 6 },
+  fieldError: { color: '#f87171', fontSize: 12, marginBottom: 12 },
+  formError: { color: '#f87171', fontSize: 13, textAlign: 'center', marginBottom: 12 },
   passwordContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -195,6 +233,9 @@ const styles = StyleSheet.create({
   },
   buttonDisabled: { opacity: 0.6 },
   primaryButtonText: { color: '#000', fontSize: 16, fontWeight: '700' },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: 18 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#333' },
+  dividerText: { color: '#777', fontSize: 12, marginHorizontal: 12, fontWeight: '600' },
   switchAuthBtn: { marginTop: 20, alignItems: 'center' },
   switchAuthText: { color: '#888', fontSize: 14 },
   linkText: { color: '#22c55e', fontWeight: '600' },
