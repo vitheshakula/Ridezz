@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import {
   ActivityIndicator,
   Alert,
@@ -39,15 +45,24 @@ import RiderRow from '../components/RiderRow';
 import PresenceToast from '../components/PresenceToast';
 import RiderMap from '../components/RiderMap';
 import DiagnosticsModal from '../components/DiagnosticsModal';
-import HazardAlertBanner, { type HazardBannerKind } from '../components/HazardAlertBanner';
-import { startIntercomService, stopIntercomService } from '../services/intercomService';
+import HazardAlertBanner, {
+  type HazardBannerKind,
+} from '../components/HazardAlertBanner';
+import {
+  startIntercomService,
+  stopIntercomService,
+} from '../services/intercomService';
 import { audioCues } from '../services/audioCues';
 import { logDiagnosticEvent } from '../services/diagnosticsLog';
 import { useRiderPresenceToasts } from '../hooks/useRiderPresenceToasts';
 import { useRiderLocations } from '../hooks/useRiderLocations';
 import { useConnectionCues } from '../hooks/useConnectionCues';
 import { useKeepAwake } from '../hooks/useKeepAwake';
-import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderPresence';
+import {
+  MAX_RIDERS,
+  isRoomOverCapacity,
+  sortByJoinOrder,
+} from '../utils/riderPresence';
 import type { PresenceEvent } from '../utils/riderPresence';
 import {
   HAZARD_LABELS,
@@ -63,7 +78,10 @@ import {
   type HazardPacket,
   type HazardType,
 } from '../services/SpeechHazardService';
-import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
+import {
+  nearbyMeshService,
+  type MeshStatus,
+} from '../services/NearbyMeshService';
 import { brand, font, homeType } from '../homeTheme';
 import { Logo } from '../components/Logo';
 import {
@@ -74,9 +92,15 @@ import {
   PeopleIcon,
   StatusDot,
 } from '../components/HomeIcons';
-import { formatDistance, haversineDistanceMeters } from '../utils/riderLocation';
+import {
+  formatDistance,
+  haversineDistanceMeters,
+} from '../utils/riderLocation';
 import { useAuth } from '../context/AuthContext';
-import { geocodeDestination, updateRoomDestination } from '../services/destinationService';
+import {
+  geocodeDestination,
+  updateRoomDestination,
+} from '../services/destinationService';
 import {
   DESTINATION_TOPIC,
   decodeDestinationUpdate,
@@ -128,7 +152,9 @@ async function ensureMeshPermission(): Promise<boolean> {
   );
   try {
     const results = await PermissionsAndroid.requestMultiple(permissions);
-    return permissions.every(p => results[p] === PermissionsAndroid.RESULTS.GRANTED);
+    return permissions.every(
+      p => results[p] === PermissionsAndroid.RESULTS.GRANTED,
+    );
   } catch {
     return false;
   }
@@ -156,7 +182,9 @@ const MEDIA_DEVICE_FAILURE_LABELS: Record<MediaDeviceFailure, string> = {
 
 export default function RideScreen({ session, onLeave }: RideScreenProps) {
   const [connectError, setConnectError] = useState<string | null>(null);
-  const [backgroundWarning, setBackgroundWarning] = useState<string | null>(null);
+  const [backgroundWarning, setBackgroundWarning] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -208,10 +236,10 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
         // 3. HARDWARE VOICE CAPTURE PIPELINE:
         // Controls how the phone reads from the microphone before encoding.
         audioCaptureDefaults: {
-          autoGainControl: true,  // AGC: Normalizes volume (boosts quiet speech, compresses shouting)
+          autoGainControl: true, // AGC: Normalizes volume (boosts quiet speech, compresses shouting)
           echoCancellation: true, // Prevents acoustic feedback if someone isn't wearing headphones
           noiseSuppression: true, // Built-in WebRTC noise floor suppressor
-          channelCount: 1,        // Mono voice: Cuts CPU & network usage in half compared to stereo
+          channelCount: 1, // Mono voice: Cuts CPU & network usage in half compared to stereo
         },
         // 4. OPUS ENCODING & VAD (VOICE ACTIVITY DETECTION):
         publishDefaults: {
@@ -230,16 +258,20 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
         // Always returns a delay (never null), so the SDK never gives up on its own -- signal
         // loss keeps the rider in the room (RideRoom falls back to the offline mesh meanwhile).
         reconnectPolicy: {
-          nextRetryDelayInMs: (retryContext) => {
+          nextRetryDelayInMs: retryContext => {
             return Math.min(100 * Math.pow(1.5, retryContext.retryCount), 2000);
           },
         },
       }}
       onConnected={() => setConnectError(null)}
-      onError={(e) => setConnectError(e.message)}
-      onMediaDeviceFailure={(failure) => {
+      onError={e => setConnectError(e.message)}
+      onMediaDeviceFailure={failure => {
         if (failure) {
-          setConnectError(`Microphone unavailable (${MEDIA_DEVICE_FAILURE_LABELS[failure] || failure}).`);
+          setConnectError(
+            `Microphone unavailable (${
+              MEDIA_DEVICE_FAILURE_LABELS[failure] || failure
+            }).`,
+          );
         }
       }}
     >
@@ -260,14 +292,22 @@ interface RideRoomProps {
   onLeave: () => void;
 }
 
-function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoomProps) {
+function RideRoom({
+  session,
+  connectError,
+  backgroundWarning,
+  onLeave,
+}: RideRoomProps) {
   const insets = useSafeAreaInsets();
   const connectionState = useConnectionState();
   const room = useRoomContext();
   const { localParticipant, isMicrophoneEnabled } = useLocalParticipant();
   const remoteParticipants = useRemoteParticipants();
   const speakers = useSpeakingParticipants();
-  const speakingIdentities = useMemo(() => speakers.map(p => p.identity), [speakers]);
+  const speakingIdentities = useMemo(
+    () => speakers.map(p => p.identity),
+    [speakers],
+  );
   const localSpeaking = speakers.some(p => p.isLocal);
   const remoteSpeaking = speakers.some(p => !p.isLocal);
   const { token: authToken } = useAuth();
@@ -277,11 +317,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [panelHeight, setPanelHeight] = useState(0);
   const [panelExpanded, setPanelExpanded] = useState(false);
   const [settingsVisible, setSettingsVisible] = useState(false);
-  const [currentDestination, setCurrentDestination] = useState<RideDestination | null>(
-    session.destination ?? null,
+  const [currentDestination, setCurrentDestination] =
+    useState<RideDestination | null>(session.destination ?? null);
+  const [destinationEditorVisible, setDestinationEditorVisible] =
+    useState(false);
+  const [destinationQuery, setDestinationQuery] = useState(
+    session.destination?.name ?? '',
   );
-  const [destinationEditorVisible, setDestinationEditorVisible] = useState(false);
-  const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
   const [destinationUpdating, setDestinationUpdating] = useState(false);
   const [destinationError, setDestinationError] = useState<string | null>(null);
 
@@ -339,20 +381,31 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     try {
       const geocoded = await geocodeDestination(query);
       if (!geocoded) {
-        setDestinationError('Destination not found. Try a more specific place name.');
+        setDestinationError(
+          'Destination not found. Try a more specific place name.',
+        );
         return;
       }
-      const confirmed = await updateRoomDestination(session.roomCode, geocoded, authToken);
+      const confirmed = await updateRoomDestination(
+        session.roomCode,
+        geocoded,
+        authToken,
+      );
       setCurrentDestination(confirmed);
-      await room.localParticipant.publishData(encodeDestinationUpdate(confirmed), {
-        reliable: true,
-        topic: DESTINATION_TOPIC,
-      });
+      await room.localParticipant.publishData(
+        encodeDestinationUpdate(confirmed),
+        {
+          reliable: true,
+          topic: DESTINATION_TOPIC,
+        },
+      );
       setDestinationQuery(confirmed.name ?? query);
       setDestinationEditorVisible(false);
     } catch (error: any) {
       setDestinationError(
-        error?.response?.data?.message || error?.message || 'Could not update the destination.',
+        error?.response?.data?.message ||
+          error?.message ||
+          'Could not update the destination.',
       );
     } finally {
       setDestinationUpdating(false);
@@ -360,28 +413,41 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }, [authToken, destinationQuery, room, session.roomCode]);
 
   useEffect(() => {
-    if (connectionState === ConnectionState.Connected && !hasLoggedJoinRef.current) {
+    if (
+      connectionState === ConnectionState.Connected &&
+      !hasLoggedJoinRef.current
+    ) {
       hasLoggedJoinRef.current = true;
-      logDiagnosticEvent('joined_room', `Joined room ${session.roomCode.toUpperCase()}`);
+      logDiagnosticEvent(
+        'joined_room',
+        `Joined room ${session.roomCode.toUpperCase()}`,
+      );
     }
   }, [connectionState, session.roomCode]);
 
-  useConnectionCues(connectionState, (transition) => {
+  useConnectionCues(connectionState, transition => {
     logDiagnosticEvent(
       transition === 'lost' ? 'connection_lost' : 'reconnected',
-      transition === 'lost' ? 'Connection lost — reconnecting' : 'Connection restored',
+      transition === 'lost'
+        ? 'Connection lost — reconnecting'
+        : 'Connection restored',
     );
   });
 
   // Capacity check
   useEffect(() => {
-    if (connectionState !== ConnectionState.Connected || hasCheckedCapacityRef.current) {
+    if (
+      connectionState !== ConnectionState.Connected ||
+      hasCheckedCapacityRef.current
+    ) {
       return;
     }
     hasCheckedCapacityRef.current = true;
 
     if (isRoomOverCapacity(room.numParticipants, MAX_RIDERS)) {
-      setCapacityError(`This ride is full (${MAX_RIDERS}/${MAX_RIDERS} riders). Try again later.`);
+      setCapacityError(
+        `This ride is full (${MAX_RIDERS}/${MAX_RIDERS} riders). Try again later.`,
+      );
       room.disconnect();
       const timer = setTimeout(onLeave, 2500);
       return () => clearTimeout(timer);
@@ -397,14 +463,19 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [meshMode, setMeshMode] = useState(false);
   const [meshPermission, setMeshPermission] = useState<boolean | null>(null);
   const [meshError, setMeshError] = useState<string | null>(null);
-  const [meshStatus, setMeshStatus] = useState<MeshStatus>({ active: false, peers: 0, error: null });
+  const [meshStatus, setMeshStatus] = useState<MeshStatus>({
+    active: false,
+    peers: 0,
+    error: null,
+  });
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [offlinePeerCount, setOfflinePeerCount] = useState(0);
-  const [bannerAlert, setBannerAlert] = useState<{ packet: HazardPacket; kind: HazardBannerKind } | null>(
-    null,
-  );
+  const [bannerAlert, setBannerAlert] = useState<{
+    packet: HazardPacket;
+    kind: HazardBannerKind;
+  } | null>(null);
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
   // Packet-id memory for the general dedup/relay gate below (rememberHazardOnce prunes this by
   // age, not count -- see that function for why a fixed-size cache caused hazards to loop).
@@ -425,7 +496,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
 
-  const transport: Transport = isOnline ? 'cloud' : meshMode ? 'mesh' : 'connecting';
+  const transport: Transport = isOnline
+    ? 'cloud'
+    : meshMode
+    ? 'mesh'
+    : 'connecting';
 
   // Enter mesh mode only after a sustained outage; leave it the moment the room is back.
   useEffect(() => {
@@ -456,7 +531,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         }
       } catch {
         if (!cancelled) {
-          timer = setTimeout(tryReconnect, Math.min(2000 * Math.pow(1.5, attempt++), 15000));
+          timer = setTimeout(
+            tryReconnect,
+            Math.min(2000 * Math.pow(1.5, attempt++), 15000),
+          );
         }
       }
     };
@@ -476,7 +554,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   // Tracks connected mesh peers independently of meshStatus, for the "Riders Connected Offline"
   // sub-label -- always subscribed (a no-op while the mesh session isn't running).
-  useEffect(() => nearbyMeshService.onPeerCountChanged(setOfflinePeerCount), []);
+  useEffect(
+    () => nearbyMeshService.onPeerCountChanged(setOfflinePeerCount),
+    [],
+  );
 
   // The mesh runs for the whole ride, not only while offline: an online rider has to hear a hazard
   // from an offline neighbour (over Nearby Connections) to relay it into the room. Costs some
@@ -602,7 +683,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }, [room, handleIncomingHazard]);
 
   useEffect(
-    () => nearbyMeshService.onHazardReceived(packet => handleIncomingHazard(packet, 'mesh')),
+    () =>
+      nearbyMeshService.onHazardReceived(packet =>
+        handleIncomingHazard(packet, 'mesh'),
+      ),
     [handleIncomingHazard],
   );
 
@@ -640,7 +724,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     if (isOnlineRef.current) {
       sends.push(attempt('cloud', publishToCloud(packet)));
     }
-    Promise.all(sends).then(() => setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${outcomes.join(', ')}`));
+    Promise.all(sends).then(() =>
+      setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${outcomes.join(', ')}`),
+    );
   };
   const broadcastHazardRef = useRef(broadcastHazard);
   broadcastHazardRef.current = broadcastHazard;
@@ -667,7 +753,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 
   const riderIdentities = useMemo(
-    () => sortedRemoteParticipants.map((p) => ({ identity: p.identity, name: p.name || p.identity })),
+    () =>
+      sortedRemoteParticipants.map(p => ({
+        identity: p.identity,
+        name: p.name || p.identity,
+      })),
     [sortedRemoteParticipants],
   );
 
@@ -679,12 +769,17 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       audioCues.riderJoined();
       logDiagnosticEvent(
         'rider_joined',
-        event.type === 'rejoined' ? `${event.name} rejoined` : `${event.name} joined`,
+        event.type === 'rejoined'
+          ? `${event.name} rejoined`
+          : `${event.name} joined`,
       );
     }
   }, []);
 
-  const presenceToast = useRiderPresenceToasts(riderIdentities, handlePresenceEvent);
+  const presenceToast = useRiderPresenceToasts(
+    riderIdentities,
+    handlePresenceEvent,
+  );
 
   const { locations, locationPermissionGranted } = useRiderLocations(
     room,
@@ -697,7 +792,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       return 'Checking location permission...';
     }
     if (locationPermissionGranted === false) {
-      return "Location sharing is unavailable. The intercom still works normally.";
+      return 'Location sharing is unavailable. The intercom still works normally.';
     }
 
     const hasLocalLocation = locations.some(
@@ -735,11 +830,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const riderCount = remoteParticipants.length + 1;
   const displayedError = capacityError ?? connectError;
-  const statusLabel = connectError ? 'Error' : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
+  const statusLabel = connectError
+    ? 'Error'
+    : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
 
   const warningLines = [
     backgroundWarning,
-    meshError ?? meshStatus.error ? `Mesh problem: ${meshError ?? meshStatus.error}` : null,
+    meshError ?? meshStatus.error
+      ? `Mesh problem: ${meshError ?? meshStatus.error}`
+      : null,
     voiceError ? `Hazard voice detection off: ${voiceError}` : null,
   ].filter(Boolean) as string[];
 
@@ -749,18 +848,27 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     connectionState === ConnectionState.Connected && !connectError
       ? brand.success
       : connectionState === ConnectionState.Reconnecting ||
-          connectionState === ConnectionState.SignalReconnecting ||
-          connectionState === ConnectionState.Connecting
-        ? brand.warning
-        : brand.danger;
-  const transportLabel = transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING';
+        connectionState === ConnectionState.SignalReconnecting ||
+        connectionState === ConnectionState.Connecting
+      ? brand.warning
+      : brand.danger;
+  const transportLabel =
+    transport === 'cloud'
+      ? 'CLOUD'
+      : transport === 'mesh'
+      ? 'MESH'
+      : 'CONNECTING';
   const meshProblem = meshError ?? meshStatus.error;
   const meshLabel = meshProblem
     ? 'MESH UNAVAILABLE'
     : meshStatus.active
-      ? `MESH ACTIVE · ${meshStatus.peers} NEARBY`
-      : 'MESH IDLE';
-  const meshTone = meshProblem ? brand.warning : meshStatus.active ? brand.primary : brand.outline;
+    ? `MESH ACTIVE · ${meshStatus.peers} NEARBY`
+    : 'MESH IDLE';
+  const meshTone = meshProblem
+    ? brand.warning
+    : meshStatus.active
+    ? brand.primary
+    : brand.outline;
 
   const voiceState: { label: string; tone: string } = (() => {
     if (
@@ -770,7 +878,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       return { label: 'RECONNECTING', tone: brand.warning };
     }
     if (connectionState === ConnectionState.Disconnected) {
-      return { label: meshMode ? 'VOICE OFFLINE' : 'OFFLINE', tone: brand.danger };
+      return {
+        label: meshMode ? 'VOICE OFFLINE' : 'OFFLINE',
+        tone: brand.danger,
+      };
     }
     if (connectionState === ConnectionState.Connecting) {
       return { label: 'CONNECTING', tone: brand.warning };
@@ -787,7 +898,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     return { label: 'ACTIVE', tone: brand.primary };
   })();
 
-  const localLocation = locations.find(l => l.participantIdentity === localParticipant.identity);
+  const localLocation = locations.find(
+    l => l.participantIdentity === localParticipant.identity,
+  );
   const distanceLabelFor = (identity: string): string | null => {
     const remote = locations.find(l => l.participantIdentity === identity);
     return localLocation && remote
@@ -841,7 +954,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           <View style={styles.hudTitleBlock}>
             <Text style={styles.hudTitle}>RIDEAZE</Text>
             <Text style={styles.hudRoom} numberOfLines={1}>
-              Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS} riders
+              Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS}{' '}
+              riders
             </Text>
           </View>
           <View style={styles.timerPill}>
@@ -871,22 +985,34 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             </Text>
           </View>
           <View style={[styles.chip, { borderColor: meshTone }]}>
-            <Text style={[styles.chipText, { color: meshTone }]} numberOfLines={1}>
+            <Text
+              style={[styles.chipText, { color: meshTone }]}
+              numberOfLines={1}
+            >
               {meshLabel}
             </Text>
           </View>
         </View>
 
         {displayedError ? (
-          <Text style={[styles.hudNotice, { color: brand.danger }]} numberOfLines={2}>
+          <Text
+            style={[styles.hudNotice, { color: brand.danger }]}
+            numberOfLines={2}
+          >
             Error: {displayedError}
           </Text>
         ) : warningLines.length > 0 ? (
-          <Text style={[styles.hudNotice, { color: brand.warning }]} numberOfLines={2}>
+          <Text
+            style={[styles.hudNotice, { color: brand.warning }]}
+            numberOfLines={2}
+          >
             {warningLines[0]}
           </Text>
         ) : transport !== 'cloud' ? (
-          <Text style={[styles.hudNotice, { color: brand.textSecondary }]} numberOfLines={1}>
+          <Text
+            style={[styles.hudNotice, { color: brand.textSecondary }]}
+            numberOfLines={1}
+          >
             {offlinePeerCount} offline nearby
           </Text>
         ) : null}
@@ -906,15 +1032,25 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         >
           <View>
             <Text style={styles.panelTitle}>
-              {riderCount} {riderCount === 1 ? 'RIDER' : 'RIDERS'} · {onlineCount} ONLINE
+              {riderCount} {riderCount === 1 ? 'RIDER' : 'RIDERS'} ·{' '}
+              {onlineCount} ONLINE
             </Text>
-            <Text style={[styles.panelSub, { color: meshTone }]}>{meshLabel}</Text>
+            <Text style={[styles.panelSub, { color: meshTone }]}>
+              {meshLabel}
+            </Text>
           </View>
-          <ChevronIcon size={22} color={brand.textSecondary} up={!panelExpanded} />
+          <ChevronIcon
+            size={22}
+            color={brand.textSecondary}
+            up={!panelExpanded}
+          />
         </Pressable>
 
         {panelExpanded ? (
-          <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
+          <ScrollView
+            style={styles.riderList}
+            contentContainerStyle={styles.riderListContent}
+          >
             <RiderRow participant={localParticipant} isLocal />
             {sortedRemoteParticipants.map(p => (
               <RiderRow
@@ -938,10 +1074,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               return (
                 <View
                   key={p.identity}
-                  style={[styles.stripAvatar, speaking && styles.stripAvatarSpeaking]}
+                  style={[
+                    styles.stripAvatar,
+                    speaking && styles.stripAvatarSpeaking,
+                  ]}
                   accessibilityLabel={label}
                 >
-                  <Text style={styles.stripInitial}>{label.charAt(0).toUpperCase() || '?'}</Text>
+                  <Text style={styles.stripInitial}>
+                    {label.charAt(0).toUpperCase() || '?'}
+                  </Text>
                 </View>
               );
             })}
@@ -968,7 +1109,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               size="large"
               talking={localSpeaking}
             />
-            <Text style={[styles.voiceState, { color: voiceState.tone }]} numberOfLines={1}>
+            <Text
+              style={[styles.voiceState, { color: voiceState.tone }]}
+              numberOfLines={1}
+            >
               {voiceState.label}
             </Text>
           </View>
@@ -987,7 +1131,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         </View>
       </View>
 
-      <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+      <DiagnosticsModal
+        visible={diagnosticsVisible}
+        onClose={() => setDiagnosticsVisible(false)}
+      />
 
       <Modal
         visible={settingsVisible}
@@ -995,7 +1142,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         animationType="slide"
         onRequestClose={() => setSettingsVisible(false)}
       >
-        <Pressable style={styles.sheetBackdrop} onPress={() => setSettingsVisible(false)}>
+        <Pressable
+          style={styles.sheetBackdrop}
+          onPress={() => setSettingsVisible(false)}
+        >
           <Pressable
             style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}
             onPress={() => {}}
@@ -1017,7 +1167,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               <Switch
                 value={keepAwakeEnabled}
                 onValueChange={setKeepAwakeEnabled}
-                trackColor={{ false: brand.surfaceHighest, true: brand.primaryBorder }}
+                trackColor={{
+                  false: brand.surfaceHighest,
+                  true: brand.primaryBorder,
+                }}
                 thumbColor={keepAwakeEnabled ? brand.primary : brand.outline}
               />
             </View>
@@ -1062,7 +1215,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           <View style={styles.destinationModalCard}>
             <Text style={styles.destinationModalTitle}>Change destination</Text>
             <Text style={styles.destinationModalDescription}>
-              The new destination and route will update for everyone in this ride.
+              The new destination and route will update for everyone in this
+              ride.
             </Text>
             <TextInput
               style={styles.destinationInput}
@@ -1074,7 +1228,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
               autoCapitalize="words"
               autoFocus
             />
-            {destinationError ? <Text style={styles.destinationError}>{destinationError}</Text> : null}
+            {destinationError ? (
+              <Text style={styles.destinationError}>{destinationError}</Text>
+            ) : null}
             <View style={styles.destinationModalActions}>
               <Pressable
                 style={styles.destinationCancelButton}
@@ -1116,7 +1272,11 @@ function RideTimer() {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return <Text style={styles.timerText}>{h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}</Text>;
+  return (
+    <Text style={styles.timerText}>
+      {h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}
+    </Text>
+  );
 }
 
 const SURFACE = 'rgba(17, 25, 35, 0.94)';
@@ -1136,7 +1296,13 @@ const styles = StyleSheet.create({
   },
   hudTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   hudTitleBlock: { flex: 1 },
-  hudTitle: { ...homeType.headlineSmall, fontSize: 18, lineHeight: 22, color: brand.textPrimary, letterSpacing: 1 },
+  hudTitle: {
+    ...homeType.headlineSmall,
+    fontSize: 18,
+    lineHeight: 22,
+    color: brand.textPrimary,
+    letterSpacing: 1,
+  },
   hudRoom: { ...homeType.labelSmall, color: brand.primary },
   timerPill: {
     minHeight: 32,
@@ -1147,7 +1313,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  timerText: { fontFamily: font.heading, fontSize: 14, lineHeight: 18, color: brand.textPrimary },
+  timerText: {
+    fontFamily: font.heading,
+    fontSize: 14,
+    lineHeight: 18,
+    color: brand.textPrimary,
+  },
   iconButton: {
     width: 44,
     height: 44,
@@ -1171,7 +1342,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  chipText: { ...homeType.labelSmall, color: brand.textSecondary, flexShrink: 1 },
+  chipText: {
+    ...homeType.labelSmall,
+    color: brand.textSecondary,
+    flexShrink: 1,
+  },
   hudNotice: { ...homeType.bodySmall },
 
   panel: {
@@ -1201,7 +1376,11 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  panelTitle: { ...homeType.labelLarge, color: brand.textPrimary, letterSpacing: 0.6 },
+  panelTitle: {
+    ...homeType.labelLarge,
+    color: brand.textPrimary,
+    letterSpacing: 0.6,
+  },
   panelSub: { ...homeType.labelSmall },
   riderList: { maxHeight: 190 },
   riderListContent: { paddingBottom: 4 },
@@ -1250,7 +1429,11 @@ const styles = StyleSheet.create({
   },
   sideButtonText: { ...homeType.labelSmall, color: brand.textPrimary },
 
-  sheetBackdrop: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.6)', justifyContent: 'flex-end' },
+  sheetBackdrop: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    justifyContent: 'flex-end',
+  },
   sheet: {
     padding: 16,
     gap: 8,
@@ -1260,7 +1443,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  sheetHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  sheetHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
   sheetTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
   sheetRow: {
     minHeight: 52,
@@ -1273,7 +1460,11 @@ const styles = StyleSheet.create({
   },
   sheetRowLabel: { ...homeType.labelLarge, color: brand.textPrimary },
   sheetRowAction: { ...homeType.labelMedium, color: brand.primary },
-  sheetNote: { ...homeType.bodySmall, color: brand.textSecondary, paddingHorizontal: 4 },
+  sheetNote: {
+    ...homeType.bodySmall,
+    color: brand.textSecondary,
+    paddingHorizontal: 4,
+  },
 
   modalBackdrop: {
     flex: 1,
@@ -1288,7 +1479,10 @@ const styles = StyleSheet.create({
     borderColor: brand.inputBorder,
     padding: 20,
   },
-  destinationModalTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
+  destinationModalTitle: {
+    ...homeType.headlineSmall,
+    color: brand.textPrimary,
+  },
   destinationModalDescription: {
     ...homeType.bodyMedium,
     color: brand.textSecondary,
@@ -1305,14 +1499,22 @@ const styles = StyleSheet.create({
     color: brand.textPrimary,
     paddingHorizontal: 16,
   },
-  destinationError: { ...homeType.bodySmall, color: brand.danger, marginTop: 8 },
+  destinationError: {
+    ...homeType.bodySmall,
+    color: brand.danger,
+    marginTop: 8,
+  },
   destinationModalActions: {
     flexDirection: 'row',
     justifyContent: 'flex-end',
     gap: 12,
     marginTop: 20,
   },
-  destinationCancelButton: { minHeight: 48, justifyContent: 'center', paddingHorizontal: 16 },
+  destinationCancelButton: {
+    minHeight: 48,
+    justifyContent: 'center',
+    paddingHorizontal: 16,
+  },
   destinationCancelText: { ...homeType.labelLarge, color: brand.textSecondary },
   destinationSaveButton: {
     minWidth: 120,

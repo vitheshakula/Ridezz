@@ -9,30 +9,30 @@
  */
 
 export const brand = {
-  primary: '#12CFE4',
-  onPrimary: '#00363D',
-  primaryMuted: 'rgba(18, 207, 228, 0.14)',
-  primaryBorder: 'rgba(18, 207, 228, 0.35)',
-  secondary: '#4B7BFF',
+  primary: '#D7FF3F',
+  onPrimary: '#101300',
+  primaryMuted: 'rgba(215, 255, 63, 0.10)',
+  primaryBorder: 'rgba(215, 255, 63, 0.30)',
+  secondary: '#70A7FF',
   tertiary: '#8B5CF6',
 
-  bg: '#0C141E',
-  surface: '#111923',
-  surfaceLow: '#141C26',
-  card: '#18202A',
-  surfaceHigh: '#232B35',
-  surfaceHighest: '#2D3540',
-  darkest: '#070F18',
+  bg: '#090B0C',
+  surface: '#0F1213',
+  surfaceLow: '#141819',
+  card: '#141819',
+  surfaceHigh: '#1A1F21',
+  surfaceHighest: '#22282A',
+  darkest: '#070809',
 
-  textPrimary: '#DBE3F1',
-  textSecondary: '#BBC9CC',
-  outline: '#859396',
-  outlineVariant: '#3C494B',
-  inputBorder: '#263442',
+  textPrimary: '#F6F7F2',
+  textSecondary: '#AAB1AD',
+  outline: '#707975',
+  outlineVariant: '#363E41',
+  inputBorder: '#272D2F',
 
-  success: '#22C55E',
+  success: '#42D77D',
   warning: '#F59E0B',
-  danger: '#EF4444',
+  danger: '#FF665E',
   dangerMuted: 'rgba(239, 68, 68, 0.12)',
   dangerBorder: 'rgba(239, 68, 68, 0.4)',
 } as const;
@@ -48,17 +48,51 @@ export const font = {
 } as const;
 
 export const homeType = {
-  displayLarge: { fontSize: 40, lineHeight: 48, letterSpacing: -0.8, fontFamily: font.headingExtraBold },
-  headlineLarge: { fontSize: 32, lineHeight: 40, letterSpacing: -0.32, fontFamily: font.heading },
+  displayLarge: {
+    fontSize: 40,
+    lineHeight: 48,
+    letterSpacing: -0.8,
+    fontFamily: font.headingExtraBold,
+  },
+  headlineLarge: {
+    fontSize: 32,
+    lineHeight: 40,
+    letterSpacing: -0.32,
+    fontFamily: font.heading,
+  },
   headlineMedium: { fontSize: 24, lineHeight: 32, fontFamily: font.heading },
-  headlineSmall: { fontSize: 20, lineHeight: 28, fontFamily: font.headingSemiBold },
+  headlineSmall: {
+    fontSize: 20,
+    lineHeight: 28,
+    fontFamily: font.headingSemiBold,
+  },
   bodyLarge: { fontSize: 16, lineHeight: 24, fontFamily: font.body },
   bodyMedium: { fontSize: 14, lineHeight: 20, fontFamily: font.body },
   bodySmall: { fontSize: 12, lineHeight: 16, fontFamily: font.body },
-  labelLarge: { fontSize: 14, lineHeight: 20, letterSpacing: 0.14, fontFamily: font.label },
-  labelMedium: { fontSize: 12, lineHeight: 16, letterSpacing: 0.24, fontFamily: font.label },
-  labelSmall: { fontSize: 10, lineHeight: 14, letterSpacing: 0.4, fontFamily: font.bold },
-  button: { fontSize: 16, lineHeight: 24, letterSpacing: 0.5, fontFamily: font.bold },
+  labelLarge: {
+    fontSize: 14,
+    lineHeight: 20,
+    letterSpacing: 0.14,
+    fontFamily: font.label,
+  },
+  labelMedium: {
+    fontSize: 12,
+    lineHeight: 16,
+    letterSpacing: 0.24,
+    fontFamily: font.label,
+  },
+  labelSmall: {
+    fontSize: 10,
+    lineHeight: 14,
+    letterSpacing: 0.4,
+    fontFamily: font.bold,
+  },
+  button: {
+    fontSize: 16,
+    lineHeight: 24,
+    letterSpacing: 0.5,
+    fontFamily: font.bold,
+  },
 } as const;
 
 export const homeRadius = {

@@ -1,6 +1,7 @@
-import React, { useCallback, useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import {
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
@@ -9,20 +10,24 @@ import {
   StyleSheet,
   Text,
   TextInput,
-  View,
   TouchableOpacity,
-  Alert,
+  View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { useAuth } from '../context/AuthContext';
-import type { RideDestination } from '../components/RiderMap';
-import { spacing } from '../theme';
-import { brand, font, homeRadius, homeType } from '../homeTheme';
-import { LockIcon, PersonIcon, PinIcon, PlusIcon } from '../components/HomeIcons';
+import BrandLockup from '../components/BrandLockup';
 import { BottomNav } from '../components/BottomNav';
-import { BrandHeader } from '../components/BrandHeader';
+import type { RideDestination } from '../components/RiderMap';
+import { useAuth } from '../context/AuthContext';
 import { api } from '../services/AuthService';
 import { geocodeDestination } from '../services/destinationService';
+import {
+  color,
+  inputStyle,
+  primaryButtonStyle,
+  radius,
+  spacing,
+  type,
+} from '../theme';
 import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 
 export interface RideSession {
@@ -62,21 +67,20 @@ async function requestAllRidePermissions(): Promise<boolean> {
   if (Platform.Version >= 33) {
     permissionsToRequest.push('android.permission.POST_NOTIFICATIONS');
   }
-
   if (Platform.Version >= 31) {
     permissionsToRequest.push('android.permission.BLUETOOTH_CONNECT');
   }
 
   try {
-    const statuses = await PermissionsAndroid.requestMultiple(permissionsToRequest);
-
-    const micGranted =
+    const statuses = await PermissionsAndroid.requestMultiple(
+      permissionsToRequest,
+    );
+    return (
       statuses[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] ===
-      PermissionsAndroid.RESULTS.GRANTED;
-
-    return micGranted;
-  } catch (err) {
-    console.warn('Failed to prompt permissions:', err);
+      PermissionsAndroid.RESULTS.GRANTED
+    );
+  } catch (error) {
+    console.warn('Failed to prompt permissions:', error);
     return false;
   }
 }
@@ -84,14 +88,12 @@ async function requestAllRidePermissions(): Promise<boolean> {
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, token, logout } = useAuth();
-
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
   const [destination, setDestination] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [focused, setFocused] = useState<'name' | 'code' | 'destination' | null>(null);
 
   useEffect(() => {
     if (user?.name) {
@@ -101,14 +103,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
   const handleLogout = async () => {
     await logout();
-    if (navigation?.navigate) {
-      navigation.navigate('LoginPage');
-    }
+    navigation?.navigate('LoginPage');
   };
 
   const handleAction = useCallback(async () => {
-    if (isLoading) return;
-
+    if (isLoading) {
+      return;
+    }
     if (!token) {
       setError('Your session has expired. Please sign in again.');
       return;
@@ -121,7 +122,6 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       setError('Please enter your rider name.');
       return;
     }
-
     if (mode === 'join' && !trimmedCode) {
       setError('Please enter the 6-character room code.');
       return;
@@ -137,9 +137,8 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         Alert.alert(
           'Microphone Required',
           'Rideaze cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
-          [{ text: 'OK' }]
+          [{ text: 'OK' }],
         );
-        setIsLoading(false);
         return;
       }
 
@@ -150,8 +149,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         if (trimmedDestination) {
           destinationFix = await geocodeDestination(trimmedDestination);
           if (!destinationFix) {
-            setError(`Couldn't find "${trimmedDestination}". Try a more specific search.`);
-            setIsLoading(false);
+            setError(
+              `Couldn't find "${trimmedDestination}". Try a more specific search.`,
+            );
             return;
           }
         }
@@ -174,8 +174,12 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         );
       }
 
-      const { roomCode: activeCode, token: liveKitToken, serverUrl, isHost } = response.data;
-
+      const {
+        roomCode: activeCode,
+        token: liveKitToken,
+        serverUrl,
+        isHost,
+      } = response.data;
       onJoined({
         serverUrl,
         token: liveKitToken,
@@ -184,19 +188,30 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         isHost: Boolean(isHost),
         destination: destinationFromRoomResponse(response.data),
       });
-    } catch (err) {
-      if (isUnauthorized(err)) {
+    } catch (requestError) {
+      if (isUnauthorized(requestError)) {
         await logout();
         navigation?.navigate('LoginPage');
         return;
       }
-      setError(describeAuthError(err, 'Could not connect to ride room.'));
+      setError(
+        describeAuthError(requestError, 'Could not connect to ride room.'),
+      );
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined, logout, navigation]);
+  }, [
+    destination,
+    isLoading,
+    logout,
+    mode,
+    navigation,
+    onJoined,
+    riderName,
+    roomCode,
+    token,
+  ]);
 
-  const isCreate = mode === 'create';
   const initial = (user?.name || 'R').trim().charAt(0).toUpperCase() || 'R';
 
   const switchMode = (next: 'join' | 'create') => {
@@ -206,30 +221,15 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
   return (
     <KeyboardAvoidingView
-      style={[styles.container, { paddingTop: insets.top }]}
+      style={[styles.container, { paddingTop: insets.top + spacing.lg }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <BrandHeader
-        subtitle="DASHBOARD"
-        right={
-          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
-            <Text style={styles.logoutBtnText}>Log Out</Text>
-          </TouchableOpacity>
-        }
-      />
-
-      <ScrollView
-        style={styles.scroll}
-        contentContainerStyle={[styles.scrollContent, { paddingBottom: spacing.xxxl }]}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.identityCard}>
-          <View style={styles.identityText}>
-            <Text style={styles.identityBrand}>RIDEAZE</Text>
-            <Text style={styles.identityCaption}>LOGGED IN AS</Text>
-            <Text style={styles.identityName} numberOfLines={1}>
-              {user?.name || 'Rider'}
-            </Text>
+      <View style={styles.topBar}>
+        <BrandLockup compact />
+        <View style={styles.profileArea}>
+          <View style={styles.profileCopy}>
+            <Text style={styles.activeRiderLabel}>SIGNED IN AS</Text>
+            <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
           </View>
           <TouchableOpacity
             style={styles.avatar}
@@ -239,142 +239,146 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           >
             <Text style={styles.avatarText}>{initial}</Text>
           </TouchableOpacity>
-        </View>
-
-        <View style={styles.hero}>
-          <Text style={styles.heroTitle}>Ready to ride?</Text>
-          <Text style={styles.heroSubtitle}>
-            Join your group or create a new connected ride session.
-          </Text>
-        </View>
-
-        <View style={styles.segmented}>
           <TouchableOpacity
-            style={[styles.segment, !isCreate && styles.segmentActive]}
-            onPress={() => switchMode('join')}
-            activeOpacity={0.85}
+            style={styles.logoutBtn}
+            onPress={handleLogout}
+            activeOpacity={0.8}
           >
-            <PersonIcon size={16} color={!isCreate ? brand.onPrimary : brand.textSecondary} />
-            <Text style={[styles.segmentText, !isCreate && styles.segmentTextActive]}>JOIN RIDE</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.segment, isCreate && styles.segmentActive]}
-            onPress={() => switchMode('create')}
-            activeOpacity={0.85}
-          >
-            <PlusIcon size={16} color={isCreate ? brand.onPrimary : brand.textSecondary} />
-            <Text style={[styles.segmentText, isCreate && styles.segmentTextActive]}>CREATE RIDE</Text>
+            <Text style={styles.logoutBtnText}>Log Out</Text>
           </TouchableOpacity>
         </View>
+      </View>
 
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>{isCreate ? 'Create a ride' : 'Join a ride'}</Text>
-            <View style={styles.chip}>
-              <Text style={styles.chipText}>{isCreate ? 'LEADER MODE' : 'PACK MEMBER'}</Text>
-            </View>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+        showsVerticalScrollIndicator={false}
+      >
+        <Text style={styles.eyebrow}>YOUR NEXT SESSION</Text>
+        <Text style={styles.title}>Where are we riding?</Text>
+        <Text style={styles.subtitle}>
+          Join with a crew code, or create a new room and invite the group.
+        </Text>
+
+        <View style={styles.formCard}>
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'join' && styles.activeTab]}
+              onPress={() => switchMode('join')}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  mode === 'join' && styles.activeTabText,
+                ]}
+              >
+                JOIN RIDE
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'create' && styles.activeTab]}
+              onPress={() => switchMode('create')}
+              activeOpacity={0.8}
+            >
+              <Text
+                style={[
+                  styles.tabText,
+                  mode === 'create' && styles.activeTabText,
+                ]}
+              >
+                CREATE RIDE
+              </Text>
+            </TouchableOpacity>
           </View>
-          <Text style={styles.cardDescription}>
-            {isCreate
-              ? 'Create a connected ride and invite your group.'
-              : 'Enter the 6-character ride code shared by your pack leader.'}
-          </Text>
 
-          <Text style={styles.fieldLabel}>RIDER NAME</Text>
-          <TextInput
-            style={[styles.input, focused === 'name' && styles.inputFocused]}
-            value={riderName}
-            onChangeText={setRiderName}
-            onFocus={() => setFocused('name')}
-            onBlur={() => setFocused(null)}
-            placeholder="e.g. Alex"
-            placeholderTextColor={brand.outline}
-            autoCapitalize="words"
-            editable={!isLoading}
-          />
+          <View style={styles.form}>
+            <Text style={styles.label}>Rider name</Text>
+            <TextInput
+              style={styles.input}
+              value={riderName}
+              onChangeText={setRiderName}
+              placeholder="e.g. Alex"
+              placeholderTextColor={color.textMuted}
+              autoCapitalize="words"
+              editable={!isLoading}
+            />
 
-          {!isCreate && (
-            <>
-              <Text style={styles.fieldLabel}>RIDE SQUAD PIN</Text>
-              <TextInput
-                style={[styles.input, styles.codeInput, focused === 'code' && styles.inputFocused]}
-                value={roomCode}
-                onChangeText={val => setRoomCode(val.toUpperCase())}
-                onFocus={() => setFocused('code')}
-                onBlur={() => setFocused(null)}
-                placeholder="e.g. 8K2M9X"
-                placeholderTextColor={brand.outlineVariant}
-                autoCapitalize="characters"
-                maxLength={6}
-                editable={!isLoading}
-              />
-            </>
-          )}
-
-          {isCreate && (
-            <>
-              <Text style={styles.fieldLabel}>DESTINATION (OPTIONAL)</Text>
-              <View style={[styles.inputRow, focused === 'destination' && styles.inputFocused]}>
-                <PinIcon size={18} color={brand.outline} />
+            {mode === 'join' ? (
+              <>
+                <View style={styles.fieldHeading}>
+                  <Text style={styles.label}>Ride code</Text>
+                  <Text style={styles.fieldHint}>6 characters</Text>
+                </View>
                 <TextInput
-                  style={styles.inputRowText}
+                  style={[styles.input, styles.codeInput]}
+                  value={roomCode}
+                  onChangeText={value => setRoomCode(value.toUpperCase())}
+                  placeholder="e.g. 8K2M9X"
+                  placeholderTextColor={color.textMuted}
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  editable={!isLoading}
+                  onSubmitEditing={handleAction}
+                />
+              </>
+            ) : (
+              <>
+                <View style={styles.fieldHeading}>
+                  <Text style={styles.label}>Destination</Text>
+                  <Text style={styles.fieldHint}>Optional</Text>
+                </View>
+                <TextInput
+                  style={styles.input}
                   value={destination}
                   onChangeText={setDestination}
-                  onFocus={() => setFocused('destination')}
-                  onBlur={() => setFocused(null)}
                   placeholder="e.g. Golconda Fort, Hyderabad"
-                  placeholderTextColor={brand.outline}
+                  placeholderTextColor={color.textMuted}
                   autoCapitalize="words"
                   editable={!isLoading}
+                  onSubmitEditing={handleAction}
                 />
-              </View>
-            </>
-          )}
+              </>
+            )}
+          </View>
 
           {error ? (
             <View style={styles.errorBox}>
               <Text style={styles.errorTitle}>
-                {isCreate ? 'Unable to create ride' : 'Unable to join ride'}
+                {mode === 'create'
+                  ? 'Unable to create ride'
+                  : 'Unable to join ride'}
               </Text>
-              <Text style={styles.errorText}>{error}</Text>
+              <Text style={styles.error}>{error}</Text>
             </View>
           ) : null}
 
           <Pressable
             style={({ pressed }) => [
-              styles.primaryButton,
+              primaryButtonStyle,
               isLoading && styles.buttonDisabled,
               pressed && !isLoading && styles.buttonPressed,
             ]}
             disabled={isLoading}
             onPress={handleAction}
           >
-            {isLoading ? <ActivityIndicator color={brand.onPrimary} /> : null}
-            <Text style={styles.primaryButtonText}>
+            {isLoading ? <ActivityIndicator color={color.onAccent} /> : null}
+            <Text style={styles.mainButtonText}>
               {isLoading
-                ? isCreate
+                ? mode === 'create'
                   ? 'CREATING RIDE...'
                   : 'JOINING RIDE...'
-                : isCreate
-                  ? 'CREATE RIDE'
-                  : 'JOIN RIDE'}
+                : mode === 'create'
+                ? 'CREATE RIDE'
+                : 'JOIN RIDE'}
             </Text>
           </Pressable>
 
-          <View style={styles.privacyRow}>
-            <LockIcon size={12} color={brand.textSecondary} />
-            <Text style={styles.privacyText}>
-              Your rider name &amp; live location will be shared with the squad.
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.recentHeader}>
-          <Text style={styles.recentTitle}>Recent Rides</Text>
-        </View>
-        <View style={styles.emptyCard}>
-          <Text style={styles.emptyTitle}>NO RECENT RIDES</Text>
-          <Text style={styles.emptyText}>Your completed rides will appear here.</Text>
+          <Text style={styles.safetyNote}>
+            Voice, location, and hazard detection activate only after you enter
+            the ride.
+          </Text>
         </View>
       </ScrollView>
 
@@ -388,159 +392,132 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: brand.bg },
-  logoutBtn: {
-    minHeight: 44,
-    minWidth: 44,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.md,
-    borderRadius: homeRadius.button,
-    backgroundColor: brand.dangerMuted,
-    borderWidth: 1,
-    borderColor: brand.dangerBorder,
+  container: { flex: 1, backgroundColor: color.bg },
+  topBar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingHorizontal: spacing.xxl,
+    paddingBottom: spacing.xl,
+    borderBottomWidth: 1,
+    borderBottomColor: color.border,
   },
-  logoutBtnText: { ...homeType.labelMedium, color: '#f87171' },
+  profileArea: { flexDirection: 'row', alignItems: 'center' },
+  profileCopy: { alignItems: 'flex-end', marginRight: spacing.sm },
+  activeRiderLabel: {
+    ...type.overline,
+    color: color.textMuted,
+    fontSize: 9,
+    lineHeight: 12,
+  },
+  activeRiderName: {
+    fontSize: 13,
+    fontWeight: '700',
+    color: color.textPrimary,
+    marginTop: 2,
+  },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.accentMuted,
+    borderWidth: 1,
+    borderColor: color.accentBorder,
+  },
+  avatarText: { color: color.accent, fontSize: 13, fontWeight: '800' },
+  logoutBtn: {
+    minHeight: 40,
+    justifyContent: 'center',
+    paddingLeft: spacing.md,
+  },
+  logoutBtnText: { color: color.textMuted, fontSize: 12, fontWeight: '700' },
   scroll: { flex: 1 },
-  scrollContent: { paddingHorizontal: spacing.xl, paddingTop: spacing.lg, gap: spacing.lg },
-
-  identityCard: {
+  scrollContent: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.xxxl,
+  },
+  eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
+  title: { ...type.hero, color: color.textPrimary, maxWidth: 340 },
+  subtitle: {
+    ...type.body,
+    color: color.textSecondary,
+    marginTop: spacing.md,
+    marginBottom: spacing.xxl,
+    maxWidth: 350,
+  },
+  formCard: {
+    backgroundColor: color.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: color.border,
+    padding: spacing.xl,
+  },
+  tabContainer: {
+    flexDirection: 'row',
+    backgroundColor: color.bgSoft,
+    borderRadius: radius.md,
+    padding: spacing.xs,
+    marginBottom: spacing.xl,
+  },
+  tab: {
+    flex: 1,
+    paddingVertical: spacing.md,
+    borderRadius: radius.sm,
+    alignItems: 'center',
+  },
+  activeTab: {
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.borderStrong,
+  },
+  tabText: { ...type.label, color: color.textMuted, fontSize: 12 },
+  activeTabText: { color: color.textPrimary },
+  form: { marginBottom: spacing.lg },
+  label: {
+    ...type.label,
+    color: color.textSecondary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
+  fieldHeading: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    backgroundColor: brand.card,
-    borderRadius: homeRadius.card,
-    padding: spacing.lg,
   },
-  identityText: { flex: 1, paddingRight: spacing.md },
-  identityBrand: { ...homeType.labelLarge, color: brand.textPrimary, letterSpacing: 1 },
-  identityCaption: { ...homeType.labelSmall, color: brand.primary, marginTop: spacing.xs },
-  identityName: { ...homeType.bodyMedium, color: brand.textSecondary, marginTop: 2 },
-  avatar: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: brand.primaryMuted,
-    borderWidth: 1,
-    borderColor: brand.primaryBorder,
-    alignItems: 'center',
-    justifyContent: 'center',
+  fieldHint: {
+    ...type.caption,
+    color: color.textMuted,
+    marginTop: spacing.md,
+    marginBottom: spacing.sm,
   },
-  avatarText: { ...homeType.headlineSmall, color: brand.primary },
-
-  hero: { paddingVertical: spacing.sm },
-  heroTitle: { ...homeType.headlineLarge, color: brand.textPrimary },
-  heroSubtitle: { ...homeType.bodyMedium, color: brand.textSecondary, marginTop: spacing.sm },
-
-  segmented: {
-    flexDirection: 'row',
-    backgroundColor: brand.darkest,
-    borderRadius: homeRadius.pill,
-    padding: 4,
-  },
-  segment: {
-    flex: 1,
-    minHeight: 48,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    borderRadius: homeRadius.pill,
-  },
-  segmentActive: { backgroundColor: brand.primary },
-  segmentText: { ...homeType.labelLarge, color: brand.textSecondary },
-  segmentTextActive: { color: brand.onPrimary, fontFamily: font.bold },
-
-  card: {
-    backgroundColor: brand.card,
-    borderRadius: homeRadius.card,
-    padding: spacing.xl,
-    borderWidth: 1,
-    borderColor: brand.inputBorder,
-  },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
-  cardTitle: { ...homeType.headlineSmall, color: brand.textPrimary, flexShrink: 1 },
-  chip: {
-    paddingHorizontal: spacing.sm + 2,
-    paddingVertical: spacing.xs,
-    borderRadius: homeRadius.pill,
-    backgroundColor: brand.primaryMuted,
-    borderWidth: 1,
-    borderColor: brand.primaryBorder,
-  },
-  chipText: { ...homeType.labelSmall, color: brand.primary },
-  cardDescription: { ...homeType.bodyMedium, color: brand.textSecondary, marginTop: spacing.sm },
-
-  fieldLabel: { ...homeType.labelSmall, color: brand.outline, marginTop: spacing.lg, marginBottom: spacing.sm },
-  input: {
-    minHeight: 52,
-    backgroundColor: brand.darkest,
-    borderWidth: 1,
-    borderColor: brand.inputBorder,
-    borderRadius: homeRadius.input,
-    paddingHorizontal: spacing.lg,
-    ...homeType.bodyLarge,
-    color: brand.textPrimary,
-  },
-  inputFocused: { borderColor: brand.primary },
+  input: { ...inputStyle },
   codeInput: {
     textAlign: 'center',
-    letterSpacing: 8,
-    fontSize: 24,
-    lineHeight: 30,
-    fontFamily: font.heading,
+    letterSpacing: 4,
+    fontSize: 21,
+    fontWeight: '800',
   },
-  inputRow: {
-    minHeight: 52,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: spacing.md,
-    backgroundColor: brand.darkest,
-    borderWidth: 1,
-    borderColor: brand.inputBorder,
-    borderRadius: homeRadius.input,
-    paddingHorizontal: spacing.lg,
-  },
-  inputRowText: { flex: 1, ...homeType.bodyLarge, color: brand.textPrimary, paddingVertical: spacing.md },
-
   errorBox: {
-    marginTop: spacing.lg,
+    backgroundColor: color.dangerMuted,
+    borderWidth: 1,
+    borderColor: color.dangerBorder,
+    borderRadius: radius.sm,
     padding: spacing.md,
-    borderRadius: homeRadius.input,
-    backgroundColor: brand.dangerMuted,
-    borderWidth: 1,
-    borderColor: brand.dangerBorder,
+    marginBottom: spacing.lg,
   },
-  errorTitle: { ...homeType.labelLarge, color: brand.danger },
-  errorText: { ...homeType.bodySmall, color: brand.textPrimary, marginTop: 2 },
-
-  primaryButton: {
-    minHeight: 52,
-    marginTop: spacing.xl,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: spacing.sm,
-    borderRadius: homeRadius.button,
-    backgroundColor: brand.primary,
+  errorTitle: { ...type.label, color: color.danger },
+  error: { ...type.caption, color: color.textPrimary, marginTop: 2 },
+  buttonDisabled: { opacity: 0.55 },
+  buttonPressed: { opacity: 0.84 },
+  mainButtonText: { color: color.onAccent, fontSize: 15, fontWeight: '800' },
+  safetyNote: {
+    ...type.caption,
+    color: color.textMuted,
+    textAlign: 'center',
+    marginTop: spacing.lg,
   },
-  primaryButtonText: { ...homeType.button, color: brand.onPrimary },
-  buttonDisabled: { opacity: 0.6 },
-  buttonPressed: { opacity: 0.85 },
-
-  privacyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
-  privacyText: { flex: 1, fontSize: 11, lineHeight: 15, fontFamily: font.body, color: brand.textSecondary },
-
-  recentHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm },
-  recentTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
-  emptyCard: {
-    alignItems: 'center',
-    padding: spacing.xl,
-    borderRadius: homeRadius.card,
-    backgroundColor: brand.surfaceLow,
-    borderWidth: 1,
-    borderColor: brand.inputBorder,
-    borderStyle: 'dashed',
-  },
-  emptyTitle: { ...homeType.labelSmall, color: brand.outline },
-  emptyText: { ...homeType.bodySmall, color: brand.textSecondary, marginTop: spacing.xs },
 });
