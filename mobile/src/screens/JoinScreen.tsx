@@ -5,6 +5,7 @@ import {
   PermissionsAndroid,
   Platform,
   Pressable,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
@@ -14,7 +15,10 @@ import {
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useAuth } from '../context/AuthContext';
+import type { RideDestination } from '../components/RiderMap';
+import { color, radius, spacing, type, cardStyle, primaryButtonStyle } from '../theme';
 import { api } from '../services/AuthService';
+import { geocodeDestination } from '../services/destinationService';
 import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 
 export interface RideSession {
@@ -22,6 +26,17 @@ export interface RideSession {
   token: string;
   riderName: string;
   roomCode: string;
+  isHost: boolean;
+  destination?: RideDestination | null;
+}
+
+function destinationFromRoomResponse(data: any): RideDestination | null {
+  const lat = data?.destinationLat;
+  const lng = data?.destinationLng;
+  if (typeof lat !== 'number' || typeof lng !== 'number') {
+    return null;
+  }
+  return { name: data?.destinationName ?? null, latitude: lat, longitude: lng };
 }
 
 interface JoinScreenProps {
@@ -64,11 +79,12 @@ async function requestAllRidePermissions(): Promise<boolean> {
 
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
-  const { user, logout } = useAuth();
+  const { user, token, logout } = useAuth();
 
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
+  const [destination, setDestination] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -87,6 +103,11 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
   const handleAction = useCallback(async () => {
     if (isLoading) return;
+
+    if (!token) {
+      setError('Your session has expired. Please sign in again.');
+      return;
+    }
 
     const trimmedName = riderName.trim();
     const trimmedCode = roomCode.trim().toUpperCase();
@@ -110,30 +131,56 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         setError('Microphone permission is required to talk.');
         Alert.alert(
           'Microphone Required',
-          'Ridezz cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
+          'Rideaze cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
           [{ text: 'OK' }]
         );
         setIsLoading(false);
         return;
       }
 
-      // The bearer token is attached by the API client; the server knows who is asking from it.
-      const response =
-        mode === 'create'
-          ? await api.post('/rooms/create', { riderName: trimmedName })
-          : await api.post('/rooms/join', { roomCode: trimmedCode, riderName: trimmedName });
+      let response;
+      if (mode === 'create') {
+        const trimmedDestination = destination.trim();
+        let destinationFix: RideDestination | null = null;
+        if (trimmedDestination) {
+          destinationFix = await geocodeDestination(trimmedDestination);
+          if (!destinationFix) {
+            setError(`Couldn't find "${trimmedDestination}". Try a more specific search.`);
+            setIsLoading(false);
+            return;
+          }
+        }
 
-      const { roomCode: activeCode, token, serverUrl } = response.data;
+        response = await api.post(
+          '/rooms/create',
+          {
+            riderName: trimmedName,
+            destinationName: destinationFix?.name ?? undefined,
+            destinationLat: destinationFix?.latitude ?? undefined,
+            destinationLng: destinationFix?.longitude ?? undefined,
+          },
+          { timeout: 8000 },
+        );
+      } else {
+        response = await api.post(
+          '/rooms/join',
+          { roomCode: trimmedCode, riderName: trimmedName },
+          { timeout: 8000 },
+        );
+      }
+
+      const { roomCode: activeCode, token: liveKitToken, serverUrl, isHost } = response.data;
 
       onJoined({
         serverUrl,
-        token,
+        token: liveKitToken,
         riderName: trimmedName,
         roomCode: activeCode,
+        isHost: Boolean(isHost),
+        destination: destinationFromRoomResponse(response.data),
       });
     } catch (err) {
       if (isUnauthorized(err)) {
-        // The saved sign-in has expired or the account is gone: start over from the sign-in screen.
         await logout();
         navigation?.navigate('LoginPage');
         return;
@@ -142,13 +189,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, mode, onJoined, logout, navigation]);
+  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined, logout, navigation]);
 
   return (
     <KeyboardAvoidingView
       style={[
         styles.container,
-        { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 24 },
+        { paddingTop: insets.top + spacing.lg, paddingBottom: insets.bottom + spacing.xl },
       ]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
@@ -157,85 +204,108 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           <Text style={styles.activeRiderLabel}>Logged In As</Text>
           <Text style={styles.activeRiderName}>{user?.name || 'Rider'}</Text>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout}>
+        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
           <Text style={styles.logoutBtnText}>Log Out</Text>
         </TouchableOpacity>
       </View>
 
-      <View style={styles.content}>
-        <Text style={styles.title}>RIDEZZ</Text>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.scrollContent}
+        keyboardShouldPersistTaps="handled"
+      >
+        <Text style={styles.title}>RIDEAZE</Text>
         <Text style={styles.subtitle}>Group ride intercom</Text>
 
-        <View style={styles.tabContainer}>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'join' && styles.activeTab]}
-            onPress={() => {
-              setMode('join');
-              setError(null);
-            }}
+        <View style={cardStyle}>
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'join' && styles.activeTab]}
+              onPress={() => {
+                setMode('join');
+                setError(null);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.tabText, mode === 'join' && styles.activeTabText]}>
+                JOIN ROOM
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[styles.tab, mode === 'create' && styles.activeTab]}
+              onPress={() => {
+                setMode('create');
+                setError(null);
+              }}
+              activeOpacity={0.8}
+            >
+              <Text style={[styles.tabText, mode === 'create' && styles.activeTabText]}>
+                CREATE ROOM
+              </Text>
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.form}>
+            <Text style={styles.label}>Rider Name</Text>
+            <TextInput
+              style={styles.input}
+              value={riderName}
+              onChangeText={setRiderName}
+              placeholder="e.g. Alex"
+              placeholderTextColor={color.textMuted}
+              autoCapitalize="words"
+              editable={!isLoading}
+            />
+
+            {mode === 'join' && (
+              <>
+                <Text style={styles.label}>6-Character Room Code</Text>
+                <TextInput
+                  style={[styles.input, styles.codeInput]}
+                  value={roomCode}
+                  onChangeText={(val) => setRoomCode(val.toUpperCase())}
+                  placeholder="e.g. 8K2M9X"
+                  placeholderTextColor={color.textMuted}
+                  autoCapitalize="characters"
+                  maxLength={6}
+                  editable={!isLoading}
+                />
+              </>
+            )}
+
+            {mode === 'create' && (
+              <>
+                <Text style={styles.label}>Destination (optional)</Text>
+                <TextInput
+                  style={styles.input}
+                  value={destination}
+                  onChangeText={setDestination}
+                  placeholder="e.g. Golconda Fort, Hyderabad"
+                  placeholderTextColor={color.textMuted}
+                  autoCapitalize="words"
+                  editable={!isLoading}
+                />
+              </>
+            )}
+          </View>
+
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+
+          <Pressable
+            style={[primaryButtonStyle, isLoading && styles.buttonDisabled]}
+            disabled={isLoading}
+            onPress={handleAction}
           >
-            <Text style={[styles.tabText, mode === 'join' && styles.activeTabText]}>
-              JOIN ROOM
-            </Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[styles.tab, mode === 'create' && styles.activeTab]}
-            onPress={() => {
-              setMode('create');
-              setError(null);
-            }}
-          >
-            <Text style={[styles.tabText, mode === 'create' && styles.activeTabText]}>
-              CREATE ROOM
-            </Text>
-          </TouchableOpacity>
+            {isLoading ? (
+              <ActivityIndicator color={color.onAccent} />
+            ) : (
+              <Text style={styles.mainButtonText}>
+                {mode === 'create' ? 'Create & Start Ride' : 'Join Ride'}
+              </Text>
+            )}
+          </Pressable>
         </View>
-
-        <View style={styles.form}>
-          <Text style={styles.label}>Rider Name</Text>
-          <TextInput
-            style={styles.input}
-            value={riderName}
-            onChangeText={setRiderName}
-            placeholder="e.g. Alex"
-            placeholderTextColor="#6b7280"
-            autoCapitalize="words"
-            editable={!isLoading}
-          />
-
-          {mode === 'join' && (
-            <>
-              <Text style={styles.label}>6-Character Room Code</Text>
-              <TextInput
-                style={[styles.input, styles.codeInput]}
-                value={roomCode}
-                onChangeText={(val) => setRoomCode(val.toUpperCase())}
-                placeholder="e.g. 8K2M9X"
-                placeholderTextColor="#6b7280"
-                autoCapitalize="characters"
-                maxLength={6}
-                editable={!isLoading}
-              />
-            </>
-          )}
-        </View>
-
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-
-        <Pressable
-          style={[styles.mainButton, isLoading && styles.buttonDisabled]}
-          disabled={isLoading}
-          onPress={handleAction}
-        >
-          {isLoading ? (
-            <ActivityIndicator color="#000000" />
-          ) : (
-            <Text style={styles.mainButtonText}>
-              {mode === 'create' ? 'Create & Start Ride' : 'Join Ride'}
-            </Text>
-          )}
-        </Pressable>
-      </View>
+      </ScrollView>
     </KeyboardAvoidingView>
   );
 }
@@ -243,105 +313,90 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#121212',
+    backgroundColor: color.bg,
   },
   topBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    paddingHorizontal: 24,
-    paddingBottom: 16,
+    paddingHorizontal: spacing.xxl,
+    paddingBottom: spacing.lg,
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
+    borderBottomColor: color.border,
   },
-  activeRiderLabel: {
-    fontSize: 11,
-    color: '#888',
-    textTransform: 'uppercase',
-    letterSpacing: 1,
-  },
-  activeRiderName: {
-    fontSize: 15,
-    fontWeight: '700',
-    color: '#22c55e',
-    marginTop: 2,
-  },
+  activeRiderLabel: { ...type.label, color: color.textMuted, textTransform: 'uppercase' },
+  activeRiderName: { fontSize: 15, fontWeight: '700', color: color.accent, marginTop: spacing.xs / 2 },
   logoutBtn: {
-    backgroundColor: '#261b1b',
+    backgroundColor: color.dangerMuted,
     borderWidth: 1,
-    borderColor: '#7f1d1d',
-    paddingVertical: 6,
-    paddingHorizontal: 12,
-    borderRadius: 8,
+    borderColor: color.dangerBorder,
+    paddingVertical: spacing.sm - 2,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.sm,
   },
   logoutBtnText: {
     color: '#f87171',
     fontSize: 13,
     fontWeight: '600',
   },
-  content: {
-    flex: 1,
+  scroll: { flex: 1 },
+  scrollContent: {
+    flexGrow: 1,
     justifyContent: 'center',
-    paddingHorizontal: 24,
+    paddingHorizontal: spacing.xxl,
+    paddingVertical: spacing.xxl,
   },
   title: {
-    fontSize: 38,
-    fontWeight: '900',
-    color: '#22c55e',
+    ...type.hero,
+    color: color.accent,
     textAlign: 'center',
-    letterSpacing: 2,
   },
   subtitle: {
-    fontSize: 14,
-    color: '#888',
+    ...type.label,
+    color: color.textMuted,
     textAlign: 'center',
-    marginTop: 4,
-    marginBottom: 28,
-    textTransform: 'uppercase',
+    marginTop: spacing.xs,
+    marginBottom: spacing.xxl,
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: '#1e1e1e',
-    borderRadius: 10,
-    padding: 4,
-    marginBottom: 20,
+    backgroundColor: color.surfaceRaised,
+    borderRadius: radius.md,
+    padding: spacing.xs,
+    marginBottom: spacing.xl,
   },
   tab: {
     flex: 1,
-    paddingVertical: 12,
-    borderRadius: 8,
+    paddingVertical: spacing.md,
+    borderRadius: radius.sm,
     alignItems: 'center',
   },
   activeTab: {
-    backgroundColor: '#2e2e2e',
+    backgroundColor: color.border,
   },
-  tabText: {
-    fontSize: 13,
-    fontWeight: '700',
-    color: '#888',
-  },
+  tabText: { ...type.label, color: color.textMuted, textTransform: 'none' },
   activeTabText: {
-    color: '#22c55e',
+    color: color.accent,
   },
   form: {
-    marginBottom: 20,
+    marginBottom: spacing.lg,
   },
   label: {
-    fontSize: 13,
-    color: '#aaa',
-    marginBottom: 6,
-    marginTop: 12,
-    fontWeight: '600',
+    ...type.label,
+    color: color.textSecondary,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+    textTransform: 'none',
   },
   input: {
-    backgroundColor: '#1e1e1e',
+    backgroundColor: color.surfaceRaised,
     borderWidth: 1,
-    borderColor: '#333',
-    borderRadius: 10,
-    paddingHorizontal: 16,
-    paddingVertical: 14,
+    borderColor: color.border,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md + 2,
     fontSize: 15,
-    color: '#ffffff',
+    color: color.textPrimary,
   },
   codeInput: {
     textAlign: 'center',
@@ -350,23 +405,17 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
   error: {
-    color: '#ef4444',
+    color: color.danger,
     fontSize: 14,
-    marginBottom: 16,
+    marginBottom: spacing.lg,
     textAlign: 'center',
   },
-  mainButton: {
-    backgroundColor: '#22c55e',
-    borderRadius: 12,
-    paddingVertical: 16,
-    alignItems: 'center',
-  },
   buttonDisabled: {
-    backgroundColor: '#2a2a2a',
+    backgroundColor: color.surfaceRaised,
     opacity: 0.6,
   },
   mainButtonText: {
-    color: '#000000',
+    color: color.onAccent,
     fontSize: 17,
     fontWeight: '700',
   },

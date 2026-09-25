@@ -1,6 +1,8 @@
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useDiagnosticsLog } from '../hooks/useDiagnosticsLog';
 import type { DiagnosticEvent } from '../utils/diagnostics';
+import { color, radius, spacing, type } from '../theme';
 
 interface DiagnosticsModalProps {
   visible: boolean;
@@ -27,13 +29,14 @@ function renderItem({ item }: { item: DiagnosticEvent }) {
 export default function DiagnosticsModal({ visible, onClose }: DiagnosticsModalProps) {
   const events = useDiagnosticsLog();
   const reversed = [...events].reverse();
+  const insets = useSafeAreaInsets();
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={styles.container}>
+      <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Diagnostics</Text>
-          <Pressable style={styles.closeButton} onPress={onClose}>
+          <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
             <Text style={styles.closeButtonText}>Close</Text>
           </Pressable>
         </View>
@@ -55,54 +58,49 @@ export default function DiagnosticsModal({ visible, onClose }: DiagnosticsModalP
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#0d1117',
-    paddingTop: 56,
-    paddingHorizontal: 20,
+    backgroundColor: color.bg,
+    paddingHorizontal: spacing.xl,
   },
   header: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.lg,
   },
-  title: {
-    fontSize: 22,
-    fontWeight: '700',
-    color: '#ffffff',
-  },
+  title: { ...type.title, color: color.textPrimary },
   closeButton: {
-    paddingVertical: 10,
-    paddingHorizontal: 18,
-    backgroundColor: '#21262d',
-    borderRadius: 8,
+    paddingVertical: spacing.sm + 2,
+    paddingHorizontal: spacing.lg,
+    backgroundColor: color.surfaceRaised,
+    borderRadius: radius.sm,
   },
   closeButtonText: {
-    color: '#ffffff',
+    color: color.textPrimary,
     fontSize: 15,
     fontWeight: '600',
   },
   empty: {
-    color: '#6b7280',
+    color: color.textMuted,
     fontSize: 14,
-    marginTop: 24,
+    marginTop: spacing.xxl,
   },
   listContent: {
-    paddingBottom: 40,
+    paddingBottom: spacing.xxxl + spacing.sm,
   },
   row: {
     flexDirection: 'row',
-    paddingVertical: 10,
+    paddingVertical: spacing.sm + 2,
     borderBottomWidth: 1,
-    borderBottomColor: '#21262d',
+    borderBottomColor: color.border,
   },
   time: {
-    color: '#6b7280',
+    color: color.textMuted,
     fontSize: 13,
     width: 76,
     fontVariant: ['tabular-nums'],
   },
   message: {
-    color: '#c9d1d9',
+    color: color.textSecondary,
     fontSize: 14,
     flex: 1,
   },

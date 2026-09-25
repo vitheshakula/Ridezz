@@ -23,10 +23,13 @@ model User {
 }
 
 model Room {
-  id        String   @id @default(uuid())
-  code      String   @unique
-  name      String
-  hostId    String
-  host      User     @relation(fields: [hostId], references: [id])
-  createdAt DateTime @default(now())
+  id              String   @id @default(uuid())
+  code            String   @unique
+  name            String
+  hostId          String
+  host            User     @relation(fields: [hostId], references: [id])
+  createdAt       DateTime @default(now())
+  destinationName String?
+  destinationLat  Float?
+  destinationLng  Float?
 }

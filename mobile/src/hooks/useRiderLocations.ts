@@ -78,10 +78,32 @@ export function useRiderLocations(
   // fix at all, since the OS suppresses redundant deliveries inside distanceFilter).
   const identityRef = useRef(localIdentity);
   const nameRef = useRef(localName);
+  // Holds the most recent raw GPS fix regardless of whether an identity was available
+  // to store it under yet. Confirmed on-device: getCurrentPosition's cached-location fast
+  // path can resolve within the same tick the room connects, *before* LiveKit has assigned
+  // localParticipant.identity -- without this, that fix is silently dropped (handleFix's
+  // identity check below fails) and never retried, since it's a one-shot seed, leaving the
+  // map stuck on "Waiting for your GPS location..." even though a real fix was received.
+  const latestFixRef = useRef<
+    { lat: number; lng: number; accuracy: number; speed?: number; heading?: number; timestamp: number } | null
+  >(null);
   useEffect(() => {
     identityRef.current = localIdentity;
     nameRef.current = localName;
-  }, [localIdentity, localName]);
+    if (localIdentity && latestFixRef.current) {
+      const payload = latestFixRef.current;
+      setState(prev =>
+        upsertRiderLocation(prev, {
+          identity: localIdentity,
+          name: localName,
+          payload: { v: 1, ...payload },
+        }),
+      );
+      room.localParticipant
+        .publishData(encodeLocationPayload(payload), { reliable: false, topic: LOCATION_TOPIC })
+        .catch(() => {});
+    }
+  }, [localIdentity, localName, room]);
 
   useEffect(() => {
     let cancelled = false;
@@ -110,41 +132,96 @@ export function useRiderLocations(
 
       logDiagnosticEvent('location_started', 'Location sharing started');
       ensureGeolocationConfigured();
-      watchId = Geolocation.watchPosition(
-        position => {
-          if (hadErrorSinceLastFix) {
-            hadErrorSinceLastFix = false;
-            logDiagnosticEvent('location_resumed', 'Location updates resumed');
-          }
-          const payload = {
-            lat: position.coords.latitude,
-            lng: position.coords.longitude,
-            accuracy: position.coords.accuracy,
-            timestamp: position.timestamp,
-          };
-          if (!cancelled && identityRef.current) {
-            setState(prev =>
-              upsertRiderLocation(prev, {
-                identity: identityRef.current,
-                name: nameRef.current,
-                payload: { v: 1, ...payload },
-              }),
-            );
-          }
-          if (identityRef.current) {
-            room.localParticipant
-              .publishData(encodeLocationPayload(payload), {
-                reliable: false,
-                topic: LOCATION_TOPIC,
-              })
-              .catch(() => {
-                // Best-effort -- a dropped location update isn't worth surfacing as an error.
-              });
-          }
+
+      let hasLoggedFirstFix = false;
+      const handleFix = (position: {
+        coords: {
+          latitude: number;
+          longitude: number;
+          accuracy: number;
+          speed?: number | null;
+          heading?: number | null;
+        };
+        timestamp: number;
+      }) => {
+        if (!hasLoggedFirstFix) {
+          hasLoggedFirstFix = true;
+          logDiagnosticEvent(
+            'location_fix_received',
+            `First fix: ${position.coords.latitude.toFixed(4)}, ${position.coords.longitude.toFixed(4)} (±${Math.round(position.coords.accuracy)}m)`,
+          );
+        }
+        if (hadErrorSinceLastFix) {
+          hadErrorSinceLastFix = false;
+          logDiagnosticEvent('location_resumed', 'Location updates resumed');
+        }
+        // speed/heading come back as null (not undefined, not omitted) from the native
+        // module when the OS doesn't have a value -- normalize so our optional-field
+        // wire format (and decodeLocationPayload's validation) sees them as genuinely
+        // absent rather than a JSON-serialized "null" it would then have to special-case.
+        const payload = {
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+          accuracy: position.coords.accuracy,
+          speed: position.coords.speed ?? undefined,
+          heading: position.coords.heading ?? undefined,
+          timestamp: position.timestamp,
+        };
+        latestFixRef.current = payload;
+        if (!cancelled && identityRef.current) {
+          setState(prev =>
+            upsertRiderLocation(prev, {
+              identity: identityRef.current,
+              name: nameRef.current,
+              payload: { v: 1, ...payload },
+            }),
+          );
+        }
+        if (identityRef.current) {
+          room.localParticipant
+            .publishData(encodeLocationPayload(payload), {
+              reliable: false,
+              topic: LOCATION_TOPIC,
+            })
+            .catch(() => {
+              // Best-effort -- a dropped location update isn't worth surfacing as an error.
+            });
+        }
+      };
+
+      // Seed an immediate fix via getCurrentPosition, separate from watchPosition below.
+      // Confirmed on-device: this OEM's LocationManagerService drops delivery ("dropped
+      // delivery - too close") to a *live* registration -- including the very first one --
+      // whenever the new fix isn't meaningfully different from the provider's last cached
+      // location, which is the common case on a stationary phone. A large maximumAge makes
+      // the native geolocation module satisfy this from Android's cached last-known-location
+      // instead of registering a live update, sidestepping that throttling entirely. Without
+      // this seed, a stationary rider could wait indefinitely and the map would stay stuck on
+      // "Waiting for your GPS location...".
+      Geolocation.getCurrentPosition(
+        handleFix,
+        (err: { code?: number; message?: string }) => {
+          // Best-effort only -- watchPosition below is the real ongoing source, and a
+          // rider moving will still get fixes even if this one-shot seed fails/times out.
+          // Logged (not swallowed) so a stuck "Waiting for GPS location..." is diagnosable
+          // from the in-app Diagnostics log instead of needing a debugger attached.
+          logDiagnosticEvent(
+            'location_error',
+            `Initial fix failed: code ${err?.code ?? '?'} - ${err?.message ?? 'unknown error'}`,
+          );
         },
-        () => {
+        { enableHighAccuracy: false, timeout: 20000, maximumAge: 5 * 60 * 1000 },
+      );
+
+      watchId = Geolocation.watchPosition(
+        handleFix,
+        (err: { code?: number; message?: string }) => {
           // GPS unavailable/failed after permission was granted -- location sharing
           // just stays stale/off for this rider; the intercom itself is unaffected.
+          logDiagnosticEvent(
+            'location_error',
+            `Watch error: code ${err?.code ?? '?'} - ${err?.message ?? 'unknown error'}`,
+          );
           if (!hadErrorSinceLastFix) {
             hadErrorSinceLastFix = true;
             logDiagnosticEvent('location_paused', 'Location updates interrupted');

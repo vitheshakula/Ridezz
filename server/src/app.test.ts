@@ -631,3 +631,212 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
     assert.equal((await ask('POST', '/api/rooms/create', { riderName: 'Alex' }, token)).status, 401);
   });
 });
+
+describe('ride destination, host and LiveKit metadata', () => {
+  const fort = { destinationName: 'Golconda Fort, Hyderabad', destinationLat: 17.3833, destinationLng: 78.4011 };
+  const patch = (code: string, body: unknown, token?: string) => call('PATCH', `/api/rooms/${code}/destination`, body, token);
+  const claims = (livekitToken: string) => jwt.decode(livekitToken) as any;
+
+  describe('creating a room', () => {
+    it('makes the creator the host and answers isHost: true', async () => {
+      const { token } = await register();
+      const res = await post('/api/rooms/create', {}, token);
+      assert.equal(res.status, 201);
+      assert.equal(res.body.isHost, true);
+    });
+
+    it('stores a valid destination and returns it', async () => {
+      const { token } = await register();
+      const res = await post('/api/rooms/create', fort, token);
+
+      assert.equal(res.body.destinationName, fort.destinationName);
+      assert.equal(res.body.destinationLat, fort.destinationLat);
+      assert.equal(res.body.destinationLng, fort.destinationLng);
+
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: res.body.roomCode } });
+      assert.equal(room.destinationName, fort.destinationName);
+      assert.equal(room.destinationLat, fort.destinationLat);
+      assert.equal(room.destinationLng, fort.destinationLng);
+    });
+
+    it('creates a room with no destination when none is given', async () => {
+      const { token } = await register();
+      const res = await post('/api/rooms/create', { riderName: 'Alex' }, token);
+      assert.equal(res.body.destinationName, null);
+      assert.equal(res.body.destinationLat, null);
+      assert.equal(res.body.destinationLng, null);
+    });
+
+    it('still creates the room, without a destination, when the coordinates are unusable', async () => {
+      const { token } = await register();
+      for (const bad of [
+        { destinationLat: 95, destinationLng: 10 },
+        { destinationLat: 'north', destinationLng: 'east' },
+        { destinationName: 'Nowhere' },
+      ]) {
+        const res = await post('/api/rooms/create', bad, token);
+        assert.equal(res.status, 201);
+        assert.equal(res.body.destinationLat, null);
+        assert.equal(res.body.destinationName, null, 'a name without coordinates is not kept');
+      }
+    });
+
+    it('sanitises the destination name it stores', async () => {
+      const { token } = await register();
+      const long = await post('/api/rooms/create', { ...fort, destinationName: `  ${'x'.repeat(500)}  ` }, token);
+      assert.equal(long.body.destinationName.length, 200);
+
+      const odd = await post('/api/rooms/create', { ...fort, destinationName: { nested: 1 } }, token);
+      assert.equal(odd.status, 201);
+      assert.equal(odd.body.destinationName, null);
+      assert.equal(odd.body.destinationLat, fort.destinationLat, 'the valid coordinates are kept');
+    });
+
+    it('puts who the host is into the LiveKit token, under an identity based on the account', async () => {
+      const { token, user } = await register();
+      const res = await post('/api/rooms/create', {}, token);
+      const lk = claims(res.body.token);
+
+      assert.deepEqual(JSON.parse(lk.metadata), { userId: user.id, isHost: true });
+      assert.match(lk.sub, new RegExp(`^${user.id}_\\d+$`));
+    });
+  });
+
+  describe('joining a room', () => {
+    it('tells the host they are the host and everyone else they are not', async () => {
+      const host = await register();
+      const guest = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      const asHost = await post('/api/rooms/join', { roomCode: created.body.roomCode }, host.token);
+      const asGuest = await post('/api/rooms/join', { roomCode: created.body.roomCode }, guest.token);
+
+      assert.equal(asHost.body.isHost, true);
+      assert.equal(asGuest.body.isHost, false);
+      assert.deepEqual(JSON.parse(claims(asHost.body.token).metadata), { userId: host.user.id, isHost: true });
+      assert.deepEqual(JSON.parse(claims(asGuest.body.token).metadata), { userId: guest.user.id, isHost: false });
+    });
+
+    it('hands the guest the ride destination', async () => {
+      const host = await register();
+      const guest = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      const joined = await post('/api/rooms/join', { roomCode: created.body.roomCode }, guest.token);
+      assert.equal(joined.body.destinationName, fort.destinationName);
+      assert.equal(joined.body.destinationLat, fort.destinationLat);
+      assert.equal(joined.body.destinationLng, fort.destinationLng);
+    });
+
+    it('gives one rider a different LiveKit identity on every join, so a rejoin never collides', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', {}, host.token);
+      const first = await post('/api/rooms/join', { roomCode: created.body.roomCode }, host.token);
+      await new Promise(resolve => setTimeout(resolve, 5));
+      const second = await post('/api/rooms/join', { roomCode: created.body.roomCode }, host.token);
+
+      assert.notEqual(claims(first.body.token).sub, claims(second.body.token).sub);
+    });
+
+    it('does not let two riders with the same display name share an identity', async () => {
+      const a = await register({ name: 'Sam' });
+      const b = await register({ name: 'Sam' });
+      const created = await post('/api/rooms/create', {}, a.token);
+      const joined = await post('/api/rooms/join', { roomCode: created.body.roomCode }, b.token);
+
+      assert.notEqual(claims(created.body.token).sub, claims(joined.body.token).sub);
+    });
+  });
+
+  describe('PATCH /api/rooms/:code/destination', () => {
+    it('lets the host change the destination', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      const res = await patch(
+        created.body.roomCode,
+        { destinationName: 'Charminar', destinationLat: 17.3616, destinationLng: 78.4747 },
+        host.token,
+      );
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body, { destinationName: 'Charminar', destinationLat: 17.3616, destinationLng: 78.4747 });
+
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: created.body.roomCode } });
+      assert.equal(room.destinationName, 'Charminar');
+    });
+
+    it('lets the host set a destination on a room created without one', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', {}, host.token);
+      const res = await patch(created.body.roomCode, fort, host.token);
+      assert.equal(res.status, 200);
+      assert.equal(res.body.destinationLat, fort.destinationLat);
+    });
+
+    it('refuses anyone but the host, and leaves the destination alone', async () => {
+      const host = await register();
+      const guest = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      const res = await patch(
+        created.body.roomCode,
+        { destinationName: 'Hijack', destinationLat: 1, destinationLng: 1 },
+        guest.token,
+      );
+      assert.equal(res.status, 403);
+      assert.match(res.body.message, /Only the ride creator/);
+
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: created.body.roomCode } });
+      assert.equal(room.destinationName, fort.destinationName);
+      assert.equal(room.destinationLat, fort.destinationLat);
+    });
+
+    it('requires a signed-in rider', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+      assert.equal((await patch(created.body.roomCode, fort)).status, 401);
+      assert.equal((await patch(created.body.roomCode, fort, 'not-a-jwt')).status, 401);
+    });
+
+    it('answers 404 for a room that does not exist', async () => {
+      const { token } = await register();
+      assert.equal((await patch('ZZZZZZ', fort, token)).status, 404);
+    });
+
+    it('rejects an unusable destination with 400 and changes nothing', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      for (const bad of [
+        {},
+        { destinationName: 'x' },
+        { destinationLat: 91, destinationLng: 0 },
+        { destinationLat: 0, destinationLng: 181 },
+        { destinationLat: '10', destinationLng: '10' },
+      ]) {
+        assert.equal((await patch(created.body.roomCode, bad, host.token)).status, 400, JSON.stringify(bad));
+      }
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: created.body.roomCode } });
+      assert.equal(room.destinationLat, fort.destinationLat);
+    });
+
+    it('finds the room whatever the case of the code', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', {}, host.token);
+      const res = await patch(created.body.roomCode.toLowerCase(), fort, host.token);
+      assert.equal(res.status, 200);
+    });
+
+    it('sanitises the name, and stores none when it is blank or not text', async () => {
+      const host = await register();
+      const created = await post('/api/rooms/create', fort, host.token);
+
+      const blank = await patch(created.body.roomCode, { ...fort, destinationName: '   ' }, host.token);
+      assert.equal(blank.body.destinationName, null);
+      const notText = await patch(created.body.roomCode, { ...fort, destinationName: 42 }, host.token);
+      assert.equal(notText.body.destinationName, null);
+      const long = await patch(created.body.roomCode, { ...fort, destinationName: 'y'.repeat(999) }, host.token);
+      assert.equal(long.body.destinationName.length, 200);
+    });
+  });
+});

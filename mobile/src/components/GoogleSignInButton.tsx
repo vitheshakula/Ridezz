@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { ActivityIndicator, Alert, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useAuth } from '../context/AuthContext';
 import { loginWithGoogle, type GoogleMode } from '../services/AuthService';
+import { radius, spacing } from '../theme';
 import { describeAuthError, errorCode } from '../utils/authErrors';
 
 interface GoogleSignInButtonProps {
@@ -73,13 +74,13 @@ export function GoogleSignInButton({
 const styles = StyleSheet.create({
   button: {
     backgroundColor: '#ffffff',
-    borderRadius: 10,
-    paddingVertical: 14,
+    borderRadius: radius.lg,
+    paddingVertical: spacing.lg,
     alignItems: 'center',
     justifyContent: 'center',
   },
   buttonDisabled: { opacity: 0.6 },
   content: { flexDirection: 'row', alignItems: 'center' },
-  glyph: { fontSize: 18, fontWeight: '800', color: '#4285f4', marginRight: 10 },
+  glyph: { fontSize: 18, fontWeight: '800', color: '#4285f4', marginRight: spacing.md },
   label: { fontSize: 16, fontWeight: '600', color: '#1f1f1f' },
 });

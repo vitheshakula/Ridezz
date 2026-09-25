@@ -1,9 +1,10 @@
 import { randomInt } from 'node:crypto';
 import { Router, type RequestHandler } from 'express';
-import type { PrismaClient } from '@prisma/client';
+import type { PrismaClient, Room } from '@prisma/client';
 import { AccessToken } from 'livekit-server-sdk';
 import { NAME_MAX_LENGTH } from '../auth/validation';
 import type { Env } from '../config/env';
+import { parseDestination } from '../rooms/destination';
 
 interface RoomsRouterDeps {
   prisma: PrismaClient;
@@ -30,16 +31,33 @@ function displayName(requested: unknown, fallback: string): string {
   return trimmed || fallback;
 }
 
+/** The parts of a room every create/join/update response repeats. */
+function destinationFields(room: Pick<Room, 'destinationName' | 'destinationLat' | 'destinationLng'>) {
+  return {
+    destinationName: room.destinationName,
+    destinationLat: room.destinationLat,
+    destinationLng: room.destinationLng,
+  };
+}
+
 export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps): Router {
   const router = Router();
 
   // Every room route needs a signed-in rider: it hands out a LiveKit token that can publish audio.
   router.use(requireAuth);
 
-  async function createLiveKitToken(roomCode: string, riderName: string, identity: string) {
+  /** `identity` is the rider's account id plus a per-join suffix, so two riders with the same
+   * display name never collide; `metadata` lets every client see who the host is. */
+  async function createLiveKitToken(
+    roomCode: string,
+    riderName: string,
+    userId: string,
+    isHost: boolean,
+  ) {
     const at = new AccessToken(env.livekit.apiKey, env.livekit.apiSecret, {
-      identity,
+      identity: `${userId}_${Date.now()}`,
       name: riderName,
+      metadata: JSON.stringify({ userId, isHost }),
       ttl: '6h',
     });
     at.addGrant({
@@ -52,11 +70,13 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
     return at.toJwt();
   }
 
-  // Creates a room hosted by the signed-in rider and returns a token to join it.
+  // Creates a room hosted by the signed-in rider, optionally with a destination, and returns a
+  // token to join it. A missing or out-of-range destination just means "no destination".
   router.post('/create', async (req, res) => {
     try {
       const user = req.user!;
       const riderName = displayName(req.body?.riderName, user.name);
+      const destination = parseDestination(req.body);
 
       let code = generateRoomCode();
       while (await prisma.room.findUnique({ where: { code } })) {
@@ -64,17 +84,23 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
       }
 
       const room = await prisma.room.create({
-        data: { code, name: `${riderName}'s Ride`, hostId: user.id },
+        data: {
+          code,
+          name: `${riderName}'s Ride`,
+          hostId: user.id,
+          destinationName: destination?.name ?? null,
+          destinationLat: destination?.lat ?? null,
+          destinationLng: destination?.lng ?? null,
+        },
       });
-
-      const identity = `${riderName}_${Date.now()}`;
-      const token = await createLiveKitToken(room.code, riderName, identity);
 
       return res.status(201).json({
         roomCode: room.code,
         roomId: room.id,
-        token,
+        isHost: true,
+        token: await createLiveKitToken(room.code, riderName, user.id, true),
         serverUrl: env.livekit.url,
+        ...destinationFields(room),
       });
     } catch (error) {
       console.error('Create room error:', error);
@@ -95,19 +121,53 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         return res.status(404).json({ message: 'Ride room not found. Check the 6-character code.' });
       }
 
-      const riderName = displayName(req.body?.riderName, req.user!.name);
-      const identity = `${riderName}_${Date.now()}`;
-      const token = await createLiveKitToken(room.code, riderName, identity);
+      const user = req.user!;
+      const isHost = room.hostId === user.id;
+      const riderName = displayName(req.body?.riderName, user.name);
 
       return res.status(200).json({
         roomCode: room.code,
         roomId: room.id,
-        token,
+        isHost,
+        token: await createLiveKitToken(room.code, riderName, user.id, isHost),
         serverUrl: env.livekit.url,
+        ...destinationFields(room),
       });
     } catch (error) {
       console.error('Join room error:', error);
       return res.status(500).json({ message: 'Failed to join room.' });
+    }
+  });
+
+  // Changes where the ride is headed. Only the rider who created the room may do it.
+  router.patch('/:roomCode/destination', async (req, res) => {
+    try {
+      const code = req.params.roomCode?.trim().toUpperCase();
+      const destination = parseDestination(req.body);
+      if (!code || !destination) {
+        return res.status(400).json({ message: 'A valid destination is required.' });
+      }
+
+      const room = await prisma.room.findUnique({ where: { code } });
+      if (!room) {
+        return res.status(404).json({ message: 'Ride room not found.' });
+      }
+      if (room.hostId !== req.user!.id) {
+        return res.status(403).json({ message: 'Only the ride creator can change the destination.' });
+      }
+
+      const updated = await prisma.room.update({
+        where: { code },
+        data: {
+          destinationName: destination.name,
+          destinationLat: destination.lat,
+          destinationLng: destination.lng,
+        },
+      });
+      return res.status(200).json(destinationFields(updated));
+    } catch (error) {
+      console.error('Update destination error:', error);
+      return res.status(500).json({ message: 'Failed to update destination.' });
     }
   });
 

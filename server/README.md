@@ -54,7 +54,7 @@ You need two OAuth clients **in the same project**:
    application*. Its **Client ID** is `GOOGLE_CLIENT_ID` in `server/.env`. (The server checks that
    each Google token was issued for this ID.)
 3. **Android** client -- same place, type *Android*:
-   - Package name: `com.ridezz.mobile`
+   - Package name: `com.rideaze.mobile`
    - SHA-1 certificate fingerprint of the key the app is signed with. For the checked-in debug
      keystore: `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
      (`keytool -list -v -keystore mobile/android/app/debug.keystore -alias androiddebugkey -storepass android`).

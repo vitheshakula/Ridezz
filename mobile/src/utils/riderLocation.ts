@@ -17,6 +17,13 @@ export interface LocationPayload {
   lat: number;
   lng: number;
   accuracy?: number;
+  /** Ground speed in meters/second, straight from the GPS fix. Omitted (not 0)
+   * when the OS doesn't report it -- a stationary/no-signal rider is different
+   * from a rider genuinely standing still, and we don't want to imply the latter. */
+  speed?: number;
+  /** True compass heading in degrees [0, 360), straight from the GPS fix. Most
+   * providers only populate this while actually moving -- absent otherwise. */
+  heading?: number;
   timestamp: number;
 }
 
@@ -26,6 +33,8 @@ export interface RiderLocation {
   latitude: number;
   longitude: number;
   accuracy?: number;
+  speed?: number;
+  heading?: number;
   /** Sender's own clock at the moment of the GPS fix (ms since epoch). */
   timestamp: number;
   /** False once the rider's ParticipantDisconnected has fired -- the last known
@@ -81,8 +90,14 @@ export function decodeLocationPayload(
   }
   const accuracy =
     typeof p.accuracy === 'number' && Number.isFinite(p.accuracy) ? p.accuracy : undefined;
+  const speed =
+    typeof p.speed === 'number' && Number.isFinite(p.speed) && p.speed >= 0 ? p.speed : undefined;
+  const heading =
+    typeof p.heading === 'number' && Number.isFinite(p.heading) && p.heading >= 0 && p.heading < 360
+      ? p.heading
+      : undefined;
 
-  return { v: p.v, lat: p.lat, lng: p.lng, accuracy, timestamp: p.timestamp };
+  return { v: p.v, lat: p.lat, lng: p.lng, accuracy, speed, heading, timestamp: p.timestamp };
 }
 
 /** Replaces (or adds) a rider's location, marking them connected. Immutable --
@@ -99,6 +114,8 @@ export function upsertRiderLocation(
       latitude: update.payload.lat,
       longitude: update.payload.lng,
       accuracy: update.payload.accuracy,
+      speed: update.payload.speed,
+      heading: update.payload.heading,
       timestamp: update.payload.timestamp,
       connected: true,
     },
@@ -157,6 +174,36 @@ export function haversineDistanceMeters(
   return EARTH_RADIUS_METERS * c;
 }
 
+/** Simple average-position centroid of the group -- not a route midpoint, just
+ * "roughly where everyone currently is," used to flag a rider who's drifted
+ * far from the pack. Returns null for an empty group. */
+export function computeCentroid(
+  locations: Array<{ latitude: number; longitude: number }>,
+): { latitude: number; longitude: number } | null {
+  if (locations.length === 0) {
+    return null;
+  }
+  const latitude = locations.reduce((sum, l) => sum + l.latitude, 0) / locations.length;
+  const longitude = locations.reduce((sum, l) => sum + l.longitude, 0) / locations.length;
+  return { latitude, longitude };
+}
+
+/** Distance from the group centroid beyond which a rider is flagged as falling
+ * behind. Loose on purpose -- riders naturally spread out in traffic/turns;
+ * this is meant to catch someone genuinely dropped off, not normal spacing. */
+export const FALLING_BEHIND_METERS = 500;
+
+export function isFallingBehind(
+  location: { latitude: number; longitude: number },
+  centroid: { latitude: number; longitude: number } | null,
+  thresholdMeters: number = FALLING_BEHIND_METERS,
+): boolean {
+  if (!centroid) {
+    return false;
+  }
+  return haversineDistanceMeters(location, centroid) > thresholdMeters;
+}
+
 /** "820 m away" / "1.2 km away". Deliberately no ahead/behind claim -- we have
  * no route or heading model to support that inference. */
 export function formatDistance(meters: number): string {
@@ -174,4 +221,15 @@ export function formatUpdatedAgo(ageMs: number): string {
   }
   const minutes = Math.round(seconds / 60);
   return `Updated ${minutes}m ago`;
+}
+
+/** GPS speed comes in meters/second; km/h is what a rider actually reads on a
+ * motorcycle. Below ~1 km/h is rounded down to "Stopped" rather than showing
+ * a meaningless "0 km/h" or "1 km/h" from GPS jitter on a parked bike. */
+export function formatSpeed(metersPerSecond: number): string {
+  const kmh = metersPerSecond * 3.6;
+  if (kmh < 1) {
+    return 'Stopped';
+  }
+  return `${Math.round(kmh)} km/h`;
 }
