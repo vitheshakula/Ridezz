@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
+import { color, radius, spacing, type } from '../theme';
 
 interface MuteButtonProps {
   muted: boolean;
@@ -24,9 +25,20 @@ export default function MuteButton({ muted, onPress, size = 'large' }: MuteButto
       accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
     >
       {isSmall ? (
-        <Text style={styles.smallIcon}>{muted ? '🔇' : '🎙️'}</Text>
+        <>
+          <Text style={[styles.smallLabel, muted && styles.smallLabelMuted]}>MIC</Text>
+          <Text style={[styles.smallState, muted && styles.smallStateMuted]}>
+            {muted ? 'OFF' : 'ON'}
+          </Text>
+        </>
       ) : (
-        <Text style={styles.label}>{muted ? 'UNMUTE' : 'MUTE'}</Text>
+        <>
+          <Text style={[styles.overline, muted && styles.overlineMuted]}>MICROPHONE</Text>
+          <Text style={[styles.label, muted && styles.labelMuted]}>{muted ? 'Muted' : 'Live'}</Text>
+          <Text style={[styles.helper, muted && styles.helperMuted]}>
+            {muted ? 'Tap to speak' : 'Tap to mute'}
+          </Text>
+        </>
       )}
     </Pressable>
   );
@@ -37,33 +49,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
-    borderWidth: 4,
-    borderColor: 'rgba(255,255,255,0.15)',
+    borderWidth: 1,
   },
   large: {
-    width: 180,
-    height: 180,
-    borderRadius: 90,
+    width: 184,
+    height: 184,
+    borderRadius: 46,
   },
   small: {
     width: 64,
     height: 64,
-    borderRadius: 32,
-    borderWidth: 3,
+    borderRadius: radius.lg,
   },
   unmuted: {
-    backgroundColor: '#238636',
+    backgroundColor: color.accent,
+    borderColor: color.accent,
   },
   muted: {
-    backgroundColor: '#da3633',
+    backgroundColor: color.surfaceRaised,
+    borderColor: color.danger,
   },
   label: {
-    color: '#ffffff',
-    fontSize: 22,
-    fontWeight: '700',
-    letterSpacing: 1,
+    color: color.onAccent,
+    fontSize: 32,
+    lineHeight: 38,
+    fontWeight: '800',
+    letterSpacing: -0.7,
+    marginTop: spacing.xs,
   },
-  smallIcon: {
-    fontSize: 24,
-  },
+  labelMuted: { color: color.textPrimary },
+  overline: { ...type.overline, color: 'rgba(16, 19, 0, 0.62)' },
+  overlineMuted: { color: color.danger },
+  helper: { ...type.caption, color: 'rgba(16, 19, 0, 0.72)', marginTop: spacing.sm },
+  helperMuted: { color: color.textMuted },
+  smallLabel: { ...type.overline, color: color.onAccent, fontSize: 9 },
+  smallLabelMuted: { color: color.textMuted },
+  smallState: { color: color.onAccent, fontSize: 16, fontWeight: '800', marginTop: 1 },
+  smallStateMuted: { color: color.danger },
 });

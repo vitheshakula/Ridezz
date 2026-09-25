@@ -1,86 +1,119 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, StatusBar } from 'react-native';
+import { StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { color, spacing, type, primaryButtonStyle, secondaryButtonStyle } from '../theme';
+import BrandLockup from '../components/BrandLockup';
+import {
+  color,
+  primaryButtonStyle,
+  secondaryButtonStyle,
+  spacing,
+  type,
+} from '../theme';
 
-const FEATURES: Array<{ icon: string; label: string }> = [
-  { icon: '🎙️', label: 'Full-duplex voice, up to 10 riders' },
-  { icon: '📍', label: 'Live group location on the map' },
-  { icon: '🔒', label: 'Keeps talking with the phone locked' },
+const FEATURES = [
+  { value: '10', label: 'riders in one room' },
+  { value: 'LIVE', label: 'voice and location' },
+  { value: 'MESH', label: 'hazards beyond signal' },
 ];
 
-/** Unauthenticated landing screen -- Sign In / Create Account. Only ever reached
- * while logged out: App.tsx routes any logged-in user straight to JoinScreen. */
+/** The logged-out front door. It gives the product a confident point of view
+ * before asking the rider to make an account. */
 export const Dashboard = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xxl }]}>
+    <View
+      style={[
+        styles.container,
+        { paddingTop: insets.top + spacing.xxl, paddingBottom: insets.bottom + spacing.xl },
+      ]}
+    >
       <StatusBar barStyle="light-content" />
 
-      <View style={styles.centerContent}>
-        <View style={styles.logoBadge}>
-          <Text style={styles.logoBadgeText}>⚡</Text>
-        </View>
+      <View style={styles.topBar}>
+        <BrandLockup />
+        <Text style={styles.topMeta}>GROUP INTERCOM</Text>
+      </View>
 
-        <Text style={styles.welcomeTitle}>Welcome to Rideaze</Text>
+      <View style={styles.hero}>
+        <Text style={styles.eyebrow}>BUILT FOR THE OPEN ROAD</Text>
+        <Text style={styles.heroTitle}>Ride together.{`\n`}Stay in sync.</Text>
         <Text style={styles.heroSubtitle}>
-          Budget motorcycle group intercom for riders who want to stay connected on the road.
+          Clear group audio, live crew location, and spoken hazard alerts—without taking your
+          hands off the bars.
         </Text>
 
-        <View style={styles.featureList}>
-          {FEATURES.map(f => (
-            <View key={f.label} style={styles.featureRow}>
-              <Text style={styles.featureIcon}>{f.icon}</Text>
-              <Text style={styles.featureLabel}>{f.label}</Text>
+        <View style={styles.featureRail}>
+          {FEATURES.map((feature, index) => (
+            <View
+              key={feature.value}
+              style={[styles.feature, index !== FEATURES.length - 1 && styles.featureBorder]}
+            >
+              <Text style={styles.featureValue}>{feature.value}</Text>
+              <Text style={styles.featureLabel}>{feature.label}</Text>
             </View>
           ))}
         </View>
+      </View>
 
-        <View style={styles.authButtonGroup}>
-          <TouchableOpacity
-            style={primaryButtonStyle}
-            onPress={() => navigation?.navigate('LoginPage')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.primaryBtnText}>SIGN IN</Text>
-          </TouchableOpacity>
+      <View style={styles.actions}>
+        <TouchableOpacity
+          style={primaryButtonStyle}
+          onPress={() => navigation?.navigate('LoginPage')}
+          activeOpacity={0.88}
+        >
+          <Text style={styles.primaryText}>Sign in to ride</Text>
+        </TouchableOpacity>
 
-          <TouchableOpacity
-            style={secondaryButtonStyle}
-            onPress={() => navigation?.navigate('SignupPage')}
-            activeOpacity={0.85}
-          >
-            <Text style={styles.secondaryBtnText}>CREATE ACCOUNT</Text>
-          </TouchableOpacity>
-        </View>
+        <TouchableOpacity
+          style={secondaryButtonStyle}
+          onPress={() => navigation?.navigate('SignupPage')}
+          activeOpacity={0.82}
+        >
+          <Text style={styles.secondaryText}>Create an account</Text>
+        </TouchableOpacity>
+
+        <Text style={styles.footnote}>Audio continues while your phone is locked.</Text>
       </View>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bg, paddingHorizontal: spacing.xxl },
-  centerContent: { flex: 1, justifyContent: 'center' },
-  logoBadge: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    backgroundColor: color.surfaceRaised,
+  container: {
+    flex: 1,
+    backgroundColor: color.bg,
+    paddingHorizontal: spacing.xxl,
+  },
+  topBar: {
+    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.xl,
-    borderWidth: 1,
+    justifyContent: 'space-between',
+  },
+  topMeta: { ...type.overline, color: color.textMuted, fontSize: 10 },
+  hero: { flex: 1, justifyContent: 'center', paddingBottom: spacing.xl },
+  eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.lg },
+  heroTitle: { ...type.display, color: color.textPrimary, maxWidth: 340 },
+  heroSubtitle: {
+    ...type.subtitle,
+    color: color.textSecondary,
+    maxWidth: 355,
+    marginTop: spacing.lg,
+  },
+  featureRail: {
+    flexDirection: 'row',
+    marginTop: spacing.xxxl,
+    paddingVertical: spacing.lg,
+    borderTopWidth: 1,
+    borderBottomWidth: 1,
     borderColor: color.border,
   },
-  logoBadgeText: { fontSize: 28 },
-  welcomeTitle: { ...type.hero, color: color.textPrimary, marginBottom: spacing.sm },
-  heroSubtitle: { ...type.subtitle, color: color.textSecondary, marginBottom: spacing.xxl, lineHeight: 21 },
-  featureList: { marginBottom: spacing.xxxl, gap: spacing.md },
-  featureRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.md },
-  featureIcon: { fontSize: 18, width: 26 },
-  featureLabel: { ...type.caption, color: color.textSecondary, flex: 1 },
-  authButtonGroup: { width: '100%', gap: spacing.md },
-  primaryBtnText: { color: color.onAccent, fontSize: 15, fontWeight: '800', letterSpacing: 1 },
-  secondaryBtnText: { color: color.textPrimary, fontSize: 15, fontWeight: '700', letterSpacing: 1 },
+  feature: { flex: 1, paddingHorizontal: spacing.md },
+  featureBorder: { borderRightWidth: 1, borderRightColor: color.border },
+  featureValue: { color: color.textPrimary, fontSize: 15, fontWeight: '800', letterSpacing: 0.5 },
+  featureLabel: { ...type.caption, color: color.textMuted, marginTop: spacing.xs },
+  actions: { gap: spacing.md },
+  primaryText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
+  secondaryText: { color: color.textPrimary, fontSize: 16, fontWeight: '700' },
+  footnote: { ...type.caption, color: color.textMuted, textAlign: 'center', marginTop: spacing.xs },
 });

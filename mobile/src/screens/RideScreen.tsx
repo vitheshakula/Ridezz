@@ -73,6 +73,7 @@ import {
   participantMetadataIsHost,
 } from '../services/destinationUpdates';
 import type { RideDestination } from '../components/RiderMap';
+import BrandLockup from '../components/BrandLockup';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -762,12 +763,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       <View style={styles.header}>
         <View style={styles.headerTopRow}>
           <View>
-            <Text style={styles.title}>RIDEAZE</Text>
-            <Text style={styles.roomLabel}>Room {session.roomCode.toUpperCase()} · {riderCount}/{MAX_RIDERS} riders</Text>
+            <BrandLockup compact />
+            <Text style={styles.roomLabel}>RIDE {session.roomCode.toUpperCase()}  ·  {riderCount}/{MAX_RIDERS} RIDERS</Text>
           </View>
           <View style={[styles.hudPill, transport === 'mesh' ? styles.hudPillMesh : styles.hudPillCloud]}>
+            <View style={[styles.hudDot, transport === 'mesh' && styles.hudDotMesh]} />
             <Text style={[styles.hudText, transport === 'mesh' && styles.hudTextMesh]}>
-              {transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING'}
+              {transport === 'cloud' ? 'Cloud' : transport === 'mesh' ? 'Mesh' : 'Connecting'}
             </Text>
           </View>
         </View>
@@ -796,7 +798,12 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         <View style={styles.utilityRow}>
           <View style={styles.keepAwakeRow}>
             <Text style={styles.keepAwakeLabel}>Keep screen awake</Text>
-            <Switch value={keepAwakeEnabled} onValueChange={setKeepAwakeEnabled} />
+            <Switch
+              value={keepAwakeEnabled}
+              onValueChange={setKeepAwakeEnabled}
+              trackColor={{ false: color.borderStrong, true: color.accentBorder }}
+              thumbColor={keepAwakeEnabled ? color.accent : color.textMuted}
+            />
           </View>
           <Pressable style={styles.diagnosticsLink} onPress={() => setDiagnosticsVisible(true)} hitSlop={12}>
             <Text style={styles.diagnosticsLinkText}>Diagnostics</Text>
@@ -809,7 +816,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             onPress={() => setTab('intercom')}
           >
             <Text style={[styles.tabButtonText, tab === 'intercom' && styles.tabButtonTextActive]}>
-              INTERCOM
+              Intercom
             </Text>
           </Pressable>
           <Pressable
@@ -817,7 +824,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             onPress={() => setTab('map')}
           >
             <Text style={[styles.tabButtonText, tab === 'map' && styles.tabButtonTextActive]}>
-              MAP
+              Map
             </Text>
           </Pressable>
         </View>
@@ -825,13 +832,20 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
       {tab === 'intercom' ? (
         <>
+          <View style={styles.sectionHeading}>
+            <Text style={styles.sectionTitle}>Your crew</Text>
+            <Text style={styles.sectionMeta}>{riderCount} connected</Text>
+          </View>
           <ScrollView style={styles.riderList} contentContainerStyle={styles.riderListContent}>
             <RiderRow participant={localParticipant} isLocal />
             {sortedRemoteParticipants.map((p) => (
               <RiderRow key={p.identity} participant={p} isLocal={false} />
             ))}
           </ScrollView>
-          <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="large" />
+          <View style={styles.primaryControl}>
+            <MuteButton muted={!isMicrophoneEnabled} onPress={handleToggleMute} size="large" />
+            <Text style={styles.primaryControlHint}>Designed for one-tap use with gloves</Text>
+          </View>
         </>
       ) : (
         <View style={styles.mapContainer}>
@@ -940,15 +954,23 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'flex-start',
   },
-  title: { ...type.title, fontSize: 20, color: color.accent, letterSpacing: 1.5 },
-  roomLabel: { ...type.caption, color: color.textMuted, marginTop: spacing.xs / 2 },
-  hudPill: { paddingVertical: spacing.xs, paddingHorizontal: spacing.md, borderRadius: radius.pill, borderWidth: 1 },
-  hudPillCloud: { borderColor: color.accentBorder, backgroundColor: color.accentMuted },
+  roomLabel: { ...type.overline, color: color.textMuted, fontSize: 9, marginTop: spacing.xs },
+  hudPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: radius.pill,
+    borderWidth: 1,
+  },
+  hudPillCloud: { borderColor: color.border, backgroundColor: color.surface },
   hudPillMesh: { borderColor: color.warningBorder, backgroundColor: color.warningMuted },
-  hudText: { color: color.accent, fontSize: 11, fontWeight: '700', letterSpacing: 1 },
+  hudDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: color.success, marginRight: spacing.sm },
+  hudDotMesh: { backgroundColor: color.warning },
+  hudText: { color: color.textPrimary, fontSize: 12, fontWeight: '700' },
   hudTextMesh: { color: color.warning },
   status: {
-    fontSize: 14,
+    fontSize: 13,
     color: color.textSecondary,
     marginTop: spacing.sm,
     fontWeight: '600',
@@ -956,28 +978,44 @@ const styles = StyleSheet.create({
   statusError: { color: color.danger },
   chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: spacing.xs, marginTop: spacing.sm },
   chip: {
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.sm,
+    backgroundColor: color.bgSoft,
+    borderRadius: radius.pill,
     paddingVertical: spacing.xs / 2,
-    paddingHorizontal: spacing.sm,
+    paddingHorizontal: spacing.md,
     maxWidth: '100%',
   },
-  chipText: { fontSize: 11, color: color.textSecondary },
+  chipText: { fontSize: 11, color: color.textMuted },
   warningText: { fontSize: 12, color: color.warning, marginTop: spacing.sm },
   utilityRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.md },
   keepAwakeRow: { flexDirection: 'row', alignItems: 'center' },
-  keepAwakeLabel: { color: color.textSecondary, fontSize: 13, marginRight: spacing.sm },
+  keepAwakeLabel: { color: color.textSecondary, fontSize: 12, marginRight: spacing.sm },
   diagnosticsLink: { paddingVertical: spacing.xs, paddingHorizontal: spacing.xs },
   diagnosticsLinkText: { color: color.accent, fontSize: 13, fontWeight: '600' },
-  tabs: { flexDirection: 'row', marginTop: spacing.md, backgroundColor: color.surface, borderRadius: radius.md, padding: spacing.xs },
-  tabButton: { flex: 1, paddingVertical: spacing.md - 2, borderRadius: radius.sm, alignItems: 'center' },
+  tabs: { flexDirection: 'row', marginTop: spacing.md, backgroundColor: color.bgSoft, borderRadius: radius.md, padding: spacing.xs },
+  tabButton: { flex: 1, paddingVertical: spacing.md, borderRadius: radius.sm, alignItems: 'center' },
   tabButtonActive: { backgroundColor: color.surfaceRaised },
-  tabButtonText: { color: color.textMuted, fontSize: 12, fontWeight: '700', letterSpacing: 1 },
-  tabButtonTextActive: { color: color.accent },
-  riderList: { flex: 1, marginTop: spacing.md },
-  riderListContent: { paddingVertical: spacing.xs },
+  tabButtonText: { color: color.textMuted, fontSize: 13, fontWeight: '700' },
+  tabButtonTextActive: { color: color.textPrimary },
+  sectionHeading: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.xl,
+    marginBottom: spacing.xs,
+    paddingHorizontal: spacing.xs,
+  },
+  sectionTitle: { ...type.label, color: color.textPrimary, fontSize: 15 },
+  sectionMeta: { ...type.caption, color: color.textMuted },
+  riderList: {
+    flex: 1,
+    backgroundColor: color.surface,
+    borderWidth: 1,
+    borderColor: color.border,
+    borderRadius: radius.lg,
+  },
+  riderListContent: { padding: spacing.sm },
+  primaryControl: { alignItems: 'center', paddingTop: spacing.lg },
+  primaryControlHint: { ...type.caption, color: color.textMuted, marginTop: spacing.md },
   mapContainer: { flex: 1, marginTop: spacing.md, borderRadius: radius.lg, overflow: 'hidden' },
   floatingMuteWrap: {
     position: 'absolute',
@@ -1052,12 +1090,10 @@ const styles = StyleSheet.create({
   locationWarning: { fontSize: 13, color: color.warning, padding: spacing.md, backgroundColor: color.surface },
   leaveButton: {
     marginTop: spacing.md,
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.dangerBorder,
-    borderRadius: radius.lg,
-    paddingVertical: spacing.md + 2,
+    backgroundColor: color.bgSoft,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
     alignItems: 'center',
   },
-  leaveButtonText: { color: '#f87171', fontSize: 15, fontWeight: '600' },
+  leaveButtonText: { color: color.danger, fontSize: 14, fontWeight: '700' },
 });

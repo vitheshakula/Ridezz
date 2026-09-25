@@ -17,7 +17,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import axios from 'axios';
 import { useAuth } from '../context/AuthContext';
 import type { RideDestination } from '../components/RiderMap';
-import { color, radius, spacing, type, cardStyle, primaryButtonStyle } from '../theme';
+import BrandLockup from '../components/BrandLockup';
+import { color, radius, spacing, type, primaryButtonStyle, inputStyle } from '../theme';
 
 import { API_URL } from '@env';
 import { geocodeDestination } from '../services/destinationService';
@@ -198,13 +199,21 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
       <View style={styles.topBar}>
-        <View>
-          <Text style={styles.activeRiderLabel}>Logged In As</Text>
-          <Text style={styles.activeRiderName}>{user?.rider_name || 'Rider'}</Text>
+        <BrandLockup compact />
+        <View style={styles.profileArea}>
+          <View style={styles.profileCopy}>
+            <Text style={styles.activeRiderLabel}>SIGNED IN AS</Text>
+            <Text style={styles.activeRiderName}>{user?.rider_name || 'Rider'}</Text>
+          </View>
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {(user?.rider_name || 'R').trim().charAt(0).toUpperCase()}
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
+            <Text style={styles.logoutBtnText}>Log out</Text>
+          </TouchableOpacity>
         </View>
-        <TouchableOpacity style={styles.logoutBtn} onPress={handleLogout} activeOpacity={0.8}>
-          <Text style={styles.logoutBtnText}>Log Out</Text>
-        </TouchableOpacity>
       </View>
 
       <ScrollView
@@ -212,10 +221,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         contentContainerStyle={styles.scrollContent}
         keyboardShouldPersistTaps="handled"
       >
-        <Text style={styles.title}>RIDEAZE</Text>
-        <Text style={styles.subtitle}>Group ride intercom</Text>
+        <Text style={styles.eyebrow}>YOUR NEXT SESSION</Text>
+        <Text style={styles.title}>Where are we riding?</Text>
+        <Text style={styles.subtitle}>
+          Join with a crew code, or create a new room and invite the group.
+        </Text>
 
-        <View style={cardStyle}>
+        <View style={styles.formCard}>
           <View style={styles.tabContainer}>
             <TouchableOpacity
               style={[styles.tab, mode === 'join' && styles.activeTab]}
@@ -226,7 +238,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               activeOpacity={0.8}
             >
               <Text style={[styles.tabText, mode === 'join' && styles.activeTabText]}>
-                JOIN ROOM
+                Join a ride
               </Text>
             </TouchableOpacity>
             <TouchableOpacity
@@ -238,13 +250,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               activeOpacity={0.8}
             >
               <Text style={[styles.tabText, mode === 'create' && styles.activeTabText]}>
-                CREATE ROOM
+                Start a ride
               </Text>
             </TouchableOpacity>
           </View>
 
           <View style={styles.form}>
-            <Text style={styles.label}>Rider Name</Text>
+            <Text style={styles.label}>Rider name</Text>
             <TextInput
               style={styles.input}
               value={riderName}
@@ -257,7 +269,10 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
             {mode === 'join' && (
               <>
-                <Text style={styles.label}>6-Character Room Code</Text>
+                <View style={styles.fieldHeading}>
+                  <Text style={styles.label}>Ride code</Text>
+                  <Text style={styles.fieldHint}>6 characters</Text>
+                </View>
                 <TextInput
                   style={[styles.input, styles.codeInput]}
                   value={roomCode}
@@ -273,7 +288,10 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
             {mode === 'create' && (
               <>
-                <Text style={styles.label}>Destination (optional)</Text>
+                <View style={styles.fieldHeading}>
+                  <Text style={styles.label}>Destination</Text>
+                  <Text style={styles.fieldHint}>Optional</Text>
+                </View>
                 <TextInput
                   style={styles.input}
                   value={destination}
@@ -298,10 +316,14 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               <ActivityIndicator color={color.onAccent} />
             ) : (
               <Text style={styles.mainButtonText}>
-                {mode === 'create' ? 'Create & Start Ride' : 'Join Ride'}
+                {mode === 'create' ? 'Create ride' : 'Join ride'}
               </Text>
             )}
           </Pressable>
+
+          <Text style={styles.safetyNote}>
+            Voice, location, and hazard detection activate only after you enter the ride.
+          </Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -318,47 +340,64 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: spacing.xxl,
-    paddingBottom: spacing.lg,
+    paddingBottom: spacing.xl,
     borderBottomWidth: 1,
     borderBottomColor: color.border,
   },
-  activeRiderLabel: { ...type.label, color: color.textMuted, textTransform: 'uppercase' },
-  activeRiderName: { fontSize: 15, fontWeight: '700', color: color.accent, marginTop: spacing.xs / 2 },
-  logoutBtn: {
-    backgroundColor: color.dangerMuted,
+  profileArea: { flexDirection: 'row', alignItems: 'center' },
+  profileCopy: { alignItems: 'flex-end', marginRight: spacing.sm },
+  activeRiderLabel: { ...type.overline, color: color.textMuted, fontSize: 9, lineHeight: 12 },
+  activeRiderName: { fontSize: 13, fontWeight: '700', color: color.textPrimary, marginTop: 2 },
+  avatar: {
+    width: 34,
+    height: 34,
+    borderRadius: 17,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: color.accentMuted,
     borderWidth: 1,
-    borderColor: color.dangerBorder,
-    paddingVertical: spacing.sm - 2,
-    paddingHorizontal: spacing.md,
-    borderRadius: radius.sm,
+    borderColor: color.accentBorder,
+  },
+  avatarText: { color: color.accent, fontSize: 13, fontWeight: '800' },
+  logoutBtn: {
+    paddingVertical: spacing.sm,
+    paddingLeft: spacing.md,
   },
   logoutBtnText: {
-    color: '#f87171',
-    fontSize: 13,
-    fontWeight: '600',
+    color: color.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
   },
   scroll: { flex: 1 },
   scrollContent: {
     flexGrow: 1,
     justifyContent: 'center',
     paddingHorizontal: spacing.xxl,
-    paddingVertical: spacing.xxl,
+    paddingVertical: spacing.xxxl,
   },
+  eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
   title: {
     ...type.hero,
-    color: color.accent,
-    textAlign: 'center',
+    color: color.textPrimary,
+    maxWidth: 340,
   },
   subtitle: {
-    ...type.label,
-    color: color.textMuted,
-    textAlign: 'center',
-    marginTop: spacing.xs,
+    ...type.body,
+    color: color.textSecondary,
+    marginTop: spacing.md,
     marginBottom: spacing.xxl,
+    maxWidth: 350,
+  },
+  formCard: {
+    backgroundColor: color.surface,
+    borderRadius: radius.xl,
+    borderWidth: 1,
+    borderColor: color.border,
+    padding: spacing.xl,
   },
   tabContainer: {
     flexDirection: 'row',
-    backgroundColor: color.surfaceRaised,
+    backgroundColor: color.bgSoft,
     borderRadius: radius.md,
     padding: spacing.xs,
     marginBottom: spacing.xl,
@@ -370,11 +409,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   activeTab: {
-    backgroundColor: color.border,
+    backgroundColor: color.surfaceRaised,
+    borderWidth: 1,
+    borderColor: color.borderStrong,
   },
-  tabText: { ...type.label, color: color.textMuted, textTransform: 'none' },
+  tabText: { ...type.label, color: color.textMuted },
   activeTabText: {
-    color: color.accent,
+    color: color.textPrimary,
   },
   form: {
     marginBottom: spacing.lg,
@@ -384,29 +425,25 @@ const styles = StyleSheet.create({
     color: color.textSecondary,
     marginBottom: spacing.sm,
     marginTop: spacing.md,
-    textTransform: 'none',
   },
-  input: {
-    backgroundColor: color.surfaceRaised,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.md,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md + 2,
-    fontSize: 15,
-    color: color.textPrimary,
-  },
+  fieldHeading: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  fieldHint: { ...type.caption, color: color.textMuted, marginTop: spacing.md, marginBottom: spacing.sm },
+  input: { ...inputStyle },
   codeInput: {
     textAlign: 'center',
     letterSpacing: 4,
-    fontSize: 20,
-    fontWeight: '700',
+    fontSize: 21,
+    fontWeight: '800',
   },
   error: {
     color: color.danger,
-    fontSize: 14,
+    ...type.caption,
+    backgroundColor: color.dangerMuted,
+    borderWidth: 1,
+    borderColor: color.dangerBorder,
+    borderRadius: radius.sm,
+    padding: spacing.md,
     marginBottom: spacing.lg,
-    textAlign: 'center',
   },
   buttonDisabled: {
     backgroundColor: color.surfaceRaised,
@@ -414,7 +451,8 @@ const styles = StyleSheet.create({
   },
   mainButtonText: {
     color: color.onAccent,
-    fontSize: 17,
-    fontWeight: '700',
+    fontSize: 16,
+    fontWeight: '800',
   },
+  safetyNote: { ...type.caption, color: color.textMuted, textAlign: 'center', marginTop: spacing.lg },
 });

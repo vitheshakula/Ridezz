@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { Pressable, StyleSheet, Text } from 'react-native';
 import { HAZARD_LABELS, type HazardPacket } from '../services/SpeechHazardService';
+import { color, radius, spacing, type } from '../theme';
 
 /** How long a hazard banner stays up before it dismisses itself. */
 export const HAZARD_BANNER_MS = 5000;
@@ -32,7 +33,7 @@ export default function HazardAlertBanner({ packet, kind, top, onDismiss }: Haza
       accessibilityLiveRegion="assertive"
     >
       <Text style={styles.title}>
-        {kind === 'sent' ? `HAZARD SENT: ${label}` : `${packet.senderName.toUpperCase()}: ${label}`}
+        {kind === 'sent' ? `Hazard shared · ${label}` : `${packet.senderName} reports · ${label}`}
       </Text>
     </Pressable>
   );
@@ -45,14 +46,14 @@ const styles = StyleSheet.create({
     right: 16,
     zIndex: 10,
     elevation: 10,
-    borderRadius: 12,
-    borderWidth: 2,
-    paddingVertical: 14,
-    paddingHorizontal: 16,
+    borderRadius: radius.md,
+    borderWidth: 1,
+    paddingVertical: spacing.lg,
+    paddingHorizontal: spacing.lg,
   },
   // Received: this rider did not send it -- an alert from someone else, in red.
-  bannerReceived: { backgroundColor: '#dc2626', borderColor: '#ef4444' },
+  bannerReceived: { backgroundColor: '#8E241F', borderColor: color.danger },
   // Sent: this rider's own detected hazard -- a confirmation, not an alert, in green.
-  bannerSent: { backgroundColor: '#16a34a', borderColor: '#22c55e' },
-  title: { color: '#ffffff', fontSize: 18, fontWeight: '800', letterSpacing: 1 },
+  bannerSent: { backgroundColor: '#183B26', borderColor: color.success },
+  title: { ...type.label, color: color.textPrimary, fontSize: 15 },
 });

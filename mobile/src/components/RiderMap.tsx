@@ -13,6 +13,7 @@ import {
   type RiderLocation,
 } from '../utils/riderLocation';
 import { fetchRoadRouteDetailed, formatDuration, type RoadRoute } from '../services/routingService';
+import { color as uiColor, radius, spacing, type } from '../theme';
 
 export interface RideDestination {
   name: string | null;
@@ -50,7 +51,7 @@ const RIDER_COLOR_PALETTE: string[] = [
 function colorForRider(identity: string): string {
   let hash = 0;
   for (let i = 0; i < identity.length; i++) {
-    hash = (hash * 31 + identity.charCodeAt(i)) >>> 0;
+    hash = (hash * 31 + identity.charCodeAt(i)) % 2147483647;
   }
   return RIDER_COLOR_PALETTE[hash % RIDER_COLOR_PALETTE.length];
 }
@@ -549,7 +550,7 @@ function DestinationMarker({ name }: { name: string | null }) {
         <Text style={styles.markerDetail}>Ride destination</Text>
       </View>
       <View style={styles.destinationPin}>
-        <Text style={styles.destinationPinText}>🏁</Text>
+        <Text style={styles.destinationPinText}>END</Text>
       </View>
     </View>
   );
@@ -564,42 +565,42 @@ const styles = StyleSheet.create({
   },
   controls: {
     position: 'absolute',
-    bottom: 16,
-    left: 16,
-    right: 16,
+    bottom: spacing.lg,
+    left: spacing.lg,
+    right: spacing.lg,
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
   controlButton: {
-    backgroundColor: '#161b22',
+    backgroundColor: uiColor.surface,
     borderWidth: 1,
-    borderColor: '#30363d',
-    borderRadius: 10,
-    paddingVertical: 14,
-    paddingHorizontal: 20,
+    borderColor: uiColor.borderStrong,
+    borderRadius: radius.md,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.lg,
   },
   controlButtonDisabled: {
     opacity: 0.5,
   },
   controlButtonText: {
-    color: '#ffffff',
-    fontSize: 15,
-    fontWeight: '600',
+    color: uiColor.textPrimary,
+    fontSize: 13,
+    fontWeight: '700',
   },
   statusOverlay: {
     position: 'absolute',
     top: 12,
     left: 12,
     right: 12,
-    backgroundColor: '#161b22',
+    backgroundColor: uiColor.surface,
     borderWidth: 1,
-    borderColor: '#30363d',
-    borderRadius: 10,
+    borderColor: uiColor.border,
+    borderRadius: radius.md,
     paddingVertical: 10,
     paddingHorizontal: 12,
   },
   statusOverlayText: {
-    color: '#c9d1d9',
+    color: uiColor.textSecondary,
     fontSize: 13,
     fontWeight: '600',
     textAlign: 'center',
@@ -610,10 +611,10 @@ const styles = StyleSheet.create({
     left: 12,
     right: 12,
     minHeight: 38,
-    backgroundColor: 'rgba(22, 27, 34, 0.94)',
+    backgroundColor: uiColor.surface,
     borderWidth: 1,
-    borderColor: '#30363d',
-    borderRadius: 10,
+    borderColor: uiColor.border,
+    borderRadius: radius.md,
     paddingVertical: 8,
     paddingHorizontal: 12,
     flexDirection: 'row',
@@ -621,8 +622,8 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     gap: 10,
   },
-  routeStatusText: { color: '#c9d1d9', fontSize: 12, fontWeight: '600', flex: 1 },
-  routeRetryText: { color: '#58a6ff', fontSize: 12, fontWeight: '700' },
+  routeStatusText: { color: uiColor.textSecondary, fontSize: 12, fontWeight: '600', flex: 1 },
+  routeRetryText: { color: uiColor.accent, fontSize: 12, fontWeight: '700' },
   markerWrap: {
     alignItems: 'center',
     maxWidth: 180,
@@ -632,7 +633,7 @@ const styles = StyleSheet.create({
   },
   markerCard: {
     backgroundColor: '#ffffff',
-    borderRadius: 8,
+    borderRadius: radius.sm,
     paddingVertical: 6,
     paddingHorizontal: 8,
     borderWidth: 1,
@@ -694,16 +695,19 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent',
   },
   destinationPin: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: '#111827',
-    borderWidth: 3,
-    borderColor: '#ffffff',
+    minWidth: 32,
+    height: 24,
+    borderRadius: radius.sm,
+    backgroundColor: uiColor.accent,
+    borderWidth: 2,
+    borderColor: uiColor.onAccent,
     alignItems: 'center',
     justifyContent: 'center',
   },
   destinationPinText: {
-    fontSize: 13,
+    ...type.overline,
+    fontSize: 8,
+    lineHeight: 10,
+    color: uiColor.onAccent,
   },
 });

@@ -1,19 +1,20 @@
 import React, { useState } from 'react';
 import {
-  View,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  StyleSheet,
   ActivityIndicator,
+  Alert,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  Alert,
+  StyleSheet,
+  Text,
+  TextInput,
+  TouchableOpacity,
+  View,
 } from 'react-native';
 import axios from 'axios';
 import { API_URL } from '@env';
-import { color, radius, spacing, type, cardStyle, primaryButtonStyle, inputStyle } from '../theme';
+import BrandLockup from '../components/BrandLockup';
+import { color, inputStyle, primaryButtonStyle, radius, spacing, type } from '../theme';
 
 export const API_BASE_URL = API_URL || 'http://localhost:5000/api';
 
@@ -27,19 +28,19 @@ export const SignupPage = ({ navigation }: any) => {
 
   const handleSignup = async () => {
     if (!riderName.trim()) {
-      Alert.alert('Validation Error', 'Rider Name is required.');
+      Alert.alert('Choose a rider name', 'This is how your crew will see you in the room.');
       return;
     }
     if (!email.trim() || !email.includes('@')) {
-      Alert.alert('Validation Error', 'Please enter a valid email.');
+      Alert.alert('Check your email', 'Enter a valid email address to continue.');
       return;
     }
     if (password.length < 8) {
-      Alert.alert('Validation Error', 'Password must be at least 8 characters.');
+      Alert.alert('Password too short', 'Use at least 8 characters.');
       return;
     }
     if (password !== confirmPassword) {
-      Alert.alert('Validation Error', 'Passwords do not match.');
+      Alert.alert('Passwords do not match', 'Re-enter the same password in both fields.');
       return;
     }
 
@@ -48,19 +49,19 @@ export const SignupPage = ({ navigation }: any) => {
       await axios.post(
         `${API_BASE_URL}/auth/signup`,
         {
-            rider_name: riderName.trim(),
-            email: email.trim().toLowerCase(),
-            password,
+          rider_name: riderName.trim(),
+          email: email.trim().toLowerCase(),
+          password,
         },
-        { timeout: 5000 }
-       );
+        { timeout: 5000 },
+      );
 
-      Alert.alert('Success', 'Account created successfully!', [
-        { text: 'OK', onPress: () => navigation.navigate('LoginPage') },
+      Alert.alert('Account ready', 'You can now sign in and start a ride.', [
+        { text: 'Sign in', onPress: () => navigation.navigate('LoginPage') },
       ]);
     } catch (error: any) {
-      const message = error.response?.data?.message || 'Registration failed.';
-      Alert.alert('Signup Error', message);
+      const message = error.response?.data?.message || 'We could not create your account right now.';
+      Alert.alert('Could not create account', message);
     } finally {
       setIsLoading(false);
     }
@@ -72,59 +73,66 @@ export const SignupPage = ({ navigation }: any) => {
       style={styles.container}
     >
       <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
-        <View style={styles.header}>
-          <View style={styles.logoBadge}>
-            <Text style={styles.logoBadgeText}>⚡</Text>
-          </View>
-          <Text style={styles.appTitle}>RIDEAZE</Text>
-          <Text style={styles.subTitle}>Create Rider Profile</Text>
+        <View style={styles.topBar}>
+          <BrandLockup />
+          <TouchableOpacity onPress={() => navigation.navigate('Dashboard')} hitSlop={12}>
+            <Text style={styles.topBarAction}>Home</Text>
+          </TouchableOpacity>
         </View>
 
-        <View style={cardStyle}>
-          <Text style={styles.cardTitle}>Sign Up</Text>
+        <View style={styles.intro}>
+          <Text style={styles.eyebrow}>SET UP YOUR PROFILE</Text>
+          <Text style={styles.pageTitle}>Join the crew.</Text>
+          <Text style={styles.pageDescription}>
+            Create your rider identity. You can be on a live room in less than a minute.
+          </Text>
+        </View>
 
-          <Text style={styles.label}>Rider Handle / Name</Text>
+        <View style={styles.formCard}>
+          <Text style={styles.label}>Rider name</Text>
           <TextInput
             style={styles.input}
-            placeholder="e.g. GhostRider, Alex"
+            placeholder="What should your crew call you?"
             placeholderTextColor={color.textMuted}
             value={riderName}
             onChangeText={setRiderName}
+            autoCapitalize="words"
           />
 
-          <Text style={styles.label}>Email Address</Text>
+          <Text style={styles.label}>Email address</Text>
           <TextInput
             style={styles.input}
-            placeholder="rider@example.com"
+            placeholder="you@example.com"
             placeholderTextColor={color.textMuted}
             keyboardType="email-address"
             autoCapitalize="none"
+            autoComplete="email"
             value={email}
             onChangeText={setEmail}
           />
 
-          <Text style={styles.label}>Password (Min. 8 chars)</Text>
+          <View style={styles.labelRow}>
+            <Text style={styles.label}>Password</Text>
+            <Text style={styles.helper}>8+ characters</Text>
+          </View>
           <View style={styles.passwordContainer}>
             <TextInput
               style={styles.passwordInput}
-              placeholder="••••••••"
+              placeholder="Create a password"
               placeholderTextColor={color.textMuted}
               secureTextEntry={!showPassword}
               value={password}
               onChangeText={setPassword}
             />
-            <TouchableOpacity
-              onPress={() => setShowPassword(!showPassword)}
-              style={styles.toggleBtn}
-            >
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)} style={styles.toggleBtn}>
               <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
 
-          <Text style={styles.label}>Confirm Password</Text>
+          <Text style={styles.label}>Confirm password</Text>
           <TextInput
             style={styles.input}
-            placeholder="••••••••"
+            placeholder="Enter it once more"
             placeholderTextColor={color.textMuted}
             secureTextEntry={!showPassword}
             value={confirmPassword}
@@ -135,21 +143,18 @@ export const SignupPage = ({ navigation }: any) => {
             style={[primaryButtonStyle, styles.submitBtn, isLoading && styles.buttonDisabled]}
             onPress={handleSignup}
             disabled={isLoading}
-            activeOpacity={0.85}
+            activeOpacity={0.88}
           >
             {isLoading ? (
               <ActivityIndicator color={color.onAccent} />
             ) : (
-              <Text style={styles.primaryButtonText}>Create Account</Text>
+              <Text style={styles.primaryButtonText}>Create account</Text>
             )}
           </TouchableOpacity>
 
-          <TouchableOpacity
-            style={styles.switchAuthBtn}
-            onPress={() => navigation.navigate('LoginPage')}
-          >
+          <TouchableOpacity style={styles.switchAuthBtn} onPress={() => navigation.navigate('LoginPage')}>
             <Text style={styles.switchAuthText}>
-              Already have an account? <Text style={styles.linkText}>Sign In</Text>
+              Already registered? <Text style={styles.linkText}>Sign in</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -160,24 +165,23 @@ export const SignupPage = ({ navigation }: any) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: color.bg },
-  scrollContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xxl },
-  header: { alignItems: 'center', marginBottom: spacing.xxl },
-  logoBadge: {
-    width: 52,
-    height: 52,
-    borderRadius: 26,
-    backgroundColor: color.surfaceRaised,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
+  scrollContent: { flexGrow: 1, padding: spacing.xxl, paddingTop: spacing.xxxl, paddingBottom: spacing.huge },
+  topBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  topBarAction: { ...type.label, color: color.textSecondary },
+  intro: { marginTop: spacing.huge, marginBottom: spacing.xxxl },
+  eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
+  pageTitle: { ...type.hero, color: color.textPrimary },
+  pageDescription: { ...type.body, color: color.textSecondary, marginTop: spacing.md, maxWidth: 340 },
+  formCard: {
+    backgroundColor: color.surface,
     borderWidth: 1,
     borderColor: color.border,
+    borderRadius: radius.xl,
+    padding: spacing.xl,
   },
-  logoBadgeText: { fontSize: 22 },
-  appTitle: { ...type.hero, fontSize: 30, color: color.accent },
-  subTitle: { ...type.label, color: color.textMuted, marginTop: spacing.xs },
-  cardTitle: { ...type.title, color: color.textPrimary, marginBottom: spacing.xl },
-  label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.md, textTransform: 'none' },
+  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  label: { ...type.label, color: color.textSecondary, marginBottom: spacing.sm, marginTop: spacing.sm },
+  helper: { ...type.caption, color: color.textMuted, marginTop: spacing.sm, marginBottom: spacing.sm },
   input: { ...inputStyle, marginBottom: spacing.lg },
   passwordContainer: {
     flexDirection: 'row',
@@ -188,13 +192,20 @@ const styles = StyleSheet.create({
     borderColor: color.border,
     marginBottom: spacing.lg,
   },
-  passwordInput: { flex: 1, paddingHorizontal: spacing.lg, paddingVertical: spacing.md + 2, color: color.textPrimary, fontSize: 15 },
-  toggleBtn: { paddingHorizontal: spacing.md + 2 },
-  toggleText: { color: color.accent, fontWeight: '600', fontSize: 12 },
+  passwordInput: {
+    flex: 1,
+    minHeight: 52,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.md,
+    color: color.textPrimary,
+    fontSize: 16,
+  },
+  toggleBtn: { minHeight: 52, justifyContent: 'center', paddingHorizontal: spacing.lg },
+  toggleText: { color: color.accent, fontWeight: '700', fontSize: 13 },
   submitBtn: { marginTop: spacing.sm },
-  buttonDisabled: { opacity: 0.6 },
-  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '700' },
-  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center' },
+  buttonDisabled: { opacity: 0.55 },
+  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
+  switchAuthBtn: { marginTop: spacing.xl, alignItems: 'center', paddingVertical: spacing.xs },
   switchAuthText: { color: color.textSecondary, fontSize: 14 },
-  linkText: { color: color.accent, fontWeight: '600' },
+  linkText: { color: color.accent, fontWeight: '700' },
 });
