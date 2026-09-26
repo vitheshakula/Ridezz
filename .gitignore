@@ -58,5 +58,7 @@ mobile/android/app/src/main/res/raw/
 # All subfolder .env files
 **/.env
 **/.env.*
+# Safe placeholder files are documentation and should remain committable.
+!**/.env.example
 # Local diagnostic artifacts
 .tmp/
