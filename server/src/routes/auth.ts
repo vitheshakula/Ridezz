@@ -12,6 +12,7 @@ import {
 } from '../auth/validation';
 import { isEmailAllowed, NOT_ALLOWED_MESSAGE } from '../auth/access';
 import { signAuthToken } from '../auth/tokens';
+import { createUserWithRoomCode, ensureRoomCode, withRoomCode } from '../auth/roomCode';
 import { toAuthUser } from '../auth/user';
 import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
@@ -38,10 +39,12 @@ function isUniqueViolation(err: unknown): boolean {
 export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken }: AuthRouterDeps): Router {
   const router = Router();
 
-  const session = (user: User) => ({
-    token: signAuthToken(user.id, env.jwtSecret),
-    user: toAuthUser(user),
-  });
+  // Every way of signing in ends here, so this is where a rider from before room codes existed is
+  // given theirs: whoever gets a session gets a room code with it.
+  const session = async (account: User) => {
+    const user = await withRoomCode(prisma, account);
+    return { token: signAuthToken(user.id, env.jwtSecret), user: toAuthUser(user) };
+  };
 
   // ---- Email + password -------------------------------------------------------------------
 
@@ -70,10 +73,12 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
       try {
         // Created unverified: the address was typed in, not proven to belong to this person.
-        const user = await prisma.user.create({
-          data: { riderName: cleanName, email: cleanEmail, password: passwordHash },
+        const user = await createUserWithRoomCode(prisma, {
+          riderName: cleanName,
+          email: cleanEmail,
+          password: passwordHash,
         });
-        return res.status(201).json(session(user));
+        return res.status(201).json(await session(user));
       } catch (err) {
         // Two sign-ups for the same address racing past the check above.
         if (isUniqueViolation(err)) {
@@ -106,7 +111,7 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
       if (!user || !passwordMatches) {
         return res.status(401).json({ message: 'Invalid credentials.' });
       }
-      return res.status(200).json(session(user));
+      return res.status(200).json(await session(user));
     }),
   );
 
@@ -163,13 +168,20 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
       if (result.kind === 'conflict') {
         return res.status(409).json({ message: 'This email is already linked to a different Google account.' });
       }
-      return res.status(200).json(session(result.user));
+      return res.status(200).json(await session(result.user));
     }),
   );
 
   // ---- Session ----------------------------------------------------------------------------
 
-  router.get('/me', requireAuth, (req, res) => res.json({ user: req.user }));
+  router.get(
+    '/me',
+    requireAuth,
+    asyncHandler(async (req, res) => {
+      const me = req.user!;
+      return res.json({ user: { ...me, roomCode: me.roomCode ?? (await ensureRoomCode(prisma, me.id)) } });
+    }),
+  );
 
   return router;
 }
@@ -221,14 +233,12 @@ async function findOrCreateGoogleUser(
   }
 
   try {
-    const created = await prisma.user.create({
-      data: {
-        riderName: (identity.name?.trim() || fallbackRiderName(email)).slice(0, NAME_MAX_LENGTH),
-        email,
-        googleId: identity.googleId,
-        emailVerified: true,
-        password: null,
-      },
+    const created = await createUserWithRoomCode(prisma, {
+      riderName: (identity.name?.trim() || fallbackRiderName(email)).slice(0, NAME_MAX_LENGTH),
+      email,
+      googleId: identity.googleId,
+      emailVerified: true,
+      password: null,
     });
     return { kind: 'ok', user: created };
   } catch (err) {

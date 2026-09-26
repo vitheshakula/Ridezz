@@ -2,7 +2,7 @@ import React from 'react';
 import { Text } from 'react-native';
 import ReactTestRenderer, { type ReactTestInstance } from 'react-test-renderer';
 import JoinScreen from '../src/screens/JoinScreen';
-import { api } from '../src/services/AuthService';
+import { api, fetchProfile } from '../src/services/AuthService';
 import { geocodeDestination } from '../src/services/destinationService';
 
 /**
@@ -10,16 +10,23 @@ import { geocodeDestination } from '../src/services/destinationService';
  * client. These tests pin down both, and how they interact.
  */
 const mockLogout = jest.fn();
-let mockAuth: { user: { id: string; name: string } | null; token: string | null; logout: jest.Mock };
+const mockUpdateUser = jest.fn();
+let mockAuth: {
+  user: { id: string; name: string; roomCode?: string } | null;
+  token: string | null;
+  logout: jest.Mock;
+  updateUser: jest.Mock;
+};
 
 jest.mock('../src/context/AuthContext', () => ({ useAuth: () => mockAuth }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-jest.mock('../src/services/AuthService', () => ({ api: { post: jest.fn() } }));
+jest.mock('../src/services/AuthService', () => ({ api: { post: jest.fn() }, fetchProfile: jest.fn() }));
 jest.mock('../src/services/destinationService', () => ({ geocodeDestination: jest.fn() }));
 
 const post = api.post as jest.Mock;
+const profile = fetchProfile as jest.Mock;
 const geocode = geocodeDestination as jest.Mock;
 
 const onJoined = jest.fn();
@@ -27,7 +34,7 @@ const navigation = { navigate: jest.fn() };
 
 const roomReply = (over: Record<string, unknown> = {}) => ({
   data: {
-    roomCode: 'ABC234',
+    roomCode: '54321',
     roomId: 'r1',
     isHost: false,
     token: 'livekit-token',
@@ -83,7 +90,12 @@ const screenText = () => JSON.stringify(renderer.toJSON());
 
 beforeEach(() => {
   jest.clearAllMocks();
-  mockAuth = { user: { id: 'u1', name: 'Alex' }, token: 'app-jwt', logout: mockLogout };
+  mockAuth = {
+    user: { id: 'u1', name: 'Alex', roomCode: '54321' },
+    token: 'app-jwt',
+    logout: mockLogout,
+    updateUser: mockUpdateUser,
+  };
 });
 
 describe('JoinScreen', () => {
@@ -101,16 +113,16 @@ describe('JoinScreen', () => {
         roomReply({ destinationName: fort.name, destinationLat: fort.latitude, destinationLng: fort.longitude }),
       );
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'abc234');
+      type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
       // No hand-built Authorization header: the shared client adds the bearer token itself.
-      expect(post).toHaveBeenCalledWith('/rooms/join', { roomCode: 'ABC234', riderName: 'Alex' }, { timeout: 8000 });
+      expect(post).toHaveBeenCalledWith('/rooms/join', { roomCode: '54321', riderName: 'Alex' }, { timeout: 8000 });
       expect(onJoined).toHaveBeenCalledWith({
         serverUrl: 'wss://livekit.test',
         token: 'livekit-token',
         riderName: 'Alex',
-        roomCode: 'ABC234',
+        roomCode: '54321',
         isHost: false,
         destination: fort,
       });
@@ -119,7 +131,7 @@ describe('JoinScreen', () => {
     it('starts with no destination when the room has none', async () => {
       post.mockResolvedValue(roomReply());
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'ABC234');
+      type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
       expect(onJoined.mock.calls[0][0].destination).toBeNull();
@@ -129,7 +141,7 @@ describe('JoinScreen', () => {
       const root = render();
       await press(root, 'JOIN RIDE');
 
-      expect(screenText()).toContain('Please enter the 6-character room code.');
+      expect(screenText()).toContain('Please enter the 5-digit room code.');
       expect(post).not.toHaveBeenCalled();
     });
 
@@ -137,14 +149,14 @@ describe('JoinScreen', () => {
       post.mockRejectedValue(
         Object.assign(new Error('x'), {
           isAxiosError: true,
-          response: { status: 404, data: { message: 'Ride room not found. Check the 6-character code.' } },
+          response: { status: 404, data: { message: 'Ride room not found. Check the 5-digit code.' } },
         }),
       );
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'ZZZZZZ');
+      type(root, 'e.g. 54321', '99999');
       await press(root, 'JOIN RIDE');
 
-      expect(screenText()).toContain('Ride room not found. Check the 6-character code.');
+      expect(screenText()).toContain('Ride room not found. Check the 5-digit code.');
       expect(onJoined).not.toHaveBeenCalled();
       expect(mockLogout).not.toHaveBeenCalled();
     });
@@ -220,7 +232,7 @@ describe('JoinScreen', () => {
         Object.assign(new Error('x'), { isAxiosError: true, response: { status: 401, data: { message: 'Authentication required.' } } }),
       );
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'ABC234');
+      type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
       expect(mockLogout).toHaveBeenCalledTimes(1);
@@ -232,7 +244,7 @@ describe('JoinScreen', () => {
     it('does not even try when there is no saved token', async () => {
       mockAuth.token = null;
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'ABC234');
+      type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
       expect(screenText()).toContain('Your session has expired. Please sign in again.');
@@ -244,12 +256,94 @@ describe('JoinScreen', () => {
         Object.assign(new Error('x'), { isAxiosError: true, response: { status: 500, data: {} } }),
       );
       const root = render();
-      type(root, 'e.g. 8K2M9X', 'ABC234');
+      type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
       expect(mockLogout).not.toHaveBeenCalled();
       expect(navigation.navigate).not.toHaveBeenCalled();
       expect(screenText()).toContain('The server had a problem');
+    });
+  });
+
+  describe('the room code input', () => {
+    it('opens the number pad and allows at most five characters', () => {
+      const props = input(render(), 'e.g. 54321').props;
+      expect(props.keyboardType).toBe('number-pad');
+      expect(props.maxLength).toBe(5);
+    });
+
+    it('keeps only digits, even if letters are pasted in, and never more than five', () => {
+      const root = render();
+      type(root, 'e.g. 54321', '5a4-3 2x1');
+      expect(input(root, 'e.g. 54321').props.value).toBe('54321');
+
+      type(root, 'e.g. 54321', '987654321');
+      expect(input(root, 'e.g. 54321').props.value).toBe('98765');
+    });
+
+    it('does not contact the server for a code that is too short or starts with zero', async () => {
+      for (const bad of ['1234', '01234', '']) {
+        const root = render();
+        type(root, 'e.g. 54321', bad);
+        await press(root, 'JOIN RIDE');
+        expect(screenText()).toContain('Please enter the 5-digit room code.');
+      }
+      expect(post).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the rider's own room code on the Create tab", () => {
+    const openCreateTab = (root: ReactTestInstance) =>
+      ReactTestRenderer.act(() => {
+        pressableLabelled(root, 'CREATE RIDE').props.onPress();
+      });
+
+    it('shows the code saved on the account, only on the Create tab', () => {
+      const root = render();
+      expect(screenText()).not.toContain('YOUR ROOM CODE');
+
+      openCreateTab(root);
+      expect(screenText()).toContain('YOUR ROOM CODE');
+      expect(screenText()).toContain('54321');
+    });
+
+    it('never sends a code of its own; the server makes the rider code the room, and the ride uses what it answers', async () => {
+      post.mockResolvedValue(roomReply({ isHost: true, roomCode: '54321' }));
+      const root = render();
+      openCreateTab(root);
+      await press(root, 'CREATE RIDE');
+
+      expect(post.mock.calls[0][1]).not.toHaveProperty('roomCode');
+      expect(onJoined).toHaveBeenCalledWith(expect.objectContaining({ roomCode: '54321', isHost: true }));
+    });
+
+    it('does not ask the server for a code the account already has', async () => {
+      render();
+      await ReactTestRenderer.act(async () => {});
+      expect(profile).not.toHaveBeenCalled();
+    });
+
+    it('fetches and saves the code for an account saved before room codes existed', async () => {
+      mockAuth.user = { id: 'u1', name: 'Alex' };
+      profile.mockResolvedValue({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode: '27182' });
+      render();
+      await ReactTestRenderer.act(async () => {});
+
+      expect(profile).toHaveBeenCalledTimes(1);
+      expect(mockUpdateUser).toHaveBeenCalledWith({ id: 'u1', name: 'Alex', roomCode: '27182' });
+    });
+
+    it('still lets the rider create a ride when the code could not be fetched', async () => {
+      mockAuth.user = { id: 'u1', name: 'Alex' };
+      profile.mockRejectedValue(new Error('offline'));
+      post.mockResolvedValue(roomReply({ isHost: true, roomCode: '27182' }));
+      const root = render();
+      await ReactTestRenderer.act(async () => {});
+      openCreateTab(root);
+
+      expect(screenText()).toContain('assigned when you start your first ride');
+      await press(root, 'CREATE RIDE');
+      expect(onJoined).toHaveBeenCalledWith(expect.objectContaining({ roomCode: '27182' }));
     });
   });
 

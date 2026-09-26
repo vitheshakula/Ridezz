@@ -7,6 +7,7 @@ import type { Env } from './config/env';
 import { errorHandler } from './http';
 import { createAuthRouter } from './routes/auth';
 import { createRoomsRouter } from './routes/rooms';
+import { createUserRouter } from './routes/user';
 
 export interface AppDeps {
   prisma: PrismaClient;
@@ -27,6 +28,7 @@ export function createApp({ prisma, env, verifyGoogleIdToken }: AppDeps): Expres
   app.use(passport.initialize());
 
   app.use('/api/auth', createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken }));
+  app.use('/api/user', createUserRouter({ prisma, requireAuth }));
   app.use('/api/rooms', createRoomsRouter({ prisma, env, requireAuth }));
 
   app.use(errorHandler);

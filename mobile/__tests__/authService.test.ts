@@ -103,6 +103,25 @@ describe('login and register', () => {
   });
 });
 
+describe('fetchProfile', () => {
+  it('asks the server for the signed-in rider and returns their profile, room code included', async () => {
+    const { service, api } = load();
+    const user = { id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: false, roomCode: '54321' };
+    api.get.mockResolvedValue({ data: { user } });
+
+    await expect(service.fetchProfile()).resolves.toEqual(user);
+    expect(api.get).toHaveBeenCalledWith('/user/profile');
+  });
+
+  it('lets a failure through untouched', async () => {
+    const { service, api } = load();
+    const failure = Object.assign(new Error('x'), { isAxiosError: true, response: { status: 401 } });
+    api.get.mockRejectedValue(failure);
+
+    await expect(service.fetchProfile()).rejects.toBe(failure);
+  });
+});
+
 describe('loginWithGoogle', () => {
   function readyForGoogle(ctx: ReturnType<typeof load>, idToken: string | null = 'google-id-token') {
     ctx.api.get.mockResolvedValue({ data: { clientId: 'web-client-id' } });

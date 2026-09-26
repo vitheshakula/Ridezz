@@ -1,4 +1,5 @@
 import type { RiderUser } from '../services/AuthService';
+import { isRoomCode } from './roomCode';
 
 /**
  * Reads a rider profile back out of storage, accepting the shape saved by earlier builds
@@ -29,5 +30,7 @@ export function parseStoredUser(json: string | null): RiderUser | null {
     email: p.email,
     name,
     emailVerified: p.emailVerified === true,
+    // Only a well-formed code is kept; a profile saved before room codes existed just has none yet.
+    ...(isRoomCode(p.roomCode) ? { roomCode: p.roomCode } : {}),
   };
 }

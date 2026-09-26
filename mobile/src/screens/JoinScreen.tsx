@@ -24,6 +24,8 @@ import { BrandHeader } from '../components/BrandHeader';
 import { api } from '../services/AuthService';
 import { geocodeDestination } from '../services/destinationService';
 import { describeAuthError, isUnauthorized } from '../utils/authErrors';
+import { useRoomCode } from '../hooks/useRoomCode';
+import { isRoomCode, ROOM_CODE_LENGTH, sanitizeRoomCodeInput } from '../utils/roomCode';
 
 export interface RideSession {
   serverUrl: string;
@@ -84,6 +86,9 @@ async function requestAllRidePermissions(): Promise<boolean> {
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, token, logout } = useAuth();
+  // The rider's own permanent code -- the room a "Create ride" starts (the server uses it as the
+  // room code), shown on the Create tab so they know what to tell the group.
+  const { roomCode: hostCode, status: hostCodeStatus } = useRoomCode();
 
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.name || '');
@@ -115,15 +120,15 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     }
 
     const trimmedName = riderName.trim();
-    const trimmedCode = roomCode.trim().toUpperCase();
+    const trimmedCode = roomCode.trim();
 
     if (!trimmedName) {
       setError('Please enter your rider name.');
       return;
     }
 
-    if (mode === 'join' && !trimmedCode) {
-      setError('Please enter the 6-character room code.');
+    if (mode === 'join' && !isRoomCode(trimmedCode)) {
+      setError('Please enter the 5-digit room code.');
       return;
     }
 
@@ -277,7 +282,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
           <Text style={styles.cardDescription}>
             {isCreate
               ? 'Create a connected ride and invite your group.'
-              : 'Enter the 6-character ride code shared by your pack leader.'}
+              : 'Enter the 5-digit ride code shared by your pack leader.'}
           </Text>
 
           <Text style={styles.fieldLabel}>RIDER NAME</Text>
@@ -299,13 +304,13 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               <TextInput
                 style={[styles.input, styles.codeInput, focused === 'code' && styles.inputFocused]}
                 value={roomCode}
-                onChangeText={val => setRoomCode(val.toUpperCase())}
+                onChangeText={val => setRoomCode(sanitizeRoomCodeInput(val))}
                 onFocus={() => setFocused('code')}
                 onBlur={() => setFocused(null)}
-                placeholder="e.g. 8K2M9X"
+                placeholder="e.g. 54321"
                 placeholderTextColor={brand.outlineVariant}
-                autoCapitalize="characters"
-                maxLength={6}
+                keyboardType="number-pad"
+                maxLength={ROOM_CODE_LENGTH}
                 editable={!isLoading}
               />
             </>
@@ -313,6 +318,21 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
 
           {isCreate && (
             <>
+              <Text style={styles.fieldLabel}>YOUR ROOM CODE</Text>
+              <View style={styles.hostCode}>
+                <Text
+                  style={styles.hostCodeDigits}
+                  accessibilityLabel={hostCode ? `Your room code: ${hostCode}` : 'Your room code is not loaded yet'}
+                >
+                  {hostCode ?? (hostCodeStatus === 'loading' ? '· · · · ·' : '—')}
+                </Text>
+                <Text style={styles.hostCodeText}>
+                  {hostCode
+                    ? 'Your group joins with this permanent code. It is the same for every ride you start.'
+                    : 'Your permanent code is assigned when you start your first ride.'}
+                </Text>
+              </View>
+
               <Text style={styles.fieldLabel}>DESTINATION (OPTIONAL)</Text>
               <View style={[styles.inputRow, focused === 'destination' && styles.inputFocused]}>
                 <PinIcon size={18} color={brand.outline} />
@@ -489,6 +509,17 @@ const styles = StyleSheet.create({
     lineHeight: 30,
     fontFamily: font.heading,
   },
+  hostCode: {
+    alignItems: 'center',
+    gap: spacing.xs,
+    backgroundColor: brand.darkest,
+    borderWidth: 1,
+    borderColor: brand.primaryBorder,
+    borderRadius: homeRadius.input,
+    padding: spacing.lg,
+  },
+  hostCodeDigits: { ...homeType.displayLarge, color: brand.primary, letterSpacing: 8 },
+  hostCodeText: { ...homeType.bodySmall, color: brand.textSecondary, textAlign: 'center' },
   inputRow: {
     minHeight: 52,
     flexDirection: 'row',

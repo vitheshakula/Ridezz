@@ -7,6 +7,7 @@ import { brand, homeRadius, homeType } from '../homeTheme';
 import { BottomNav } from '../components/BottomNav';
 import { LogoutIcon, StatusDot } from '../components/HomeIcons';
 import { BrandHeader } from '../components/BrandHeader';
+import { RoomCodeCard } from '../components/RoomCodeCard';
 
 interface ProfileScreenProps {
   navigation?: { navigate: (screen: 'JoinScreen' | 'ProfileScreen' | 'LoginPage') => void };
@@ -50,6 +51,8 @@ export default function ProfileScreen({ navigation }: ProfileScreenProps) {
             </View>
           ) : null}
         </View>
+
+        <RoomCodeCard />
 
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>ACCOUNT</Text>

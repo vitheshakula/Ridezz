@@ -20,6 +20,9 @@ export interface RiderUser {
   name: string;
   /** True only once Google has vouched for the address (Google sign-in). */
   emailVerified?: boolean;
+  /** The rider's permanent 5-digit room code. Absent on a profile saved before room codes existed
+   * (see useRoomCode, which fetches it). */
+  roomCode?: string | null;
 }
 
 /** Which button the rider pressed. 'login' only signs in an account that already exists; 'signup'
@@ -55,6 +58,12 @@ export async function login(email: string, password: string): Promise<AuthResult
     password,
   });
   return data;
+}
+
+/** The signed-in rider's profile from the server, including their permanent room code. */
+export async function fetchProfile(): Promise<RiderUser> {
+  const { data } = await api.get<{ user: RiderUser }>('/user/profile');
+  return data.user;
 }
 
 export async function register(name: string, email: string, password: string): Promise<AuthResult> {

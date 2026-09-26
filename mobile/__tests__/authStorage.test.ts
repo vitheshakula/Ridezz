@@ -11,6 +11,24 @@ describe('parseStoredUser', () => {
     expect(parseStoredUser(json)).toEqual({ id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: false });
   });
 
+  it('keeps a saved room code', () => {
+    const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode: '54321' });
+    expect(parseStoredUser(json)?.roomCode).toBe('54321');
+  });
+
+  it('leaves the room code off a profile saved before room codes existed', () => {
+    const user = parseStoredUser(JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex' }));
+    expect(user).not.toHaveProperty('roomCode');
+  });
+
+  it.each([['not five digits', '1234'], ['a leading zero', '01234'], ['letters', 'ABCDE'], ['a number, not text', 54321]])(
+    'ignores a saved room code that is %s',
+    (_label, roomCode) => {
+      const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode });
+      expect(parseStoredUser(json)).not.toHaveProperty('roomCode');
+    },
+  );
+
   it('prefers name over the legacy field when both exist', () => {
     const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'New', rider_name: 'Old' });
     expect(parseStoredUser(json)?.name).toBe('New');

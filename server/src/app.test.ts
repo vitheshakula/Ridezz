@@ -12,6 +12,7 @@ import { PrismaClient } from '@prisma/client';
 import { createApp } from './app';
 import type { GoogleIdentity, GoogleVerifier } from './auth/google';
 import { loadEnv } from './config/env';
+import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from './auth/roomCode';
 
 const JWT_SECRET = 'test-secret-'.padEnd(48, 'x');
 const GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
@@ -295,7 +296,8 @@ describe('room routes require sign-in but otherwise behave as before', () => {
     const res = await post('/api/rooms/create', { riderName: 'Alex' }, token);
 
     assert.equal(res.status, 201);
-    assert.match(res.body.roomCode, /^[A-HJ-NP-Z2-9]{6}$/);
+    assert.match(res.body.roomCode, /^[1-9]\d{4}$/);
+    assert.equal(res.body.roomCode, user.roomCode, "the room's code is the host's permanent code");
     assert.equal(res.body.serverUrl, 'wss://livekit.test');
 
     const room = await prisma.room.findUniqueOrThrow({ where: { code: res.body.roomCode } });
@@ -345,13 +347,22 @@ describe('room routes require sign-in but otherwise behave as before', () => {
     assert.equal((await post('/api/rooms/join', { roomCode: 123456 }, token)).status, 400);
   });
 
-  it('issues a different code for each room', async () => {
+  it('reuses the same code, and the same room, every time the same rider hosts', async () => {
     const { token } = await register();
     const codes = new Set<string>();
-    for (let i = 0; i < 15; i++) {
+    for (let i = 0; i < 5; i++) {
       codes.add((await post('/api/rooms/create', { riderName: 'Alex' }, token)).body.roomCode);
     }
-    assert.equal(codes.size, 15);
+    assert.equal(codes.size, 1);
+    assert.equal(await prisma.room.count({ where: { code: [...codes][0] } }), 1);
+  });
+
+  it('gives different riders different room codes', async () => {
+    const a = await register();
+    const b = await register();
+    const roomA = await post('/api/rooms/create', {}, a.token);
+    const roomB = await post('/api/rooms/create', {}, b.token);
+    assert.notEqual(roomA.body.roomCode, roomB.body.roomCode);
   });
 });
 
@@ -837,6 +848,336 @@ describe('ride destination, host and LiveKit metadata', () => {
       assert.equal(notText.body.destinationName, null);
       const long = await patch(created.body.roomCode, { ...fort, destinationName: 'y'.repeat(999) }, host.token);
       assert.equal(long.body.destinationName.length, 200);
+    });
+  });
+});
+
+describe('permanent room codes', () => {
+  const FIVE_DIGITS = /^[1-9]\d{4}$/;
+  const claims = (livekitToken: string) => jwt.decode(livekitToken) as any;
+
+  /** A rider whose account predates room codes: created straight in the database with none. */
+  async function legacyRider() {
+    const email = nextEmail();
+    const password = 'correct horse battery';
+    const row = await prisma.user.create({
+      data: { riderName: 'Old Timer', email, password: await bcrypt.hash(password, 4) },
+    });
+    assert.equal(row.roomCode, null);
+    const login = await post('/api/auth/login', { email, password });
+    return { id: row.id, email, password, loginBody: login.body };
+  }
+
+  /** A code no account has, so a test can use it without colliding with another test's rider. */
+  async function freeCode(): Promise<number> {
+    for (;;) {
+      const n = 10000 + Math.floor(Math.random() * 90000);
+      if (!(await prisma.user.findUnique({ where: { roomCode: String(n) } }))) {
+        return n;
+      }
+    }
+  }
+
+  /** A stand-in RNG that returns the given values in order (then repeats the last), and counts draws. */
+  const scripted = (...values: number[]) => {
+    let draws = 0;
+    return {
+      random: () => values[Math.min(draws++, values.length - 1)],
+      draws: () => draws,
+    };
+  };
+
+  describe('at sign-up', () => {
+    it('gives a new rider a 5-digit code, in the response and in the database', async () => {
+      const email = nextEmail();
+      const res = await post('/api/auth/register', { name: 'Alex', email, password: 'longenough1' });
+
+      assert.equal(res.status, 201);
+      assert.match(res.body.user.roomCode, FIVE_DIGITS);
+      const row = await prisma.user.findUniqueOrThrow({ where: { email } });
+      assert.equal(row.roomCode, res.body.user.roomCode);
+    });
+
+    it('gives every rider a different code', async () => {
+      const codes = new Set<string>();
+      for (let i = 0; i < 12; i++) {
+        codes.add((await register()).user.roomCode);
+      }
+      assert.equal(codes.size, 12);
+    });
+
+    it('gives a first-time Google rider a code too', async () => {
+      const identity: GoogleIdentity = {
+        googleId: `rc-${counter++}-${Date.now()}`,
+        email: nextEmail(),
+        emailVerified: true,
+        name: 'Google Rider',
+      };
+      googleTokens.set(`tok-${identity.googleId}`, identity);
+      const res = await post('/api/auth/google', { idToken: `tok-${identity.googleId}`, mode: 'signup' });
+
+      assert.equal(res.status, 200);
+      assert.match(res.body.user.roomCode, FIVE_DIGITS);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: identity.email } })).roomCode, res.body.user.roomCode);
+    });
+
+    it('keeps the same code on every later sign-in', async () => {
+      const { email, password, user } = await register();
+      const again = await post('/api/auth/login', { email, password });
+      assert.equal(again.body.user.roomCode, user.roomCode);
+    });
+  });
+
+  describe('accounts from before the feature existed', () => {
+    it('are given a code the first time they sign in with a password, and keep it', async () => {
+      const rider = await legacyRider();
+      const first = rider.loginBody.user.roomCode;
+      assert.match(first, FIVE_DIGITS);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, first);
+
+      const second = await post('/api/auth/login', { email: rider.email, password: rider.password });
+      assert.equal(second.body.user.roomCode, first, 'the code is permanent');
+    });
+
+    it('are given a code when they sign in with Google', async () => {
+      const rider = await legacyRider();
+      const identity: GoogleIdentity = {
+        googleId: `rc-${counter++}-${Date.now()}`,
+        email: rider.email,
+        emailVerified: true,
+        name: 'Old Timer',
+      };
+      googleTokens.set(`tok-${identity.googleId}`, identity);
+      const res = await post('/api/auth/google', { idToken: `tok-${identity.googleId}`, mode: 'login' });
+
+      assert.equal(res.status, 200);
+      assert.equal(res.body.user.id, rider.id);
+      assert.match(res.body.user.roomCode, FIVE_DIGITS);
+    });
+
+    it('are given a code by /api/auth/me', async () => {
+      const rider = await legacyRider();
+      // legacyRider's own login already assigned one, so clear it to test /me on its own.
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const me = await get('/api/auth/me', rider.loginBody.token);
+      assert.equal(me.status, 200);
+      assert.match(me.body.user.roomCode, FIVE_DIGITS);
+    });
+  });
+
+  describe('GET /api/user/profile', () => {
+    it('needs a signed-in rider', async () => {
+      assert.equal((await get('/api/user/profile')).status, 401);
+      assert.equal((await get('/api/user/profile', 'not-a-jwt')).status, 401);
+    });
+
+    it('returns the rider and their room code, and never the password', async () => {
+      const { token, user } = await register({ name: 'Casey' });
+      const res = await get('/api/user/profile', token);
+
+      assert.equal(res.status, 200);
+      assert.deepEqual(res.body.user, {
+        id: user.id,
+        email: user.email,
+        name: 'Casey',
+        emailVerified: false,
+        roomCode: user.roomCode,
+      });
+      assert.equal(JSON.stringify(res.body).includes('password'), false);
+    });
+
+    it('gives an older account a code on first request and the same one afterwards', async () => {
+      const rider = await legacyRider();
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const first = await get('/api/user/profile', rider.loginBody.token);
+      const second = await get('/api/user/profile', rider.loginBody.token);
+      assert.match(first.body.user.roomCode, FIVE_DIGITS);
+      assert.equal(second.body.user.roomCode, first.body.user.roomCode);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, first.body.user.roomCode);
+    });
+
+    it('agrees with itself when several first requests arrive at once', async () => {
+      const rider = await legacyRider();
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const replies = await Promise.all(
+        Array.from({ length: 8 }, () => get('/api/user/profile', rider.loginBody.token)),
+      );
+      const codes = new Set(replies.map(r => r.body.user.roomCode));
+      assert.equal(codes.size, 1, [...codes].join(','));
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, [...codes][0]);
+    });
+  });
+
+  describe('collisions', () => {
+    it('draws again when the code it drew is already taken', async () => {
+      const taken = await freeCode();
+      const holder = await createUserWithRoomCode(
+        prisma,
+        { riderName: 'Holder', email: nextEmail() },
+        scripted(taken).random,
+      );
+      assert.equal(holder.roomCode, String(taken));
+
+      const free = await freeCode();
+      const draws = scripted(taken, taken, free);
+      const next = await createUserWithRoomCode(prisma, { riderName: 'Next', email: nextEmail() }, draws.random);
+
+      assert.equal(next.roomCode, String(free));
+      assert.equal(draws.draws(), 3, 'two collisions, then a free code');
+    });
+
+    it('draws again when the database rejects a code the up-front check did not see (a race)', async () => {
+      const taken = await freeCode();
+      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+
+      // Blind to the pre-check, as if another sign-up claimed the code a moment after it ran, so
+      // only the unique index can catch the clash.
+      const blind = {
+        user: { findUnique: async () => null, create: (args: any) => prisma.user.create(args) },
+      } as unknown as PrismaClient;
+
+      const free = await freeCode();
+      const draws = scripted(taken, free);
+      const next = await createUserWithRoomCode(blind, { riderName: 'Racer', email: nextEmail() }, draws.random);
+
+      assert.equal(next.roomCode, String(free));
+      assert.equal(draws.draws(), 2);
+    });
+
+    it('does not mistake a duplicate email for a code collision, and does not retry it', async () => {
+      const existing = await register();
+      const draws = scripted(await freeCode());
+
+      await assert.rejects(
+        createUserWithRoomCode(prisma, { riderName: 'Dup', email: existing.email }, draws.random),
+        (err: any) => err.code === 'P2002' && JSON.stringify(err.meta?.target).includes('email'),
+      );
+      assert.equal(draws.draws(), 1, 'a different problem, so no second attempt');
+    });
+
+    it('answers a duplicate-email sign-up with 409, as before', async () => {
+      const existing = await register();
+      const res = await post('/api/auth/register', { name: 'Again', email: existing.email, password: 'longenough1' });
+      assert.equal(res.status, 409);
+    });
+
+    it('gives up with a clear error rather than looping forever when no code is free', async () => {
+      const taken = await freeCode();
+      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+
+      const stuck = scripted(taken);
+      await assert.rejects(
+        createUserWithRoomCode(prisma, { riderName: 'Stuck', email: nextEmail() }, stuck.random),
+        RoomCodeUnavailableError,
+      );
+      assert.equal(stuck.draws(), 25);
+    });
+
+    it('ensureRoomCode never replaces a code the rider already has', async () => {
+      const { user } = await register();
+      const draws = scripted(await freeCode());
+
+      assert.equal(await ensureRoomCode(prisma, user.id, draws.random), user.roomCode);
+      assert.equal(draws.draws(), 0, 'nothing was drawn');
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).roomCode, user.roomCode);
+    });
+
+    it('ensureRoomCode skips a taken code when filling in an older account', async () => {
+      const taken = await freeCode();
+      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+      const rider = await legacyRider();
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const free = await freeCode();
+      assert.equal(await ensureRoomCode(prisma, rider.id, scripted(taken, free).random), String(free));
+    });
+
+    it('ensureRoomCode hands every concurrent caller the same code', async () => {
+      const rider = await legacyRider();
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const codes = await Promise.all(Array.from({ length: 10 }, () => ensureRoomCode(prisma, rider.id)));
+      assert.equal(new Set(codes).size, 1);
+    });
+
+    it('ensureRoomCode refuses an account that does not exist', async () => {
+      await assert.rejects(ensureRoomCode(prisma, 'no-such-account'), /not found/i);
+    });
+  });
+
+  describe('hosting a ride', () => {
+    it("uses the host's permanent code as the room code, in the room and in LiveKit", async () => {
+      const { token, user } = await register();
+      const res = await post('/api/rooms/create', { riderName: 'Alex' }, token);
+
+      assert.equal(res.status, 201);
+      assert.equal(res.body.roomCode, user.roomCode);
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: user.roomCode } });
+      assert.equal(room.hostId, user.id);
+      assert.equal(claims(res.body.token).video.room, user.roomCode);
+    });
+
+    it('hosts the same room again, taking the new destination (or none)', async () => {
+      const { token, user } = await register();
+      const fort = { destinationName: 'Golconda Fort', destinationLat: 17.3833, destinationLng: 78.4011 };
+      const charminar = { destinationName: 'Charminar', destinationLat: 17.3616, destinationLng: 78.4747 };
+
+      const first = await post('/api/rooms/create', fort, token);
+      assert.equal(first.body.destinationName, 'Golconda Fort');
+
+      const second = await post('/api/rooms/create', charminar, token);
+      assert.equal(second.body.roomCode, user.roomCode);
+      assert.equal(second.body.destinationName, 'Charminar');
+
+      const third = await post('/api/rooms/create', {}, token);
+      assert.equal(third.body.destinationName, null, 'a ride with no destination clears the old one');
+
+      assert.equal(await prisma.room.count({ where: { hostId: user.id } }), 1, 'still one room');
+    });
+
+    it('gives an older account its code when it first hosts, and that is the room code', async () => {
+      const rider = await legacyRider();
+      await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
+
+      const res = await post('/api/rooms/create', { riderName: 'Old Timer' }, rider.loginBody.token);
+      assert.equal(res.status, 201);
+      assert.match(res.body.roomCode, FIVE_DIGITS);
+      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, res.body.roomCode);
+    });
+
+    it('lets others join with that code, and does not make them the host', async () => {
+      const host = await register();
+      const guest = await register();
+      await post('/api/rooms/create', {}, host.token);
+
+      const joined = await post('/api/rooms/join', { roomCode: host.user.roomCode, riderName: 'Guest' }, guest.token);
+      assert.equal(joined.status, 200);
+      assert.equal(joined.body.roomCode, host.user.roomCode);
+      assert.equal(joined.body.isHost, false);
+    });
+
+    it('does not open a rider\'s room until they have hosted it', async () => {
+      const idle = await register();
+      const guest = await register();
+      const res = await post('/api/rooms/join', { roomCode: idle.user.roomCode }, guest.token);
+      assert.equal(res.status, 404);
+      assert.match(res.body.message, /5-digit/);
+    });
+
+    it("refuses to host on top of a room that belongs to someone else", async () => {
+      const owner = await register();
+      const rider = await register();
+      await prisma.room.create({
+        data: { code: rider.user.roomCode, name: 'Not yours', hostId: owner.user.id },
+      });
+
+      const res = await post('/api/rooms/create', {}, rider.token);
+      assert.equal(res.status, 409);
+      const room = await prisma.room.findUniqueOrThrow({ where: { code: rider.user.roomCode } });
+      assert.equal(room.hostId, owner.user.id, 'the existing room is untouched');
     });
   });
 });
