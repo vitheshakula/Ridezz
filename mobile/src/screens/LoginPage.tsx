@@ -1,27 +1,20 @@
 import React, { useState } from 'react';
 import {
+  View,
+  Text,
+  TextInput,
+  TouchableOpacity,
   ActivityIndicator,
   KeyboardAvoidingView,
   Platform,
   ScrollView,
-  StyleSheet,
-  Text,
-  TextInput,
-  TouchableOpacity,
-  View,
 } from 'react-native';
-import BrandLockup from '../components/BrandLockup';
-import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { useAuth } from '../context/AuthContext';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { login as loginRequest } from '../services/AuthService';
-import {
-  color,
-  inputStyle,
-  primaryButtonStyle,
-  radius,
-  spacing,
-  type,
-} from '../theme';
+import { brand } from '../homeTheme';
+import { Logo } from '../components/Logo';
+import { authStyles } from './authStyles';
 import { describeAuthError } from '../utils/authErrors';
 import { validateSignIn, type SignInErrors } from '../utils/authValidation';
 
@@ -55,9 +48,7 @@ export const LoginPage = ({ navigation }: any) => {
       await login(result.token, result.user);
       navigation?.navigate('JoinScreen');
     } catch (error) {
-      setFormError(
-        describeAuthError(error, 'Sign in failed. Please try again.'),
-      );
+      setFormError(describeAuthError(error, 'Sign in failed. Please try again.'));
     } finally {
       setIsLoading(false);
     }
@@ -68,35 +59,22 @@ export const LoginPage = ({ navigation }: any) => {
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
       style={styles.container}
     >
-      <ScrollView
-        contentContainerStyle={styles.scrollContent}
-        keyboardShouldPersistTaps="handled"
-      >
-        <View style={styles.topBar}>
-          <BrandLockup />
-          <TouchableOpacity
-            onPress={() => navigation.navigate('Dashboard')}
-            hitSlop={12}
-          >
-            <Text style={styles.topBarAction}>Home</Text>
-          </TouchableOpacity>
+      <ScrollView contentContainerStyle={styles.scrollContent} keyboardShouldPersistTaps="handled">
+        <View style={styles.header}>
+          <Logo size={72} />
+          <Text style={styles.appTitle}>RIDEAZE</Text>
+          <Text style={styles.subTitle}>Group Voice Intercom</Text>
         </View>
 
-        <View style={styles.intro}>
-          <Text style={styles.eyebrow}>WELCOME BACK</Text>
-          <Text style={styles.pageTitle}>Ready for the next ride?</Text>
-          <Text style={styles.pageDescription}>
-            Sign in to create a room or join your crew.
-          </Text>
-        </View>
+        <View style={styles.card}>
+          <Text style={styles.cardTitle}>Sign In</Text>
 
-        <View style={styles.formCard}>
-          <Text style={styles.label}>Gmail address</Text>
+          <Text style={styles.label}>Gmail Address</Text>
           <TextInput
             testID="login-email"
             style={[styles.input, errors.email && styles.inputError]}
             placeholder="rider@gmail.com"
-            placeholderTextColor={color.textMuted}
+            placeholderTextColor={brand.outline}
             keyboardType="email-address"
             autoCapitalize="none"
             autoCorrect={false}
@@ -108,22 +86,15 @@ export const LoginPage = ({ navigation }: any) => {
               clearError('email');
             }}
           />
-          {errors.email ? (
-            <Text style={styles.fieldError}>{errors.email}</Text>
-          ) : null}
+          {errors.email ? <Text style={styles.fieldError}>{errors.email}</Text> : null}
 
           <Text style={styles.label}>Password</Text>
-          <View
-            style={[
-              styles.passwordContainer,
-              errors.password && styles.inputError,
-            ]}
-          >
+          <View style={[styles.passwordContainer, errors.password && styles.inputError]}>
             <TextInput
               testID="login-password"
               style={styles.passwordInput}
-              placeholder="Enter your password"
-              placeholderTextColor={color.textMuted}
+              placeholder="••••••••"
+              placeholderTextColor={brand.outline}
               secureTextEntry={!showPassword}
               autoCapitalize="none"
               autoCorrect={false}
@@ -140,14 +111,10 @@ export const LoginPage = ({ navigation }: any) => {
               onPress={() => setShowPassword(!showPassword)}
               style={styles.toggleBtn}
             >
-              <Text style={styles.toggleText}>
-                {showPassword ? 'Hide' : 'Show'}
-              </Text>
+              <Text style={styles.toggleText}>{showPassword ? 'Hide' : 'Show'}</Text>
             </TouchableOpacity>
           </View>
-          {errors.password ? (
-            <Text style={styles.fieldError}>{errors.password}</Text>
-          ) : null}
+          {errors.password ? <Text style={styles.fieldError}>{errors.password}</Text> : null}
 
           <TouchableOpacity
             style={styles.forgotBtn}
@@ -160,13 +127,13 @@ export const LoginPage = ({ navigation }: any) => {
 
           <TouchableOpacity
             testID="login-submit"
-            style={[primaryButtonStyle, isLoading && styles.buttonDisabled]}
+            style={[styles.primaryButton, isLoading && styles.buttonDisabled]}
             onPress={handleLogin}
             disabled={isLoading}
-            activeOpacity={0.88}
+            activeOpacity={0.85}
           >
             {isLoading ? (
-              <ActivityIndicator color={color.onAccent} />
+              <ActivityIndicator color={brand.onPrimary} />
             ) : (
               <Text style={styles.primaryButtonText}>Sign In</Text>
             )}
@@ -178,19 +145,14 @@ export const LoginPage = ({ navigation }: any) => {
             <View style={styles.dividerLine} />
           </View>
 
-          <GoogleSignInButton
-            mode="login"
-            navigation={navigation}
-            disabled={isLoading}
-          />
+          <GoogleSignInButton mode="login" navigation={navigation} disabled={isLoading} />
 
           <TouchableOpacity
             style={styles.switchAuthBtn}
             onPress={() => navigation.navigate('SignupPage')}
           >
             <Text style={styles.switchAuthText}>
-              New to Rideaze?{' '}
-              <Text style={styles.linkText}>Create an account</Text>
+              Don't have an account? <Text style={styles.linkText}>Create one</Text>
             </Text>
           </TouchableOpacity>
         </View>
@@ -199,107 +161,4 @@ export const LoginPage = ({ navigation }: any) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: color.bg },
-  scrollContent: {
-    flexGrow: 1,
-    padding: spacing.xxl,
-    paddingTop: spacing.xxxl,
-    paddingBottom: spacing.huge,
-  },
-  topBar: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  topBarAction: { ...type.label, color: color.textSecondary },
-  intro: { marginTop: spacing.huge, marginBottom: spacing.xxxl },
-  eyebrow: { ...type.overline, color: color.accent, marginBottom: spacing.md },
-  pageTitle: { ...type.hero, color: color.textPrimary, maxWidth: 330 },
-  pageDescription: {
-    ...type.body,
-    color: color.textSecondary,
-    marginTop: spacing.md,
-  },
-  formCard: {
-    backgroundColor: color.surface,
-    borderWidth: 1,
-    borderColor: color.border,
-    borderRadius: radius.xl,
-    padding: spacing.xl,
-  },
-  label: {
-    ...type.label,
-    color: color.textSecondary,
-    marginBottom: spacing.sm,
-    marginTop: spacing.sm,
-  },
-  input: { ...inputStyle, marginBottom: spacing.sm },
-  inputError: { borderColor: color.danger },
-  fieldError: {
-    ...type.caption,
-    color: color.danger,
-    marginBottom: spacing.md,
-  },
-  formError: {
-    ...type.caption,
-    color: color.danger,
-    backgroundColor: color.dangerMuted,
-    borderWidth: 1,
-    borderColor: color.dangerBorder,
-    borderRadius: radius.sm,
-    padding: spacing.md,
-    marginBottom: spacing.md,
-  },
-  passwordContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: color.surfaceRaised,
-    borderRadius: radius.md,
-    borderWidth: 1,
-    borderColor: color.border,
-    marginBottom: spacing.sm,
-  },
-  passwordInput: {
-    flex: 1,
-    minHeight: 52,
-    paddingHorizontal: spacing.lg,
-    paddingVertical: spacing.md,
-    color: color.textPrimary,
-    fontSize: 16,
-  },
-  toggleBtn: {
-    minHeight: 52,
-    justifyContent: 'center',
-    paddingHorizontal: spacing.lg,
-  },
-  toggleText: { color: color.accent, fontWeight: '700', fontSize: 13 },
-  forgotBtn: {
-    alignSelf: 'flex-end',
-    marginBottom: spacing.xl,
-    marginTop: spacing.xs,
-    minHeight: 36,
-    justifyContent: 'center',
-  },
-  forgotText: { color: color.textSecondary, fontSize: 13, fontWeight: '600' },
-  buttonDisabled: { opacity: 0.55 },
-  primaryButtonText: { color: color.onAccent, fontSize: 16, fontWeight: '800' },
-  dividerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.xl,
-  },
-  dividerLine: { flex: 1, height: 1, backgroundColor: color.border },
-  dividerText: {
-    ...type.overline,
-    color: color.textMuted,
-    marginHorizontal: spacing.md,
-  },
-  switchAuthBtn: {
-    marginTop: spacing.xl,
-    alignItems: 'center',
-    paddingVertical: spacing.xs,
-  },
-  switchAuthText: { color: color.textSecondary, fontSize: 14 },
-  linkText: { color: color.accent, fontWeight: '700' },
-});
+const styles = authStyles;

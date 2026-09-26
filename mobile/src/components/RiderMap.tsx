@@ -1,26 +1,6 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type ElementRef,
-} from 'react';
-import {
-  Animated,
-  Easing,
-  Pressable,
-  StyleSheet,
-  Text,
-  View,
-} from 'react-native';
-import {
-  Camera,
-  GeoJSONSource,
-  Layer,
-  Map,
-  Marker,
-} from '@maplibre/maplibre-react-native';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
+import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Camera, GeoJSONSource, Layer, Map, Marker } from '@maplibre/maplibre-react-native';
 import { MAPTILER_API_KEY } from '@env';
 import {
   classifyFreshness,
@@ -32,20 +12,9 @@ import {
   isFallingBehind,
   type RiderLocation,
 } from '../utils/riderLocation';
-import {
-  fetchRoadRouteDetailed,
-  formatDuration,
-  type RoadRoute,
-} from '../services/routingService';
+import { fetchRoadRouteDetailed, formatDuration, type RoadRoute } from '../services/routingService';
 import { brand, font, homeType } from '../homeTheme';
-import {
-  FitIcon,
-  FlagIcon,
-  LocateIcon,
-  MicIcon,
-  MinusIcon,
-  PlusIcon,
-} from './HomeIcons';
+import { FitIcon, FlagIcon, LocateIcon, MicIcon, MinusIcon, PlusIcon } from './HomeIcons';
 import { Logo } from './Logo';
 
 export interface RideDestination {
@@ -91,7 +60,7 @@ const RIDER_COLOR_PALETTE: string[] = [
 function colorForRider(identity: string): string {
   let hash = 0;
   for (let i = 0; i < identity.length; i++) {
-    hash = (hash * 31 + identity.charCodeAt(i)) % 2147483647;
+    hash = (hash * 31 + identity.charCodeAt(i)) >>> 0;
   }
   return RIDER_COLOR_PALETTE[hash % RIDER_COLOR_PALETTE.length];
 }
@@ -127,9 +96,7 @@ function hasValidCoordinate(location: RiderLocation): boolean {
   );
 }
 
-function toLngLat(
-  location: Pick<RiderLocation, 'latitude' | 'longitude'>,
-): LngLat {
+function toLngLat(location: Pick<RiderLocation, 'latitude' | 'longitude'>): LngLat {
   return [location.longitude, location.latitude];
 }
 
@@ -168,12 +135,8 @@ export default function RiderMap({
   const zoomRef = useRef(INITIAL_ZOOM);
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
-  const validLocations = useMemo(
-    () => locations.filter(hasValidCoordinate),
-    [locations],
-  );
-  const localLocation =
-    validLocations.find(l => l.participantIdentity === localIdentity) ?? null;
+  const validLocations = useMemo(() => locations.filter(hasValidCoordinate), [locations]);
+  const localLocation = validLocations.find(l => l.participantIdentity === localIdentity) ?? null;
   const destinationLngLat: LngLat | null = useMemo(
     () => (destination ? [destination.longitude, destination.latitude] : null),
     [destination],
@@ -183,16 +146,10 @@ export default function RiderMap({
   // dropped off the map entirely -- an offline rider's stale last-known position
   // shouldn't drag the centroid toward them or get flagged itself.
   const activeLocations = useMemo(
-    () =>
-      validLocations.filter(
-        location => classifyFreshness(location, nowMs) !== 'offline',
-      ),
+    () => validLocations.filter(location => classifyFreshness(location, nowMs) !== 'offline'),
     [validLocations, nowMs],
   );
-  const groupCentroid = useMemo(
-    () => computeCentroid(activeLocations),
-    [activeLocations],
-  );
+  const groupCentroid = useMemo(() => computeCentroid(activeLocations), [activeLocations]);
 
   // Straight-line ("as the crow flies") guide from the local rider to the destination.
   // Always computed as the fallback: if the real road route below hasn't loaded yet, or
@@ -206,9 +163,7 @@ export default function RiderMap({
       longitude: destinationLngLat[0],
     });
     const label =
-      meters < 1000
-        ? `${Math.round(meters)} m direct`
-        : `${(meters / 1000).toFixed(1)} km direct`;
+      meters < 1000 ? `${Math.round(meters)} m direct` : `${(meters / 1000).toFixed(1)} km direct`;
     return {
       type: 'Feature' as const,
       geometry: {
@@ -225,15 +180,10 @@ export default function RiderMap({
   // the current route was fetched -- not on every 15m GPS tick, since this is a shared public
   // server with no uptime guarantee and refetching that often would be both wasteful and rude.
   const [roadRoute, setRoadRoute] = useState<RoadRoute | null>(null);
-  const [routeStatus, setRouteStatus] = useState<
-    'idle' | 'loading' | 'road' | 'fallback'
-  >('idle');
+  const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'road' | 'fallback'>('idle');
   const [routeError, setRouteError] = useState<string | null>(null);
   const [routeRetry, setRouteRetry] = useState(0);
-  const lastSuccessfulRouteRef = useRef<{
-    from: LngLat;
-    destination: LngLat;
-  } | null>(null);
+  const lastSuccessfulRouteRef = useRef<{ from: LngLat; destination: LngLat } | null>(null);
   const REROUTE_THRESHOLD_METERS = 300;
 
   useEffect(() => {
@@ -247,9 +197,7 @@ export default function RiderMap({
 
     const last = lastSuccessfulRouteRef.current;
     const destinationChanged =
-      !last ||
-      last.destination[0] !== destinationLngLat[0] ||
-      last.destination[1] !== destinationLngLat[1];
+      !last || last.destination[0] !== destinationLngLat[0] || last.destination[1] !== destinationLngLat[1];
     const movedFar =
       !last ||
       haversineDistanceMeters(
@@ -271,26 +219,23 @@ export default function RiderMap({
       latitude: destinationLngLat[1],
       longitude: destinationLngLat[0],
     }).then(result => {
-      if (!cancelled) {
-        if (result.ok) {
-          setRoadRoute(result.route);
-          setRouteStatus('road');
-          lastSuccessfulRouteRef.current = {
-            from: currentFrom,
-            destination: destinationLngLat,
-          };
-        } else {
-          console.warn(`Route unavailable: ${result.reason}`);
-          setRoadRoute(null);
-          setRouteStatus('fallback');
-          setRouteError(result.reason);
-          retryTimer = setTimeout(
-            () => setRouteRetry(value => value + 1),
-            ROUTE_RETRY_MS,
-          );
+        if (!cancelled) {
+          if (result.ok) {
+            setRoadRoute(result.route);
+            setRouteStatus('road');
+            lastSuccessfulRouteRef.current = {
+              from: currentFrom,
+              destination: destinationLngLat,
+            };
+          } else {
+            console.warn(`Route unavailable: ${result.reason}`);
+            setRoadRoute(null);
+            setRouteStatus('fallback');
+            setRouteError(result.reason);
+            retryTimer = setTimeout(() => setRouteRetry(value => value + 1), ROUTE_RETRY_MS);
+          }
         }
-      }
-    });
+      });
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
@@ -301,24 +246,16 @@ export default function RiderMap({
     if (!roadRoute) {
       return null;
     }
-    const label = `${(roadRoute.distanceMeters / 1000).toFixed(
-      1,
-    )} km · ${formatDuration(roadRoute.durationSeconds)}`;
+    const label = `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(roadRoute.durationSeconds)}`;
     return {
       type: 'Feature' as const,
-      geometry: {
-        type: 'LineString' as const,
-        coordinates: roadRoute.coordinates,
-      },
+      geometry: { type: 'LineString' as const, coordinates: roadRoute.coordinates },
       properties: { label },
     };
   }, [roadRoute]);
 
   useEffect(() => {
-    const interval = setInterval(
-      () => setNowMs(Date.now()),
-      MAP_STATUS_TICK_MS,
-    );
+    const interval = setInterval(() => setNowMs(Date.now()), MAP_STATUS_TICK_MS);
     return () => clearInterval(interval);
   }, []);
 
@@ -380,21 +317,13 @@ export default function RiderMap({
     }
 
     cameraRef.current?.fitBounds(bounds, {
-      padding: {
-        top: topInset + 40,
-        right: 80,
-        bottom: bottomInset + 40,
-        left: 40,
-      },
+      padding: { top: topInset + 40, right: 80, bottom: bottomInset + 40, left: 40 },
       duration: CAMERA_ANIMATION_MS,
     });
   }, [bottomInset, destinationLngLat, nowMs, topInset, validLocations]);
 
   const handleZoom = useCallback((delta: number) => {
-    const next = Math.min(
-      MAX_ZOOM,
-      Math.max(MIN_ZOOM, zoomRef.current + delta),
-    );
+    const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current + delta));
     zoomRef.current = next;
     cameraRef.current?.zoomTo(next, { duration: CAMERA_ANIMATION_MS });
   }, []);
@@ -433,20 +362,12 @@ export default function RiderMap({
           // this ternary's two branches as updates to the same instance rather than an
           // unmount/remount -- confirmed on-device (`Render Error: \`id\` cannot be changed`)
           // the moment the OSRM fetch resolved and this branch swapped in.
-          <GeoJSONSource
-            key="roadRoute"
-            id="roadRouteSource"
-            data={roadRouteGeoJSON}
-          >
+          <GeoJSONSource key="roadRoute" id="roadRouteSource" data={roadRouteGeoJSON}>
             <Layer
               id="roadRouteLine"
               type="line"
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-              paint={{
-                'line-color': '#3b82f6',
-                'line-width': 4,
-                'line-opacity': 0.85,
-              }}
+              paint={{ 'line-color': '#3b82f6', 'line-width': 4, 'line-opacity': 0.85 }}
             />
             <Layer
               id="roadRouteLabel"
@@ -457,22 +378,14 @@ export default function RiderMap({
                 'text-size': 12,
                 'text-offset': [0, -1.2],
               }}
-              paint={{
-                'text-color': '#e5e7eb',
-                'text-halo-color': '#111827',
-                'text-halo-width': 1.5,
-              }}
+              paint={{ 'text-color': '#e5e7eb', 'text-halo-color': '#111827', 'text-halo-width': 1.5 }}
             />
           </GeoJSONSource>
         ) : straightLineGeoJSON ? (
           // Fallback while the real route hasn't loaded yet (or OSRM's public demo server
           // is unavailable) -- deliberately dashed and gray, and labeled "direct" rather than
           // with a turn-by-turn distance, so it never reads as an actual route.
-          <GeoJSONSource
-            key="straightLine"
-            id="straightLineSource"
-            data={straightLineGeoJSON}
-          >
+          <GeoJSONSource key="straightLine" id="straightLineSource" data={straightLineGeoJSON}>
             <Layer
               id="straightLine"
               type="line"
@@ -514,9 +427,7 @@ export default function RiderMap({
             : null;
           const fallingBehind =
             freshness !== 'offline' && isFallingBehind(location, groupCentroid);
-          const markerKey = `${
-            location.participantIdentity || 'rider'
-          }-${index}`;
+          const markerKey = `${location.participantIdentity || 'rider'}-${index}`;
 
           return (
             <Marker
@@ -524,11 +435,7 @@ export default function RiderMap({
               id={markerKey}
               lngLat={toLngLat(location)}
               anchor="center"
-              onPress={() =>
-                setSelectedKey(current =>
-                  current === markerKey ? null : markerKey,
-                )
-              }
+              onPress={() => setSelectedKey(current => (current === markerKey ? null : markerKey))}
             >
               <RiderMarker
                 location={location}
@@ -538,15 +445,9 @@ export default function RiderMap({
                 distanceToDestination={distanceToDestination}
                 fallingBehind={fallingBehind}
                 nowMs={nowMs}
-                color={
-                  isLocal
-                    ? LOCAL_RIDER_COLOR
-                    : colorForRider(location.participantIdentity)
-                }
+                color={isLocal ? LOCAL_RIDER_COLOR : colorForRider(location.participantIdentity)}
                 selected={selectedKey === markerKey}
-                talking={Boolean(
-                  speakingIdentities?.includes(location.participantIdentity),
-                )}
+                talking={Boolean(speakingIdentities?.includes(location.participantIdentity))}
               />
             </Marker>
           );
@@ -566,9 +467,7 @@ export default function RiderMap({
       ) : null}
 
       {destination ? (
-        <View
-          style={[styles.navCard, { top: topInset + (statusMessage ? 60 : 8) }]}
-        >
+        <View style={[styles.navCard, { top: topInset + (statusMessage ? 60 : 8) }]}>
           <View style={styles.navIcon}>
             <FlagIcon size={20} color={brand.primary} />
           </View>
@@ -582,21 +481,13 @@ export default function RiderMap({
                 {routeStatus === 'loading'
                   ? 'Finding road route...'
                   : routeStatus === 'road' && roadRoute
-                  ? `${(roadRoute.distanceMeters / 1000).toFixed(
-                      1,
-                    )} km · ${formatDuration(roadRoute.durationSeconds)}`
-                  : `Direct-line fallback${
-                      routeError ? ` · ${routeError}` : ''
-                    }`}
+                    ? `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(roadRoute.durationSeconds)}`
+                    : `Direct-line fallback${routeError ? ` · ${routeError}` : ''}`}
               </Text>
             ) : null}
           </View>
           {routeStatus === 'fallback' && localLocation ? (
-            <Pressable
-              style={styles.navAction}
-              onPress={() => setRouteRetry(value => value + 1)}
-              hitSlop={6}
-            >
+            <Pressable style={styles.navAction} onPress={() => setRouteRetry(value => value + 1)} hitSlop={6}>
               <Text style={styles.navActionText}>Retry</Text>
             </Pressable>
           ) : null}
@@ -614,10 +505,7 @@ export default function RiderMap({
         </View>
       ) : onChangeDestination ? (
         <Pressable
-          style={[
-            styles.setDestination,
-            { top: topInset + (statusMessage ? 60 : 8) },
-          ]}
+          style={[styles.setDestination, { top: topInset + (statusMessage ? 60 : 8) }]}
           accessibilityRole="button"
           accessibilityLabel="Change destination"
           hitSlop={6}
@@ -635,11 +523,7 @@ export default function RiderMap({
         <MapControl label="Zoom out" onPress={() => handleZoom(-1)}>
           <MinusIcon size={22} color={brand.textPrimary} />
         </MapControl>
-        <MapControl
-          label="Center Me"
-          onPress={handleCenterMe}
-          disabled={!localLocation}
-        >
+        <MapControl label="Center Me" onPress={handleCenterMe} disabled={!localLocation}>
           <LocateIcon size={22} color={brand.primary} />
         </MapControl>
         <MapControl label="Fit Group" onPress={handleFitGroup}>
@@ -663,11 +547,7 @@ function MapControl({
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [
-        styles.controlButton,
-        disabled && styles.controlButtonDisabled,
-        pressed && styles.controlPressed,
-      ]}
+      style={({ pressed }) => [styles.controlButton, disabled && styles.controlButtonDisabled, pressed && styles.controlPressed]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -684,12 +564,7 @@ function PulseRing({ color }: { color: string }) {
   const progress = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.timing(progress, {
-        toValue: 1,
-        duration: 1200,
-        easing: Easing.out(Easing.quad),
-        useNativeDriver: true,
-      }),
+      Animated.timing(progress, { toValue: 1, duration: 1200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
     );
     loop.start();
     return () => loop.stop();
@@ -701,18 +576,8 @@ function PulseRing({ color }: { color: string }) {
         styles.pulse,
         {
           borderColor: color,
-          opacity: progress.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.7, 0],
-          }),
-          transform: [
-            {
-              scale: progress.interpolate({
-                inputRange: [0, 1],
-                outputRange: [1, 2],
-              }),
-            },
-          ],
+          opacity: progress.interpolate({ inputRange: [0, 1], outputRange: [0.7, 0] }),
+          transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1, 2] }) }],
         },
       ]}
     />
@@ -751,8 +616,7 @@ function RiderMarker({
 }: RiderMarkerProps) {
   const offline = freshness === 'offline';
   const ageText = formatUpdatedAgo(nowMs - location.timestamp);
-  const displayName =
-    location.participantName.trim() || location.participantIdentity || 'Rider';
+  const displayName = location.participantName.trim() || location.participantIdentity || 'Rider';
   const initial = displayName.charAt(0).toUpperCase() || '?';
   const showHeading =
     location.heading !== undefined &&
@@ -761,22 +625,16 @@ function RiderMarker({
     !offline;
 
   // State is never colour-only: each non-default state also carries a text tag or glyph.
-  const tag = offline
-    ? 'OFFLINE'
-    : fallingBehind
-    ? 'FAR'
-    : freshness === 'stale'
-    ? 'STALE'
-    : null;
+  const tag = offline ? 'OFFLINE' : fallingBehind ? 'FAR' : freshness === 'stale' ? 'STALE' : null;
   const ring = isLocal
     ? brand.primary
     : offline
-    ? brand.outline
-    : talking
-    ? brand.success
-    : fallingBehind || freshness === 'stale'
-    ? brand.warning
-    : brand.success;
+      ? brand.outline
+      : talking
+        ? brand.success
+        : fallingBehind || freshness === 'stale'
+          ? brand.warning
+          : brand.success;
   const tagColor = offline ? brand.outline : brand.warning;
   const firstName = displayName.split(' ')[0];
 
@@ -788,25 +646,16 @@ function RiderMarker({
             {displayName}
             {isLocal ? ' (you)' : ''}
           </Text>
-          <Text
-            style={[
-              styles.detailLine,
-              { color: offline ? brand.outline : brand.success },
-            ]}
-          >
+          <Text style={[styles.detailLine, { color: offline ? brand.outline : brand.success }]}>
             {offline ? 'Offline' : talking ? 'Talking' : 'Online'} · {ageText}
           </Text>
           {location.speed !== undefined ? (
             <Text style={styles.detailLine}>{formatSpeed(location.speed)}</Text>
           ) : null}
           {location.accuracy !== undefined ? (
-            <Text style={styles.detailLine}>
-              Accuracy +/-{Math.round(location.accuracy)}m
-            </Text>
+            <Text style={styles.detailLine}>Accuracy +/-{Math.round(location.accuracy)}m</Text>
           ) : null}
-          {distance !== null ? (
-            <Text style={styles.detailLine}>{formatDistance(distance)}</Text>
-          ) : null}
+          {distance !== null ? <Text style={styles.detailLine}>{formatDistance(distance)}</Text> : null}
           {distanceToDestination !== null ? (
             <Text style={styles.detailLine}>
               {isLocal ? '' : `${firstName}: `}
@@ -820,9 +669,7 @@ function RiderMarker({
             {isLocal ? 'You' : firstName}
             {distance !== null ? `  ${formatDistance(distance)}` : ''}
           </Text>
-          {tag ? (
-            <Text style={[styles.tagText, { color: tagColor }]}>{tag}</Text>
-          ) : null}
+          {tag ? <Text style={[styles.tagText, { color: tagColor }]}>{tag}</Text> : null}
         </View>
       )}
 
@@ -832,20 +679,11 @@ function RiderMarker({
         <View
           style={[
             styles.headingArrow,
-            {
-              borderBottomColor: color,
-              transform: [{ rotate: `${location.heading}deg` }],
-            },
+            { borderBottomColor: color, transform: [{ rotate: `${location.heading}deg` }] },
           ]}
         />
       ) : null}
-      <View
-        style={[
-          styles.avatar,
-          { borderColor: ring },
-          selected && styles.avatarSelected,
-        ]}
-      >
+      <View style={[styles.avatar, { borderColor: ring }, selected && styles.avatarSelected]}>
         {isLocal ? (
           <Logo size={22} />
         ) : (
@@ -917,11 +755,7 @@ const styles = StyleSheet.create({
     paddingVertical: 8,
     paddingHorizontal: 12,
   },
-  statusOverlayText: {
-    ...homeType.labelMedium,
-    color: brand.textSecondary,
-    textAlign: 'center',
-  },
+  statusOverlayText: { ...homeType.labelMedium, color: brand.textSecondary, textAlign: 'center' },
   navCard: {
     position: 'absolute',
     left: 12,
@@ -946,12 +780,7 @@ const styles = StyleSheet.create({
   },
   navBody: { flex: 1 },
   navEyebrow: { ...homeType.labelSmall, color: brand.primary },
-  navName: {
-    fontFamily: font.heading,
-    fontSize: 15,
-    lineHeight: 20,
-    color: brand.textPrimary,
-  },
+  navName: { fontFamily: font.heading, fontSize: 15, lineHeight: 20, color: brand.textPrimary },
   navDetail: { ...homeType.bodySmall, color: brand.textSecondary },
   navAction: {
     minHeight: 44,
@@ -1049,11 +878,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  namePillText: {
-    ...homeType.labelMedium,
-    color: brand.textPrimary,
-    flexShrink: 1,
-  },
+  namePillText: { ...homeType.labelMedium, color: brand.textPrimary, flexShrink: 1 },
   tagText: { ...homeType.labelSmall },
   detailCard: {
     position: 'absolute',
@@ -1065,12 +890,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.primaryBorder,
   },
-  detailName: {
-    fontFamily: font.heading,
-    fontSize: 14,
-    lineHeight: 18,
-    color: brand.textPrimary,
-  },
+  detailName: { fontFamily: font.heading, fontSize: 14, lineHeight: 18, color: brand.textPrimary },
   detailLine: { ...homeType.bodySmall, color: brand.textSecondary },
   destinationWrap: { alignItems: 'center', maxWidth: 180 },
   destinationPin: {
