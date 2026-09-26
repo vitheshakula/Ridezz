@@ -1,0 +1,6 @@
+<resources>
+    <color name="bootsplash_background">#0c141e</color>
+    <!-- Adaptive launcher icon background: same brand.bg as the splash, for a consistent look
+         between the app icon and the first thing the rider sees on launch. -->
+    <color name="ic_launcher_background">#0c141e</color>
+</resources>

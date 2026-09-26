@@ -4,9 +4,10 @@
  * @format
  */
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useState } from 'react';
 import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import BootSplash from 'react-native-bootsplash';
 import { AuthProvider, useAuth } from './src/context/AuthContext';
 import { Dashboard } from './src/screens/Dashboard';
 import { LoginPage } from './src/screens/LoginPage';
@@ -25,11 +26,24 @@ export type ScreenName =
   | 'ProfileScreen';
 
 function MainContent() {
-  const { user } = useAuth();
+  const { user, isLoading } = useAuth();
   const [currentScreen, setCurrentScreen] = useState<ScreenName>('Dashboard');
   const [session, setSession] = useState<RideSession | null>(null);
 
   const handleLeave = useCallback(() => setSession(null), []);
+
+  // The native splash (logo on brand.bg, from MainActivity.kt) is still covering the screen at
+  // this point. Only hide it once the saved sign-in has actually been restored -- otherwise a
+  // returning rider would see a flash of the logged-out Dashboard before JoinScreen takes over.
+  useEffect(() => {
+    if (!isLoading) {
+      BootSplash.hide({ fade: true });
+    }
+  }, [isLoading]);
+
+  if (isLoading) {
+    return null; // native splash is still showing; nothing to render yet
+  }
 
   const navigation = {
     navigate: (screen: ScreenName) => setCurrentScreen(screen),
