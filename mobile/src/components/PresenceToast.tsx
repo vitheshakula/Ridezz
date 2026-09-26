@@ -1,5 +1,4 @@
 import { StyleSheet, Text, View } from 'react-native';
-import { color, radius, spacing, type } from '../theme';
 
 interface PresenceToastProps {
   message: string;
@@ -18,21 +17,19 @@ export default function PresenceToast({ message }: PresenceToastProps) {
 const styles = StyleSheet.create({
   container: {
     position: 'absolute',
-    top: spacing.sm,
-    left: spacing.xxl,
-    right: spacing.xxl,
-    backgroundColor: color.surfaceRaised,
+    top: 0,
+    left: 24,
+    right: 24,
+    backgroundColor: '#161b22',
     borderWidth: 1,
-    borderColor: color.borderStrong,
-    borderRadius: radius.pill,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    borderColor: '#30363d',
+    borderRadius: 10,
+    paddingVertical: 10,
+    paddingHorizontal: 16,
     alignItems: 'center',
-    zIndex: 20,
-    elevation: 10,
   },
   text: {
-    ...type.label,
-    color: color.textPrimary,
+    color: '#c9d1d9',
+    fontSize: 14,
   },
 });

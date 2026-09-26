@@ -1,25 +1,20 @@
 import { Pressable, StyleSheet, Text } from 'react-native';
-import { color, radius, spacing, type } from '../theme';
+import { brand, homeType } from '../homeTheme';
 import { MicIcon, MicOffIcon } from './HomeIcons';
 
 interface MuteButtonProps {
   muted: boolean;
   onPress: () => void;
+  /** 'large' is the hero voice control (80dp). 'small' is a 56dp variant for tighter layouts. */
   size?: 'large' | 'small';
-  /** Lit while LiveKit reports that this rider is actively speaking. */
+  /** Lit while this rider is actually being heard (LiveKit's own speaking detection). */
   talking?: boolean;
 }
 
-export default function MuteButton({
-  muted,
-  onPress,
-  size = 'large',
-  talking = false,
-}: MuteButtonProps) {
+export default function MuteButton({ muted, onPress, size = 'large', talking = false }: MuteButtonProps) {
   const isSmall = size === 'small';
-  const iconColor = muted ? color.textPrimary : color.onAccent;
-  const iconSize = isSmall ? 22 : 30;
-
+  const iconColor = muted ? brand.textPrimary : brand.onPrimary;
+  const iconSize = isSmall ? 24 : 32;
   return (
     <Pressable
       style={({ pressed }) => [
@@ -33,28 +28,8 @@ export default function MuteButton({
       accessibilityRole="button"
       accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
     >
-      {muted ? (
-        <MicOffIcon size={iconSize} color={iconColor} />
-      ) : (
-        <MicIcon size={iconSize} color={iconColor} />
-      )}
-      {isSmall ? null : (
-        <>
-          <Text style={[styles.overline, muted && styles.overlineMuted]}>
-            MICROPHONE
-          </Text>
-          <Text style={[styles.label, muted && styles.labelMuted]}>
-            {muted ? 'Muted' : 'Live'}
-          </Text>
-          <Text style={[styles.helper, muted && styles.helperMuted]}>
-            {muted
-              ? 'Tap to speak'
-              : talking
-              ? 'Your crew can hear you'
-              : 'Tap to mute'}
-          </Text>
-        </>
-      )}
+      {muted ? <MicOffIcon size={iconSize} color={iconColor} /> : <MicIcon size={iconSize} color={iconColor} />}
+      {isSmall ? null : <Text style={[styles.label, { color: iconColor }]}>{muted ? 'UNMUTE' : 'MUTE'}</Text>}
     </Pressable>
   );
 }
@@ -64,32 +39,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     alignSelf: 'center',
-    borderWidth: 1,
+    borderWidth: 3,
   },
-  large: { width: 152, height: 152, borderRadius: 40 },
-  small: { width: 58, height: 58, borderRadius: radius.lg },
-  unmuted: { backgroundColor: color.accent, borderColor: color.accent },
-  muted: { backgroundColor: color.surfaceRaised, borderColor: color.danger },
-  talking: { borderWidth: 4, borderColor: color.success },
-  pressed: { opacity: 0.84, transform: [{ scale: 0.98 }] },
-  overline: {
-    ...type.overline,
-    color: 'rgba(16, 19, 0, 0.62)',
-    marginTop: spacing.xs,
-  },
-  overlineMuted: { color: color.danger },
-  label: {
-    color: color.onAccent,
-    fontSize: 28,
-    lineHeight: 33,
-    fontWeight: '800',
-    letterSpacing: -0.6,
-  },
-  labelMuted: { color: color.textPrimary },
-  helper: {
-    ...type.caption,
-    color: 'rgba(16, 19, 0, 0.72)',
-    marginTop: spacing.xs,
-  },
-  helperMuted: { color: color.textMuted },
+  large: { width: 80, height: 80, borderRadius: 40, gap: 2 },
+  small: { width: 56, height: 56, borderRadius: 28 },
+  unmuted: { backgroundColor: brand.primary, borderColor: 'rgba(18, 207, 228, 0.35)' },
+  muted: { backgroundColor: brand.danger, borderColor: 'rgba(239, 68, 68, 0.4)' },
+  talking: { borderColor: brand.success },
+  pressed: { opacity: 0.85 },
+  label: { ...homeType.labelSmall, letterSpacing: 0.6 },
 });

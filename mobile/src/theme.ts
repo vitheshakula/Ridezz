@@ -7,33 +7,26 @@
  */
 
 export const color = {
-  // Asphalt neutrals. The subtle warm cast keeps the UI from reading like a
-  // generic developer-tool dark theme while preserving excellent contrast.
-  bg: '#090B0C',
-  bgSoft: '#0F1213',
-  surface: '#141819',
-  surfaceRaised: '#1A1F21',
-  surfacePressed: '#22282A',
-  border: '#272D2F',
-  borderStrong: '#363E41',
+  // Backgrounds
+  bg: '#0d0f12',
+  surface: '#17191d',
+  surfaceRaised: '#1e2126',
+  border: '#2a2d33',
+  borderStrong: '#383c44',
 
   // Text
-  textPrimary: '#F6F7F2',
-  textSecondary: '#AAB1AD',
-  textMuted: '#707975',
+  textPrimary: '#f5f6f7',
+  textSecondary: '#9aa0a8',
+  textMuted: '#6b7178',
 
   // Brand
-  accent: '#D7FF3F',
-  accentPressed: '#BCE72D',
-  accentMuted: 'rgba(215, 255, 63, 0.10)',
-  accentBorder: 'rgba(215, 255, 63, 0.30)',
-  onAccent: '#101300',
+  accent: '#22c55e',
+  accentMuted: 'rgba(34, 197, 94, 0.14)',
+  accentBorder: '#166534',
+  onAccent: '#06120a',
 
   // Status
-  success: '#42D77D',
-  successMuted: 'rgba(66, 215, 125, 0.12)',
-  info: '#70A7FF',
-  danger: '#FF665E',
+  danger: '#ef4444',
   dangerMuted: 'rgba(239, 68, 68, 0.12)',
   dangerBorder: '#7f1d1d',
   warning: '#f59e0b',
@@ -49,26 +42,23 @@ export const spacing = {
   xl: 20,
   xxl: 24,
   xxxl: 32,
-  huge: 48,
 } as const;
 
 export const radius = {
   sm: 8,
-  md: 12,
-  lg: 16,
-  xl: 22,
+  md: 10,
+  lg: 12,
+  xl: 16,
   pill: 999,
 } as const;
 
 export const type = {
-  display: { fontSize: 42, lineHeight: 46, fontWeight: '800' as const, letterSpacing: -1.4 },
-  hero: { fontSize: 34, lineHeight: 39, fontWeight: '800' as const, letterSpacing: -0.8 },
-  title: { fontSize: 24, lineHeight: 30, fontWeight: '700' as const, letterSpacing: -0.35 },
-  subtitle: { fontSize: 16, lineHeight: 23, fontWeight: '500' as const },
-  label: { fontSize: 13, lineHeight: 18, fontWeight: '600' as const },
-  overline: { fontSize: 11, lineHeight: 16, fontWeight: '700' as const, letterSpacing: 1.3, textTransform: 'uppercase' as const },
-  body: { fontSize: 15, lineHeight: 22, fontWeight: '500' as const },
-  caption: { fontSize: 12, lineHeight: 17, fontWeight: '500' as const },
+  hero: { fontSize: 34, fontWeight: '900' as const, letterSpacing: 1.5 },
+  title: { fontSize: 22, fontWeight: '800' as const },
+  subtitle: { fontSize: 14, fontWeight: '500' as const },
+  label: { fontSize: 12, fontWeight: '700' as const, letterSpacing: 0.6, textTransform: 'uppercase' as const },
+  body: { fontSize: 15, fontWeight: '500' as const },
+  caption: { fontSize: 12, fontWeight: '500' as const },
 } as const;
 
 /** Common card container: consistent surface, border, radius, padding --
@@ -78,27 +68,21 @@ export const cardStyle = {
   borderRadius: radius.xl,
   borderWidth: 1,
   borderColor: color.border,
-  padding: spacing.xl,
+  padding: spacing.xxl,
 } as const;
 
 export const primaryButtonStyle = {
   backgroundColor: color.accent,
-  borderRadius: radius.md,
-  minHeight: 54,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.xl,
+  borderRadius: radius.lg,
+  paddingVertical: spacing.lg,
   alignItems: 'center' as const,
-  justifyContent: 'center' as const,
 };
 
 export const secondaryButtonStyle = {
   backgroundColor: color.surfaceRaised,
-  borderRadius: radius.md,
-  minHeight: 54,
-  paddingVertical: spacing.md,
-  paddingHorizontal: spacing.xl,
+  borderRadius: radius.lg,
+  paddingVertical: spacing.lg,
   alignItems: 'center' as const,
-  justifyContent: 'center' as const,
   borderWidth: 1,
   borderColor: color.border,
 };
@@ -109,16 +93,7 @@ export const inputStyle = {
   borderWidth: 1,
   borderColor: color.border,
   paddingHorizontal: spacing.lg,
-  minHeight: 52,
-  paddingVertical: spacing.md,
+  paddingVertical: spacing.md + 2,
   color: color.textPrimary,
-  fontSize: 16,
+  fontSize: 15,
 };
-
-export const shadow = {
-  shadowColor: '#000000',
-  shadowOffset: { width: 0, height: 12 },
-  shadowOpacity: 0.24,
-  shadowRadius: 24,
-  elevation: 8,
-} as const;
