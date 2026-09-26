@@ -1,8 +1,7 @@
 import axios from 'axios';
-import { API_URL, MAPTILER_API_KEY } from '@env';
+import { MAPTILER_API_KEY } from '@env';
 import type { RideDestination } from '../components/RiderMap';
-
-const API_BASE_URL = API_URL || 'http://localhost:5000/api';
+import { api } from './AuthService';
 
 export async function geocodeDestination(query: string): Promise<RideDestination | null> {
   const trimmed = query.trim();
@@ -44,8 +43,8 @@ export async function updateRoomDestination(
   destination: RideDestination,
   authToken: string,
 ): Promise<RideDestination> {
-  const response = await axios.patch(
-    `${API_BASE_URL}/rooms/${encodeURIComponent(roomCode)}/destination`,
+  const response = await api.patch(
+    `/rooms/${encodeURIComponent(roomCode)}/destination`,
     {
       destinationName: destination.name,
       destinationLat: destination.latitude,
