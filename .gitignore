@@ -58,3 +58,5 @@ mobile/android/app/src/main/res/raw/
 # All subfolder .env files
 **/.env
 **/.env.*
+# Local diagnostic artifacts
+.tmp/
