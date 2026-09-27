@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Camera, GeoJSONSource, Layer, Map, Marker } from '@maplibre/maplibre-react-native';
+import Geolocation from '@react-native-community/geolocation';
 import { MAPTILER_API_KEY } from '@env';
 import {
   classifyFreshness,
@@ -72,6 +73,11 @@ const LOCAL_RIDER_COLOR = brand.primary;
 const MAP_STATUS_TICK_MS = 5000;
 const CAMERA_ANIMATION_MS = 400;
 const CENTER_ZOOM = 15;
+/** Street-level: "Center Me" shows the rider's own position, not the neighbourhood. */
+const CENTER_ME_ZOOM = 17;
+/** "Fit Group" with one rider (or everyone bunched together): a touch wider than CENTER_ZOOM. */
+const FIT_GROUP_SINGLE_ZOOM = 14;
+const FIT_GROUP_MARGIN = 80;
 const INITIAL_ZOOM = 13;
 const ROUTE_RETRY_MS = 10_000;
 const MIN_ZOOM = 1;
@@ -273,67 +279,78 @@ export default function RiderMap({
     });
   }, [localLocation]);
 
-  const centerOnLocation = useCallback((location: RiderLocation) => {
-    cameraRef.current?.easeTo({
-      center: toLngLat(location),
-      zoom: CENTER_ZOOM,
-      duration: CAMERA_ANIMATION_MS,
-    });
-  }, []);
+  // Bumped by every map-control press, so a slow precise fix from "Center Me" can't yank the
+  // camera away after the rider has since pressed something else.
+  const cameraIntentRef = useRef(0);
 
   const handleFitGroup = useCallback(() => {
-    const usableLocations = validLocations.filter(
-      location => classifyFreshness(location, nowMs) !== 'offline',
-    );
-
-    // The destination (if set) always joins the group view -- "Fit Group" should mean
-    // "everyone plus where we're headed", not just the riders.
-    const points: LngLat[] = usableLocations.map(toLngLat);
-    if (destinationLngLat) {
-      points.push(destinationLngLat);
-    }
+    cameraIntentRef.current += 1;
+    // Every rider still in the ride, however far apart -- and only riders: the destination
+    // is left out so the view frames the group, not the route.
+    const points: LngLat[] = validLocations.filter(location => location.connected).map(toLngLat);
 
     if (points.length === 0) {
       return;
     }
 
-    if (points.length === 1) {
-      cameraRef.current?.easeTo({
-        center: points[0],
-        zoom: CENTER_ZOOM,
-        duration: CAMERA_ANIMATION_MS,
-      });
-      return;
-    }
-
     const bounds = getPointsBounds(points);
-    if (areBoundsTooTight(bounds)) {
+    if (points.length === 1 || areBoundsTooTight(bounds)) {
       cameraRef.current?.easeTo({
         center: getBoundsCenter(bounds),
-        zoom: CENTER_ZOOM,
+        zoom: FIT_GROUP_SINGLE_ZOOM,
         duration: CAMERA_ANIMATION_MS,
       });
       return;
     }
 
+    // Generous padding zooms out a little past the tightest fit, so riders at the edges sit
+    // comfortably inside the view instead of under the HUD, controls or bottom panel.
     cameraRef.current?.fitBounds(bounds, {
-      padding: { top: topInset + 40, right: 80, bottom: bottomInset + 40, left: 40 },
+      padding: {
+        top: topInset + FIT_GROUP_MARGIN,
+        right: FIT_GROUP_MARGIN + 60,
+        bottom: bottomInset + FIT_GROUP_MARGIN,
+        left: FIT_GROUP_MARGIN,
+      },
       duration: CAMERA_ANIMATION_MS,
     });
-  }, [bottomInset, destinationLngLat, nowMs, topInset, validLocations]);
+  }, [bottomInset, topInset, validLocations]);
 
   const handleZoom = useCallback((delta: number) => {
+    cameraIntentRef.current += 1;
     const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current + delta));
     zoomRef.current = next;
     cameraRef.current?.zoomTo(next, { duration: CAMERA_ANIMATION_MS });
   }, []);
 
   const handleCenterMe = useCallback(() => {
-    if (!localLocation) {
-      return;
+    const intent = ++cameraIntentRef.current;
+    // Jump to the last shared fix right away, then refine with a fresh high-accuracy GPS fix:
+    // the shared one is deliberately coarse (battery-balanced, only updated every 15 m).
+    if (localLocation) {
+      cameraRef.current?.easeTo({
+        center: toLngLat(localLocation),
+        zoom: CENTER_ME_ZOOM,
+        duration: CAMERA_ANIMATION_MS,
+      });
     }
-    centerOnLocation(localLocation);
-  }, [centerOnLocation, localLocation]);
+    Geolocation.getCurrentPosition(
+      position => {
+        if (cameraIntentRef.current !== intent) {
+          return;
+        }
+        cameraRef.current?.easeTo({
+          center: [position.coords.longitude, position.coords.latitude],
+          zoom: CENTER_ME_ZOOM,
+          duration: CAMERA_ANIMATION_MS,
+        });
+      },
+      () => {
+        // No precise fix (GPS off, indoors, timed out) -- the jump above is the best we have.
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+    );
+  }, [localLocation]);
 
   return (
     <View style={styles.container}>
@@ -523,7 +540,7 @@ export default function RiderMap({
         <MapControl label="Zoom out" onPress={() => handleZoom(-1)}>
           <MinusIcon size={22} color={brand.textPrimary} />
         </MapControl>
-        <MapControl label="Center Me" onPress={handleCenterMe} disabled={!localLocation}>
+        <MapControl label="Center Me" onPress={handleCenterMe}>
           <LocateIcon size={22} color={brand.primary} />
         </MapControl>
         <MapControl label="Fit Group" onPress={handleFitGroup}>

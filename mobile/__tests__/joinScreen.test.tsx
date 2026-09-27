@@ -3,7 +3,7 @@ import { Text } from 'react-native';
 import ReactTestRenderer, { type ReactTestInstance } from 'react-test-renderer';
 import JoinScreen from '../src/screens/JoinScreen';
 import { api, fetchProfile } from '../src/services/AuthService';
-import { geocodeDestination } from '../src/services/destinationService';
+import { geocodeDestination, searchDestinations } from '../src/services/destinationService';
 
 /**
  * JoinScreen is where two features meet: the destination / host handling, and the signed-in API
@@ -23,11 +23,16 @@ jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
 jest.mock('../src/services/AuthService', () => ({ api: { post: jest.fn() }, fetchProfile: jest.fn() }));
-jest.mock('../src/services/destinationService', () => ({ geocodeDestination: jest.fn() }));
+jest.mock('../src/services/destinationService', () => ({
+  geocodeDestination: jest.fn(),
+  searchDestinations: jest.fn(async () => []),
+  MIN_SUGGESTION_QUERY_LENGTH: 3,
+}));
 
 const post = api.post as jest.Mock;
 const profile = fetchProfile as jest.Mock;
 const geocode = geocodeDestination as jest.Mock;
+const search = searchDestinations as jest.Mock;
 
 const onJoined = jest.fn();
 const navigation = { navigate: jest.fn() };
@@ -90,6 +95,7 @@ const screenText = () => JSON.stringify(renderer.toJSON());
 
 beforeEach(() => {
   jest.clearAllMocks();
+  search.mockResolvedValue([]);
   mockAuth = {
     user: { id: 'u1', name: 'Alex', roomCode: '54321' },
     token: 'app-jwt',
@@ -223,6 +229,34 @@ describe('JoinScreen', () => {
       expect(screenText()).toContain('asdfghjkl');
       expect(post).not.toHaveBeenCalled();
       expect(onJoined).not.toHaveBeenCalled();
+    });
+
+    it('offers suggestions while typing, and a picked one is sent exactly, without geocoding again', async () => {
+      const bhel = { name: 'BHEL Township, Ramachandrapuram mandal, Telangana, India', latitude: 17.4911, longitude: 78.3056 };
+      search.mockResolvedValue([bhel]);
+      post.mockResolvedValue(roomReply({ isHost: true }));
+      const root = render();
+      openCreateTab(root);
+      type(root, 'e.g. Golconda Fort, Hyderabad', 'bhel');
+      // Suggestions wait for a pause in typing.
+      await ReactTestRenderer.act(async () => {
+        await new Promise<void>(resolve => setTimeout(resolve, 600));
+      });
+
+      expect(search).toHaveBeenCalledWith('bhel');
+      const suggestion = root.find(node => node.props.accessibilityLabel === `Use ${bhel.name}`);
+      await ReactTestRenderer.act(async () => {
+        suggestion.props.onPress();
+      });
+      expect(input(root, 'e.g. Golconda Fort, Hyderabad').props.value).toBe(bhel.name);
+
+      await press(root, 'CREATE RIDE');
+      expect(geocode).not.toHaveBeenCalled();
+      expect(post).toHaveBeenCalledWith(
+        '/rooms/create',
+        { riderName: 'Alex', destinationName: bhel.name, destinationLat: bhel.latitude, destinationLng: bhel.longitude },
+        { timeout: 8000 },
+      );
     });
   });
 

@@ -84,6 +84,9 @@ import {
   participantMetadataIsHost,
 } from '../services/destinationUpdates';
 import type { RideDestination } from '../components/RiderMap';
+import { DestinationSuggestions } from '../components/DestinationSuggestions';
+import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
+import { createDestinationBroadcaster } from '../services/destinationBroadcast';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -284,6 +287,33 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
   const [destinationUpdating, setDestinationUpdating] = useState(false);
   const [destinationError, setDestinationError] = useState<string | null>(null);
+  // The suggestion the host tapped, until they edit the text again (then it's re-geocoded).
+  const [pickedDestination, setPickedDestination] = useState<RideDestination | null>(null);
+  const destinationSuggestions = useDestinationSuggestions(
+    destinationQuery,
+    destinationEditorVisible && pickedDestination === null,
+  );
+  // Telling the other riders about a new destination is best-effort: the change is already saved
+  // on the server by then, and a broadcast that fails (LiveKit says "PC manager is closed" while
+  // this phone is reconnecting) is held and re-sent once the room is back. See destinationBroadcast.
+  const destinationBroadcaster = useMemo(
+    () =>
+      createDestinationBroadcaster(destination =>
+        room.localParticipant.publishData(encodeDestinationUpdate(destination), {
+          reliable: true,
+          topic: DESTINATION_TOPIC,
+        }),
+      ),
+    [room],
+  );
+  const [destinationNotice, setDestinationNotice] = useState<string | null>(null);
+  const destinationNoticeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const showDestinationNotice = useCallback((message: string) => {
+    setDestinationNotice(message);
+    clearTimeout(destinationNoticeTimer.current);
+    destinationNoticeTimer.current = setTimeout(() => setDestinationNotice(null), 5000);
+  }, []);
+  useEffect(() => () => clearTimeout(destinationNoticeTimer.current), []);
 
   const [capacityError, setCapacityError] = useState<string | null>(null);
   const hasCheckedCapacityRef = useRef(false);
@@ -337,19 +367,24 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     setDestinationUpdating(true);
     setDestinationError(null);
     try {
-      const geocoded = await geocodeDestination(query);
+      const geocoded =
+        pickedDestination && pickedDestination.name === query
+          ? pickedDestination
+          : await geocodeDestination(query);
       if (!geocoded) {
         setDestinationError('Destination not found. Try a more specific place name.');
         return;
       }
       const confirmed = await updateRoomDestination(session.roomCode, geocoded, authToken);
+      // Saved: from here the change has happened, whatever the broadcast below does.
       setCurrentDestination(confirmed);
-      await room.localParticipant.publishData(encodeDestinationUpdate(confirmed), {
-        reliable: true,
-        topic: DESTINATION_TOPIC,
-      });
       setDestinationQuery(confirmed.name ?? query);
       setDestinationEditorVisible(false);
+      destinationBroadcaster.send(confirmed).then(delivered => {
+        if (!delivered) {
+          showDestinationNotice("Destination saved. Other riders will get it once you're back online.");
+        }
+      });
     } catch (error: any) {
       setDestinationError(
         error?.response?.data?.message || error?.message || 'Could not update the destination.',
@@ -357,7 +392,21 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     } finally {
       setDestinationUpdating(false);
     }
-  }, [authToken, destinationQuery, room, session.roomCode]);
+  }, [
+    authToken,
+    destinationBroadcaster,
+    destinationQuery,
+    pickedDestination,
+    session.roomCode,
+    showDestinationNotice,
+  ]);
+
+  // A destination that could not be sent while the room was reconnecting goes out once it is back.
+  useEffect(() => {
+    if (connectionState === ConnectionState.Connected && destinationBroadcaster.hasPending()) {
+      destinationBroadcaster.retryPending();
+    }
+  }, [connectionState, destinationBroadcaster]);
 
   useEffect(() => {
     if (connectionState === ConnectionState.Connected && !hasLoggedJoinRef.current) {
@@ -813,6 +862,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             session.isHost
               ? () => {
                   setDestinationQuery(currentDestination?.name ?? '');
+                  setPickedDestination(currentDestination);
                   setDestinationError(null);
                   setDestinationEditorVisible(true);
                 }
@@ -823,6 +873,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
       {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
+      {destinationNotice ? <PresenceToast message={destinationNotice} /> : null}
       {bannerAlert ? (
         <HazardAlertBanner
           packet={bannerAlert.packet}
@@ -1067,13 +1118,26 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             <TextInput
               style={styles.destinationInput}
               value={destinationQuery}
-              onChangeText={setDestinationQuery}
+              onChangeText={text => {
+                setDestinationQuery(text);
+                setPickedDestination(null);
+              }}
               placeholder="Search for a place"
               placeholderTextColor={brand.outline}
               editable={!destinationUpdating}
               autoCapitalize="words"
               autoFocus
             />
+            {!destinationUpdating ? (
+              <DestinationSuggestions
+                suggestions={destinationSuggestions}
+                onSelect={picked => {
+                  setPickedDestination(picked);
+                  setDestinationQuery(picked.name ?? '');
+                  setDestinationError(null);
+                }}
+              />
+            ) : null}
             {destinationError ? <Text style={styles.destinationError}>{destinationError}</Text> : null}
             <View style={styles.destinationModalActions}>
               <Pressable

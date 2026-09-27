@@ -29,6 +29,12 @@ const WATCH_OPTIONS = {
   fastestInterval: 3000, // ms
 };
 
+/** How often the latest fix is re-broadcast while the rider isn't moving. distanceFilter means
+ * a stationary phone gets no new fixes, and the lossy data channel neither retries dropped
+ * packets nor replays them to riders who join later -- without this, a rider who stays put is
+ * invisible to anyone who joined after their one broadcast, and ages to "offline" for everyone. */
+const REBROADCAST_INTERVAL_MS = 5000;
+
 let hasConfiguredGeolocation = false;
 function ensureGeolocationConfigured() {
   if (hasConfiguredGeolocation) {
@@ -100,7 +106,7 @@ export function useRiderLocations(
         }),
       );
       room.localParticipant
-        .publishData(encodeLocationPayload(payload), { reliable: false, topic: LOCATION_TOPIC })
+        .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
         .catch(() => {});
     }
   }, [localIdentity, localName, room]);
@@ -108,7 +114,11 @@ export function useRiderLocations(
   useEffect(() => {
     let cancelled = false;
     let watchId: number | null = null;
+    let rebroadcastTimer: ReturnType<typeof setInterval> | null = null;
     let hadErrorSinceLastFix = false;
+    // Read from the room itself: the identity passed in from the screen can stay empty on some
+    // devices (confirmed on the host phone), which silently stopped that rider ever being sent.
+    const currentIdentity = () => room.localParticipant?.identity || identityRef.current;
 
     async function start() {
       if (Platform.OS !== 'android') {
@@ -168,19 +178,20 @@ export function useRiderLocations(
           timestamp: position.timestamp,
         };
         latestFixRef.current = payload;
-        if (!cancelled && identityRef.current) {
+        const identity = currentIdentity();
+        if (!cancelled && identity) {
           setState(prev =>
             upsertRiderLocation(prev, {
-              identity: identityRef.current,
+              identity,
               name: nameRef.current,
               payload: { v: 1, ...payload },
             }),
           );
         }
-        if (identityRef.current) {
+        if (identity) {
           room.localParticipant
             .publishData(encodeLocationPayload(payload), {
-              reliable: false,
+              reliable: true,
               topic: LOCATION_TOPIC,
             })
             .catch(() => {
@@ -229,6 +240,27 @@ export function useRiderLocations(
         },
         WATCH_OPTIONS,
       );
+
+      // Re-send the last fix, stamped "still here as of now". Skipped while the watch is
+      // reporting errors, so a rider whose GPS is actually lost still ages to stale/offline.
+      rebroadcastTimer = setInterval(() => {
+        const fix = latestFixRef.current;
+        const identity = currentIdentity();
+        if (cancelled || !fix || !identity || hadErrorSinceLastFix) {
+          return;
+        }
+        const payload = { ...fix, timestamp: Date.now() };
+        setState(prev =>
+          upsertRiderLocation(prev, {
+            identity,
+            name: nameRef.current,
+            payload: { v: 1, ...payload },
+          }),
+        );
+        room.localParticipant
+          .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
+          .catch(() => {});
+      }, REBROADCAST_INTERVAL_MS);
     }
 
     start();
@@ -237,6 +269,9 @@ export function useRiderLocations(
       cancelled = true;
       if (watchId !== null) {
         Geolocation.clearWatch(watchId);
+      }
+      if (rebroadcastTimer !== null) {
+        clearInterval(rebroadcastTimer);
       }
     };
   }, [room]);

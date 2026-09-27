@@ -1,6 +1,7 @@
 import React, { useCallback, useState, useEffect } from 'react';
 import {
   ActivityIndicator,
+  Keyboard,
   KeyboardAvoidingView,
   PermissionsAndroid,
   Platform,
@@ -25,6 +26,8 @@ import { api } from '../services/AuthService';
 import { geocodeDestination } from '../services/destinationService';
 import { describeAuthError, isUnauthorized } from '../utils/authErrors';
 import { useRoomCode } from '../hooks/useRoomCode';
+import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
+import { DestinationSuggestions } from '../components/DestinationSuggestions';
 import { isRoomCode, ROOM_CODE_LENGTH, sanitizeRoomCodeInput } from '../utils/roomCode';
 
 export interface RideSession {
@@ -94,6 +97,10 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
   const [destination, setDestination] = useState('');
+  // The suggestion the rider tapped, kept until they edit the text again so the ride uses
+  // exactly that place instead of re-geocoding its name.
+  const [pickedDestination, setPickedDestination] = useState<RideDestination | null>(null);
+  const destinationSuggestions = useDestinationSuggestions(destination, pickedDestination === null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [focused, setFocused] = useState<'name' | 'code' | 'destination' | null>(null);
@@ -152,7 +159,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
       if (mode === 'create') {
         const trimmedDestination = destination.trim();
         let destinationFix: RideDestination | null = null;
-        if (trimmedDestination) {
+        if (pickedDestination && pickedDestination.name === trimmedDestination) {
+          destinationFix = pickedDestination;
+        } else if (trimmedDestination) {
           destinationFix = await geocodeDestination(trimmedDestination);
           if (!destinationFix) {
             setError(`Couldn't find "${trimmedDestination}". Try a more specific search.`);
@@ -199,7 +208,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, destination, mode, token, onJoined, logout, navigation]);
+  }, [isLoading, riderName, roomCode, destination, pickedDestination, mode, token, onJoined, logout, navigation]);
 
   const isCreate = mode === 'create';
   const initial = (user?.name || 'R').trim().charAt(0).toUpperCase() || 'R';
@@ -339,7 +348,10 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
                 <TextInput
                   style={styles.inputRowText}
                   value={destination}
-                  onChangeText={setDestination}
+                  onChangeText={text => {
+                    setDestination(text);
+                    setPickedDestination(null);
+                  }}
                   onFocus={() => setFocused('destination')}
                   onBlur={() => setFocused(null)}
                   placeholder="e.g. Golconda Fort, Hyderabad"
@@ -348,6 +360,16 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
                   editable={!isLoading}
                 />
               </View>
+              {!isLoading ? (
+                <DestinationSuggestions
+                  suggestions={destinationSuggestions}
+                  onSelect={picked => {
+                    setPickedDestination(picked);
+                    setDestination(picked.name ?? '');
+                    Keyboard.dismiss();
+                  }}
+                />
+              ) : null}
             </>
           )}
 
