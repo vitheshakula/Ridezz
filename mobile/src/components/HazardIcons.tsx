@@ -77,6 +77,22 @@ const GLYPHS: Record<HazardType, React.ReactNode> = {
       <Path d="M8 12h8" />
     </>
   ),
+  // A vehicle with pause bars above it: parked when it shouldn't be.
+  vehicle_stopped: (
+    <>
+      <Path d="M3 17h18M5 17l1.5-5h11L19 17" />
+      <Circle cx={8} cy={19} r={1.6} />
+      <Circle cx={16} cy={19} r={1.6} />
+      <Path d="M10.5 3.5v5M13.5 3.5v5" />
+    </>
+  ),
+  // A hairpin: the road doubles back on itself.
+  sharp_turn: (
+    <>
+      <Path d="M6 21V10a5 5 0 0 1 10 0v9" />
+      <Path d="M12.5 15.5L16 19l3.5-3.5" />
+    </>
+  ),
 };
 
 export function HazardGlyph({ type, size = 24, color }: HazardGlyphProps) {
@@ -97,4 +113,4 @@ export function HazardGlyph({ type, size = 24, color }: HazardGlyphProps) {
 }
 
 /** Hazards that mean "stop / someone may be hurt" render red; the rest are amber warnings. */
-export const CRITICAL_HAZARDS: ReadonlySet<HazardType> = new Set<HazardType>(['accident', 'stop', 'obstacle']);
+export const CRITICAL_HAZARDS: ReadonlySet<HazardType> = new Set<HazardType>(['accident', 'stop', 'obstacle', 'vehicle_stopped']);

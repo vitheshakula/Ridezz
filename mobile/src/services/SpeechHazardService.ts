@@ -4,7 +4,11 @@ import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
  * words / whole phrases ("stop" does not match "stopping"). */
 export const HAZARD_RULES = [
   { id: 'missed_turn', label: 'Missed turn', phrases: ['missed turn', 'missed the turn', 'wrong way', 'wrong turn', 'wrong exit'] },
-  { id: 'fuel', label: 'Low fuel', phrases: ['fuel', 'low fuel', 'need petrol', 'need gas', 'gas station', 'petrol pump'] },
+  {
+    id: 'fuel',
+    label: 'Low fuel',
+    phrases: ['fuel', 'low fuel', 'petrol low', 'need petrol', 'fuel empty', 'need gas', 'gas station', 'petrol pump'],
+  },
   { id: 'pothole', label: 'Pothole', phrases: ['pothole', 'rough road', 'bad road', 'bump'] },
   { id: 'gravel', label: 'Gravel', phrases: ['gravel', 'sand'] },
   { id: 'roadkill', label: 'Roadkill', phrases: ['roadkill'] },
@@ -12,11 +16,43 @@ export const HAZARD_RULES = [
   { id: 'police', label: 'Police', phrases: ['police', 'cop', 'checkpoint', 'speed trap'] },
   { id: 'accident', label: 'Accident', phrases: ['crash', 'accident', 'rider down', 'fallen'] },
   { id: 'slippery', label: 'Slippery road', phrases: ['oil', 'slippery', 'wet road', 'water logging'] },
-  { id: 'slow', label: 'Slow down', phrases: ['slow', 'slow down'] },
-  { id: 'stop', label: 'Stop', phrases: ['stop', 'pull over', 'wait for me', 'emergency stop'] },
+  {
+    id: 'slow',
+    label: 'Slow down',
+    phrases: ['slow', 'slow down', 'reduce speed', 'drive slow', 'caution', 'brake'],
+  },
+  // "emergency stop" used to raise this generic Stop; it now means a stopped vehicle (below).
+  { id: 'stop', label: 'Stop', phrases: ['stop', 'pull over', 'wait for me'] },
+  {
+    id: 'vehicle_stopped',
+    label: 'Vehicle stopped',
+    phrases: ['vehicle stopped', 'puncture', 'bike stopped', 'breakdown', 'emergency stop', 'stopped'],
+  },
+  { id: 'sharp_turn', label: 'Sharp turn', phrases: ['sharp turn', 'blind curve', 'hairpin bend', 'curve ahead'] },
 ] as const;
 
 export type HazardType = (typeof HAZARD_RULES)[number]['id'];
+
+/**
+ * The four hazards added for group-ride safety, under their named constants. LOW_FUEL and
+ * SLOW_DOWN are the app's existing `fuel` and `slow` hazards -- extended with more trigger phrases
+ * and their own readout, not duplicated: a second type would raise two alerts for one "low fuel",
+ * and renaming the wire id would make older phones drop these packets.
+ */
+export const HAZARD_TYPES = {
+  LOW_FUEL: 'fuel',
+  SLOW_DOWN: 'slow',
+  VEHICLE_STOPPED: 'vehicle_stopped',
+  SHARP_TURN: 'sharp_turn',
+} as const satisfies Record<string, HazardType>;
+
+/** Readouts that replace the default "<name> reported <hazard>." for a hazard, word for word. */
+const CUSTOM_ANNOUNCEMENTS: Partial<Record<HazardType, string>> = {
+  [HAZARD_TYPES.LOW_FUEL]: 'Rider reported low fuel. Fuel stop needed.',
+  [HAZARD_TYPES.SLOW_DOWN]: 'Caution. Slow down ahead.',
+  [HAZARD_TYPES.VEHICLE_STOPPED]: "Alert: A group member's vehicle has stopped.",
+  [HAZARD_TYPES.SHARP_TURN]: 'Warning: Sharp turn ahead.',
+};
 
 export const HAZARD_LABELS = Object.fromEntries(
   HAZARD_RULES.map(rule => [rule.id, rule.label]),
@@ -95,14 +131,29 @@ export function createEchoGuard(tailMs: number = TTS_ECHO_TAIL_MS): EchoGuard {
   };
 }
 
+/** Wording that only this app's own readouts use, beyond the "reported" of the default one. The
+ * custom readouts (CUSTOM_ANNOUNCEMENTS) hold trigger words themselves -- "Caution. Slow down
+ * ahead." is a slow-down trigger -- so a phone hearing one from a neighbour's speaker must
+ * recognise it as an announcement, not a rider. Phrases are long enough that a rider calling out
+ * just "slow down" or "sharp turn" never matches. */
+const ANNOUNCEMENT_PHRASES = [
+  'fuel stop needed',
+  'caution slow down ahead',
+  'vehicle has stopped',
+  'group member',
+  'warning sharp turn',
+];
+
 /**
- * True when recognised speech contains this app's own announcement wording -- every readout is
- * "<name> reported <hazard>", and riders raise hazards with a bare "pothole" / "low fuel", never
- * "reported". Catches announcements heard from ANOTHER phone's speaker too (phones side by side),
- * which the local playback guard can't know about.
+ * True when recognised speech contains this app's own announcement wording -- the default readout
+ * is "<name> reported <hazard>" and the custom ones use the phrases above -- while riders raise
+ * hazards with a bare "pothole" / "low fuel" / "sharp turn", never those. Catches announcements
+ * heard from ANOTHER phone's speaker too (phones side by side), which the local playback guard
+ * can't know about.
  */
 export function isAnnouncementEcho(text: string): boolean {
-  return /\breported\b/.test(text.toLowerCase());
+  const padded = ` ${(text.toLowerCase().match(/[a-z]+/g) ?? []).join(' ')} `;
+  return padded.includes(' reported ') || ANNOUNCEMENT_PHRASES.some(phrase => padded.includes(` ${phrase} `));
 }
 
 /**
@@ -162,17 +213,35 @@ const HAZARD_IDS: ReadonlySet<string> = new Set(HAZARD_RULES.map(rule => rule.id
 /** Hazard types whose phrases appear in `text`, in the order first spoken, without repeats. */
 export function extractHazards(text: string): HazardType[] {
   const padded = ` ${(text.toLowerCase().match(/[a-z]+/g) ?? []).join(' ')} `;
-  const found: { id: HazardType; at: number }[] = [];
 
+  // Every place any phrase occurs, with the span it covers (including its surrounding spaces).
+  const hits: { id: HazardType; start: number; end: number }[] = [];
   for (const rule of HAZARD_RULES) {
-    const positions = rule.phrases
-      .map(phrase => padded.indexOf(` ${phrase} `))
-      .filter(index => index >= 0);
-    if (positions.length > 0) {
-      found.push({ id: rule.id, at: Math.min(...positions) });
+    for (const phrase of rule.phrases) {
+      const needle = ` ${phrase} `;
+      for (let at = padded.indexOf(needle); at >= 0; at = padded.indexOf(needle, at + 1)) {
+        hits.push({ id: rule.id, start: at, end: at + needle.length });
+      }
     }
   }
-  return found.sort((a, b) => a.at - b.at).map(f => f.id);
+
+  // A hit that sits inside a longer hit for a DIFFERENT hazard is just a word of that longer
+  // phrase, not a second report: "emergency stop" is a stopped vehicle, not also a plain "stop".
+  // (A standalone "stop" elsewhere in the same sentence is not inside anything, so it still counts.)
+  const firstAt = new Map<HazardType, number>();
+  for (const hit of hits) {
+    const swallowed = hits.some(
+      other =>
+        other.id !== hit.id &&
+        other.start <= hit.start &&
+        other.end >= hit.end &&
+        other.end - other.start > hit.end - hit.start,
+    );
+    if (!swallowed && (firstAt.get(hit.id) ?? Infinity) > hit.start) {
+      firstAt.set(hit.id, hit.start);
+    }
+  }
+  return [...firstAt].sort((a, b) => a[1] - b[1]).map(([id]) => id);
 }
 
 /** Vosk emits `{"text": "..."}` (final) or `{"partial": "..."}`; returns the text or ''. */
@@ -352,9 +421,10 @@ interface RidezzTtsNative {
 
 const ttsModule: RidezzTtsNative | undefined = NativeModules.RidezzTtsModule;
 
-/** The sentence read aloud for a received hazard, e.g. "Alex reported Pothole." */
+/** The sentence read aloud for a received hazard: "Alex reported Pothole." for most, and the fixed
+ * wording in CUSTOM_ANNOUNCEMENTS for low fuel, slow down, a stopped vehicle and a sharp turn. */
 export function buildHazardAnnouncement(packet: HazardPacket): string {
-  return `${packet.senderName} reported ${HAZARD_LABELS[packet.hazard]}.`;
+  return CUSTOM_ANNOUNCEMENTS[packet.hazard] ?? `${packet.senderName} reported ${HAZARD_LABELS[packet.hazard]}.`;
 }
 
 /**

@@ -4,6 +4,7 @@ import {
   HAZARD_PACKET_MAX_AGE_MS,
   HAZARD_RULES,
   HAZARD_THROTTLE_MS,
+  HAZARD_TYPES,
   TTS_ECHO_TAIL_MS,
   claimHazardWindow,
   createEchoGuard,
@@ -84,8 +85,12 @@ describe('buildHazardAnnouncement', () => {
     expect(buildHazardAnnouncement(packet)).toBe('Alex reported Pothole.');
   });
 
-  it('holds for every hazard type', () => {
+  it('holds for every hazard type that has no wording of its own', () => {
+    const custom = new Set<string>(Object.values(HAZARD_TYPES));
     for (const rule of HAZARD_RULES) {
+      if (custom.has(rule.id)) {
+        continue;
+      }
       const packet = createHazardPacket(rule.id, 'abc', 'Alex', NOW);
       expect(buildHazardAnnouncement(packet)).toBe(`Alex reported ${rule.label}.`);
     }
@@ -591,6 +596,157 @@ describe('startSpeechHazardDetection', () => {
 
     expect(onError).toHaveBeenCalledTimes(1);
     expect(() => stop()).not.toThrow();
+  });
+});
+
+describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn', () => {
+  describe('named constants', () => {
+    it('map onto real hazard types, reusing the existing fuel and slow ones', () => {
+      expect(HAZARD_TYPES).toEqual({
+        LOW_FUEL: 'fuel',
+        SLOW_DOWN: 'slow',
+        VEHICLE_STOPPED: 'vehicle_stopped',
+        SHARP_TURN: 'sharp_turn',
+      });
+      for (const id of Object.values(HAZARD_TYPES)) {
+        expect(HAZARD_RULES.some(rule => rule.id === id)).toBe(true);
+      }
+    });
+
+    it('do not create a second low-fuel or slow-down type', () => {
+      expect(HAZARD_RULES.filter(rule => rule.id === 'fuel' || rule.id === 'slow')).toHaveLength(2);
+      expect(HAZARD_RULES.map(rule => rule.id)).not.toContain('LOW_FUEL');
+    });
+  });
+
+  describe('voice triggers', () => {
+    it.each([
+      ['LOW_FUEL', ['low fuel', 'petrol low', 'need petrol', 'fuel empty', 'fuel'], 'fuel'],
+      ['SLOW_DOWN', ['slow down', 'reduce speed', 'drive slow', 'caution', 'brake'], 'slow'],
+      [
+        'VEHICLE_STOPPED',
+        ['vehicle stopped', 'puncture', 'bike stopped', 'breakdown', 'emergency stop', 'stopped'],
+        'vehicle_stopped',
+      ],
+      ['SHARP_TURN', ['sharp turn', 'blind curve', 'hairpin bend', 'curve ahead'], 'sharp_turn'],
+    ])('%s is raised by every phrase asked for', (_name, phrases, hazard) => {
+      for (const phrase of phrases as string[]) {
+        expect({ phrase, hazards: extractHazards(`careful ${phrase} ahead`) }).toEqual({
+          phrase,
+          hazards: [hazard],
+        });
+        expect({ phrase, hazards: extractHazards(phrase.toUpperCase()) }).toEqual({ phrase, hazards: [hazard] });
+      }
+    });
+
+    it('needs the whole phrase: half of one does not raise it', () => {
+      for (const partial of ['sharp', 'turn', 'curve', 'blind', 'hairpin', 'vehicle', 'reduce', 'puncturing', 'brakes']) {
+        expect({ partial, hazards: extractHazards(partial) }).toEqual({ partial, hazards: [] });
+      }
+    });
+
+    it('treats "emergency stop" as a stopped vehicle only, not also a plain Stop', () => {
+      expect(extractHazards('emergency stop')).toEqual(['vehicle_stopped']);
+    });
+
+    it('still counts a genuine "stop" said elsewhere in the same sentence', () => {
+      expect(extractHazards('emergency stop then everybody stop')).toEqual(['vehicle_stopped', 'stop']);
+    });
+
+    it('keeps plain "stop" and its other phrases as the generic Stop hazard', () => {
+      expect(extractHazards('stop')).toEqual(['stop']);
+      expect(extractHazards('pull over')).toEqual(['stop']);
+      expect(extractHazards('wait for me')).toEqual(['stop']);
+    });
+
+    it('tells "stopped" (a vehicle) from "stop" (a command)', () => {
+      expect(extractHazards('the bike stopped')).toEqual(['vehicle_stopped']);
+      expect(extractHazards('please stop')).toEqual(['stop']);
+    });
+
+    it('reports several new hazards in the order they were spoken', () => {
+      expect(extractHazards('slow down there is a sharp turn ahead')).toEqual(['slow', 'sharp_turn']);
+      expect(extractHazards('puncture and fuel empty')).toEqual(['vehicle_stopped', 'fuel']);
+    });
+
+    it('does not disturb the older hazards', () => {
+      expect(extractHazards('missed turn')).toEqual(['missed_turn']);
+      expect(extractHazards('wrong turn')).toEqual(['missed_turn']);
+      expect(extractHazards('pothole and police')).toEqual(['pothole', 'police']);
+    });
+
+    it('raises exactly its own hazard for every phrase in the whole table', () => {
+      for (const rule of HAZARD_RULES) {
+        for (const phrase of rule.phrases) {
+          expect({ phrase, hazards: extractHazards(phrase) }).toEqual({ phrase, hazards: [rule.id] });
+        }
+      }
+    });
+  });
+
+  describe('spoken alerts', () => {
+    const packetFor = (hazard: HazardPacket['hazard']) => createHazardPacket(hazard, 'abc', 'Alex', NOW);
+
+    it.each([
+      ['fuel', 'Rider reported low fuel. Fuel stop needed.'],
+      ['slow', 'Caution. Slow down ahead.'],
+      ['vehicle_stopped', "Alert: A group member's vehicle has stopped."],
+      ['sharp_turn', 'Warning: Sharp turn ahead.'],
+    ] as const)('%s is announced as: %s', (hazard, wording) => {
+      expect(buildHazardAnnouncement(packetFor(hazard))).toBe(wording);
+    });
+
+    it('does not put the sender name into these fixed announcements', () => {
+      for (const hazard of Object.values(HAZARD_TYPES)) {
+        expect(buildHazardAnnouncement(createHazardPacket(hazard, 'abc', 'Zorro', NOW))).not.toContain('Zorro');
+      }
+    });
+
+    it('leaves every other hazard on the default wording', () => {
+      expect(buildHazardAnnouncement(packetFor('pothole'))).toBe('Alex reported Pothole.');
+      expect(buildHazardAnnouncement(packetFor('police'))).toBe('Alex reported Police.');
+    });
+  });
+
+  describe('echo protection', () => {
+    it('recognises each new announcement as this app talking, so a neighbouring phone does not re-raise it', () => {
+      for (const hazard of Object.values(HAZARD_TYPES)) {
+        const spoken = buildHazardAnnouncement(createHazardPacket(hazard, 'abc', 'Alex', NOW));
+        expect({ hazard, echo: isAnnouncementEcho(spoken) }).toEqual({ hazard, echo: true });
+      }
+    });
+
+    it('does not mistake a rider calling the hazard out for an announcement', () => {
+      for (const said of ['slow down', 'caution', 'sharp turn', 'sharp turn ahead', 'curve ahead', 'puncture', 'low fuel', 'fuel empty']) {
+        expect({ said, echo: isAnnouncementEcho(said) }).toEqual({ said, echo: false });
+      }
+    });
+
+    it('still ignores the announcements when the mic hears them (they contain trigger words)', () => {
+      // Sanity: without the echo check these WOULD raise a hazard.
+      expect(extractHazards('caution slow down ahead')).toEqual(['slow']);
+      expect(isAnnouncementEcho('caution slow down ahead')).toBe(true);
+    });
+  });
+
+  describe('broadcast packet', () => {
+    it.each(['fuel', 'slow', 'vehicle_stopped', 'sharp_turn'] as const)('carries %s across the room and mesh unchanged', hazard => {
+      const packet = createHazardPacket(hazard, 'abc', 'Alex', NOW);
+      expect(parseHazardPacket(serializeHazardPacket(packet), NOW)).toEqual(packet);
+      expect(parseHazardPacket(encodeHazardPacket(packet), NOW)).toEqual(packet);
+    });
+
+    it('still refuses a hazard type nobody knows', () => {
+      const bogus = JSON.stringify({ ...createHazardPacket('fuel', 'abc', 'Alex', NOW), hazard: 'LOW_FUEL' });
+      expect(parseHazardPacket(bogus, NOW)).toBeNull();
+    });
+  });
+
+  describe('labels', () => {
+    it('gives the two new types readable names', () => {
+      expect(HAZARD_LABELS.vehicle_stopped).toBe('Vehicle stopped');
+      expect(HAZARD_LABELS.sharp_turn).toBe('Sharp turn');
+    });
   });
 });
 
