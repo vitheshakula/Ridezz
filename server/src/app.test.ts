@@ -21,6 +21,7 @@ let prismaForTeardown: PrismaClient | undefined;
 let server: Server | undefined;
 let base: string;
 let applicationTablesReady = false;
+let testDatabaseUrl: string;
 
 const TEST_DATABASE_PREFIX = 'ridezz_test';
 
@@ -107,8 +108,20 @@ async function register(overrides: Record<string, unknown> = {}) {
   return { email, password, token: res.body.token as string, user: res.body.user };
 }
 
+/** A syntactically valid code that does not currently identify a hosted room. */
+async function unusedRoomCode(): Promise<string> {
+  for (let code = 10000; code <= 99999; code++) {
+    const value = String(code);
+    if (!(await prisma.room.findUnique({ where: { code: value } }))) {
+      return value;
+    }
+  }
+  throw new Error('No unused room code is available for the test.');
+}
+
 before(async () => {
   const testDatabase = requireTestDatabaseConfig();
+  testDatabaseUrl = testDatabase.url;
   prisma = new PrismaClient({ datasources: { db: { url: testDatabase.url } } });
   prismaForTeardown = prisma;
 
@@ -144,6 +157,7 @@ before(async () => {
 
   const env = loadEnv({
     JWT_SECRET,
+    DATABASE_URL: testDatabase.url,
     GOOGLE_CLIENT_ID,
     LIVEKIT_API_KEY: 'devkey',
     LIVEKIT_API_SECRET: 'livekit-secret-'.padEnd(40, 'y'),
@@ -424,11 +438,17 @@ describe('room routes require sign-in but otherwise behave as before', () => {
     assert.equal((jwt.decode(joined.body.token) as any).video.room, created.body.roomCode);
   });
 
-  it('answers 404 for an unknown room and 400 for a missing code', async () => {
+  it('answers 400 for malformed or missing room codes', async () => {
     const { token } = await register();
-    assert.equal((await post('/api/rooms/join', { roomCode: 'ZZZZZZ' }, token)).status, 404);
+    assert.equal((await post('/api/rooms/join', { roomCode: 'ZZZZZZ' }, token)).status, 400);
     assert.equal((await post('/api/rooms/join', {}, token)).status, 400);
     assert.equal((await post('/api/rooms/join', { roomCode: 123456 }, token)).status, 400);
+  });
+
+  it('answers 404 for a valid code that does not identify a hosted room', async () => {
+    const { token } = await register();
+    const code = await unusedRoomCode();
+    assert.equal((await post('/api/rooms/join', { roomCode: code }, token)).status, 404);
   });
 
   it('reuses the same code, and the same room, every time the same rider hosts', async () => {
@@ -618,7 +638,13 @@ describe('Google sign-in', () => {
   });
 
   it('answers 503 (not a crash) when Google sign-in is not configured', async () => {
-    const env = loadEnv({ JWT_SECRET });
+    const env = loadEnv({
+      JWT_SECRET,
+      DATABASE_URL: testDatabaseUrl,
+      LIVEKIT_API_KEY: 'devkey',
+      LIVEKIT_API_SECRET: 'livekit-secret-'.padEnd(40, 'y'),
+      LIVEKIT_URL: 'wss://livekit.test',
+    });
     const bare = createApp({ prisma, env });
     const s = await new Promise<Server>(resolve => {
       const listener = bare.listen(0, () => resolve(listener));
@@ -649,8 +675,12 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
     // Deliberately messy: mixed case, stray spaces, and a mix of separators.
     const env = loadEnv({
       JWT_SECRET,
+      DATABASE_URL: testDatabaseUrl,
       GOOGLE_CLIENT_ID,
       ALLOWED_EMAILS: `  ${allowedOne.toUpperCase()} ;\n ${allowedTwo},  `,
+      LIVEKIT_API_KEY: 'devkey',
+      LIVEKIT_API_SECRET: 'livekit-secret-'.padEnd(40, 'y'),
+      LIVEKIT_URL: 'wss://livekit.test',
     });
     const app = createApp({ prisma, env, verifyGoogleIdToken: fakeVerifier });
     restrictedServer = await new Promise<Server>(resolve => {
@@ -895,7 +925,12 @@ describe('ride destination, host and LiveKit metadata', () => {
 
     it('answers 404 for a room that does not exist', async () => {
       const { token } = await register();
-      assert.equal((await patch('ZZZZZZ', fort, token)).status, 404);
+      assert.equal((await patch(await unusedRoomCode(), fort, token)).status, 404);
+    });
+
+    it('answers 400 for a malformed room code', async () => {
+      const { token } = await register();
+      assert.equal((await patch('ZZZZZZ', fort, token)).status, 400);
     });
 
     it('rejects an unusable destination with 400 and changes nothing', async () => {

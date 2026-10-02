@@ -1,5 +1,6 @@
 import { Router, type RequestHandler } from 'express';
 import type { PrismaClient, Room } from '@prisma/client';
+import { isRoomCode } from '../auth/roomCode';
 import { NAME_MAX_LENGTH } from '../auth/validation';
 import type { Env } from '../config/env';
 import { parseDestination } from '../rooms/destination';
@@ -76,12 +77,13 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
   router.post('/join', async (req, res) => {
     try {
       const { roomCode } = req.body ?? {};
-      if (typeof roomCode !== 'string' || !roomCode.trim()) {
-        return res.status(400).json({ message: 'Room code is required.' });
+      const code = typeof roomCode === 'string' ? roomCode.trim().toUpperCase() : '';
+      if (!isRoomCode(code)) {
+        return res.status(400).json({ message: 'Invalid room code.' });
       }
 
       const user = req.user!;
-      const result = await findRoomForJoin(prisma, roomCode.trim().toUpperCase(), user.id);
+      const result = await findRoomForJoin(prisma, code, user.id);
       if (!result) {
         return res.status(404).json({ message: 'Ride room not found. Check the 5-digit code.' });
       }
@@ -107,8 +109,12 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
   router.patch('/:roomCode/destination', async (req, res) => {
     try {
       const code = req.params.roomCode?.trim().toUpperCase();
+      if (!isRoomCode(code)) {
+        return res.status(400).json({ message: 'Invalid room code.' });
+      }
+
       const destination = parseDestination(req.body);
-      if (!code || !destination) {
+      if (!destination) {
         return res.status(400).json({ message: 'A valid destination is required.' });
       }
 

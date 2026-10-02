@@ -10,6 +10,11 @@ export function asyncHandler(
   };
 }
 
+/** JSON fallthrough for requests that did not match any API route. */
+export const notFoundHandler: RequestHandler = (_req, res) => {
+  res.status(404).json({ message: 'Not found.' });
+};
+
 /** Last-resort handler: a JSON body like every other error, and no internals leaked to the client. */
 export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
   // Malformed JSON body etc. -- the client's fault.
