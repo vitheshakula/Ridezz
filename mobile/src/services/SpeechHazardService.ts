@@ -1,10 +1,10 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
-  HAZARD_PACKET_MAX_AGE_MS,
   createHazardPacket,
   type HazardPacket,
   type HazardType,
 } from '../protocol/hazardProtocol';
+import { HAZARD_THROTTLE_MS } from '../protocol/hazardPolicy';
 
 export {
   HAZARD_PACKET_MAX_AGE_MS,
@@ -17,6 +17,12 @@ export {
   serializeHazardPacket,
 } from '../protocol/hazardProtocol';
 export type { HazardPacket, HazardType } from '../protocol/hazardProtocol';
+export {
+  HAZARD_THROTTLE_MS,
+  claimHazardWindow,
+  isWithinHazardWindow,
+  rememberHazardOnce,
+} from '../protocol/hazardPolicy';
 
 /** Spoken phrases that raise a hazard alert, grouped by what they mean. Matching is on whole
  * words / whole phrases ("stop" does not match "stopping"). */
@@ -194,6 +200,7 @@ export const HAZARD_LABELS = Object.fromEntries(
 /** LiveKit data-channel topic for hazard packets (reliable: they're rare and must arrive). */
 export const HAZARD_TOPIC = 'ridezz.hazard';
 
+<<<<<<< ours
 /** Same hazard type is only raised once per this window (the same call-out is often heard twice). */
 export const HAZARD_THROTTLE_MS = 4000;
 
@@ -224,6 +231,8 @@ export function claimHazardWindow(
   return true;
 }
 
+=======
+>>>>>>> theirs
 /** How long after an announcement finishes playing the recognizer is still treated as possibly
  * hearing it. Vosk only emits its result for an utterance once it detects the trailing silence,
  * so the text of an announcement can arrive a moment after the audio has stopped. */
@@ -287,38 +296,6 @@ const ANNOUNCEMENT_PHRASES = [
 export function isAnnouncementEcho(text: string): boolean {
   const padded = ` ${(text.toLowerCase().match(/[a-z]+/g) ?? []).join(' ')} `;
   return padded.includes(' reported ') || ANNOUNCEMENT_PHRASES.some(phrase => padded.includes(` ${phrase} `));
-}
-
-/**
- * Records that a specific packet id has now been handled, and reports whether this is the first
- * time. Bounds the memory by age (pruning anything older than HAZARD_PACKET_MAX_AGE_MS) rather
- * than by count.
- *
- * This matters on a mesh that relays: every device forwards every hazard it sees to all its
- * connected peers, so the same packet id keeps bouncing back and forth between directly-connected
- * riders for as long as it stays within its 30s validity window. A fixed-size cache that evicts
- * its oldest entry under that traffic can forget a still-circulating id -- at which point a
- * device that already showed the banner and read it aloud sees the very same packet again and
- * treats it as brand new, repeating both indefinitely for as long as the mesh keeps bouncing it.
- * Pruning by age instead of count can never forget an id while the packet it names is still
- * something any device could legitimately relay or report -- past that age every device's
- * parseHazardPacket already rejects the packet outright, so there's nothing left to dedup.
- */
-export function rememberHazardOnce(
-  remembered: Map<string, number>,
-  id: string,
-  now: number = Date.now(),
-): boolean {
-  for (const [seenId, seenAt] of remembered) {
-    if (now - seenAt > HAZARD_PACKET_MAX_AGE_MS) {
-      remembered.delete(seenId);
-    }
-  }
-  if (remembered.has(id)) {
-    return false;
-  }
-  remembered.set(id, now);
-  return true;
 }
 
 // ---------------------------------------------------------------------------

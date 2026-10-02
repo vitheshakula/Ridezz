@@ -53,18 +53,19 @@ import type { PresenceEvent } from '../utils/riderPresence';
 import {
   HAZARD_LABELS,
   HAZARD_TOPIC,
-  claimHazardWindow,
   createEchoGuard,
   encodeHazardPacket,
-  isWithinHazardWindow,
   parseHazardPacket,
-  rememberHazardOnce,
   speakHazardAudio,
   speakText,
   startSpeechHazardDetection,
   type HazardPacket,
-  type HazardType,
 } from '../services/SpeechHazardService';
+import {
+  createHazardPolicy,
+  type HazardIngress,
+  type HazardPolicy,
+} from '../protocol/hazardPolicy';
 import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
@@ -103,7 +104,6 @@ const HAZARD_DUCK_VOLUME = 0.2;
 const CALL_VOLUME = 1.0;
 
 type Transport = 'cloud' | 'mesh' | 'connecting';
-type HazardSource = 'cloud' | 'mesh';
 
 /** Turns every other rider's mic volume down (or back up) in this room. Used to duck the live
  * call for the exact duration of a spoken hazard announcement -- see speakHazardAudio's promise,
@@ -472,21 +472,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     null,
   );
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
-  // Packet-id memory for the general dedup/relay gate below (rememberHazardOnce prunes this by
-  // age, not count -- see that function for why a fixed-size cache caused hazards to loop).
-  const seenHazardIdsRef = useRef<Map<string, number>>(new Map());
-  // A second, independent id memory dedicated to the TTS call site: guarantees a given packet is
-  // read aloud at most once, regardless of anything the banner/relay logic above does or changes
-  // to in the future.
-  const spokenHazardIdsRef = useRef<Map<string, number>>(new Map());
-  // Two dedup windows with a deliberate ONE-WAY relationship:
-  //  - a hazard this rider just SENT never suppresses an incoming report of the same type -- a
-  //    false local trigger (e.g. overhearing another phone) must not hide a real alert; but
-  //  - a hazard this rider just RECEIVED does suppress a local re-send of the same type -- they
-  //    already know about it, and a re-send is what turns a readout heard by our own mic into an
-  //    echo that bounces back to the original rider.
-  const recentSentHazardsRef = useRef<Map<HazardType, number>>(new Map());
-  const recentReceivedHazardsRef = useRef<Map<HazardType, number>>(new Map());
+  const hazardPolicyRef = useRef<HazardPolicy | null>(null);
+  if (hazardPolicyRef.current === null) {
+    hazardPolicyRef.current = createHazardPolicy(senderIdRef.current);
+  }
+  const hazardPolicy = hazardPolicyRef.current;
   // True while this phone's own speaker is reading an alert (plus a short tail), so the always-on
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
@@ -634,24 +624,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     [room],
   );
 
-  /** True the first time an id is seen. The same packet can arrive repeatedly (mesh
-   * re-discovery/relay), over both transports, or bounce back after being relayed. */
-  const rememberHazardId = useCallback((id: string): boolean => {
-    return rememberHazardOnce(seenHazardIdsRef.current, id);
-  }, []);
-
   const handleIncomingHazard = useCallback(
-    (packet: HazardPacket, source: HazardSource) => {
-      // This rider's own hazard, bounced back by a relay: it already got its silent "sent"
-      // confirmation in broadcastHazard below, and must never be re-shown as a red "received"
-      // alert or read back to the rider who just said it.
-      const isLocalSender = packet.senderId === senderIdRef.current;
-      if (isLocalSender || !rememberHazardId(packet.id)) {
-        return;
-      }
-      // The same real hazard reported again by another rider within a few seconds (they heard
-      // each other, or it came in over both transports) is shown and relayed only once.
-      if (!claimHazardWindow(recentReceivedHazardsRef.current, packet.hazard)) {
+    (packet: HazardPacket, ingress: HazardIngress) => {
+      const decision = hazardPolicy.decideIncoming(packet, ingress, isOnlineRef.current);
+      if (!decision.accepted) {
         return;
       }
       setBannerAlert({ packet, kind: 'received' });
@@ -662,7 +638,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       // of the readout, then restore them; never left ducked even if speech fails, since the
       // promise always settles. The echo guard covers the same span (plus a tail) so the
       // recognizer never mistakes this readout for the rider speaking.
-      if (rememberHazardOnce(spokenHazardIdsRef.current, packet.id)) {
+      if (decision.shouldAnnounce) {
         echoGuardRef.current.begin();
         duckRemoteAudio(room, true);
         speakHazardAudio(packet).finally(() => {
@@ -671,16 +647,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         });
       }
 
-      // Relay so a rider on any side reaches the whole ride: mesh -> room (any online neighbour
-      // pushes an offline rider's hazard into the room), and every hazard onward over the mesh, so
-      // riders spread out along the road pass it bike to bike beyond one radio hop. Duplicates are
-      // dropped by rememberHazardId, so this can't loop.
-      if (source === 'mesh' && isOnlineRef.current) {
+      if (decision.relayLiveKit) {
         publishToCloud(packet).catch(() => {});
       }
-      nearbyMeshService.broadcastHazard(packet).catch(() => {});
+      if (decision.relayNearby) {
+        nearbyMeshService.broadcastHazard(packet).catch(() => {});
+      }
     },
-    [publishToCloud, rememberHazardId, room],
+    [hazardPolicy, publishToCloud, room],
   );
 
   useEffect(() => {
@@ -695,7 +669,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       }
       const packet = parseHazardPacket(payload);
       if (packet) {
-        handleIncomingHazard(packet, 'cloud');
+        handleIncomingHazard(packet, 'livekit');
       }
     }
     room.on(RoomEvent.DataReceived, handleData);
@@ -705,7 +679,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }, [room, handleIncomingHazard]);
 
   useEffect(
-    () => nearbyMeshService.onHazardReceived(packet => handleIncomingHazard(packet, 'mesh')),
+    () => nearbyMeshService.onHazardReceived(packet => handleIncomingHazard(packet, 'nearby')),
     [handleIncomingHazard],
   );
 
@@ -713,17 +687,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   // offline riders nearby. Called for a hazard this rider's own mic just detected -- the sender
   // side of the flow, entirely separate from handleIncomingHazard above.
   const broadcastHazard = (packet: HazardPacket) => {
-    rememberHazardId(packet.id);
-    // This rider was just TOLD about this hazard type: anything their mic picks up for it now is
-    // almost certainly an echo of the readout or of the rider who reported it, and sending it on
-    // is exactly what would bounce it back and start a loop. Drop it. (One-way on purpose -- see
-    // recentSentHazardsRef above.)
-    if (isWithinHazardWindow(recentReceivedHazardsRef.current, packet.hazard)) {
-      return;
-    }
-    // This rider's own mic already reported this hazard type a moment ago -- don't send/show it
-    // again.
-    if (!claimHazardWindow(recentSentHazardsRef.current, packet.hazard)) {
+    const decision = hazardPolicy.decideLocalSend(packet, isOnlineRef.current);
+    if (!decision.accepted) {
       return;
     }
     // Pothole/accident/obstacle also feed the offline mesh-sync relay (meshSyncManager), which is
@@ -747,8 +712,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         },
       );
 
-    const sends = [attempt('mesh', nearbyMeshService.broadcastHazard(packet))];
-    if (isOnlineRef.current) {
+    const sends = decision.sendNearby
+      ? [attempt('mesh', nearbyMeshService.broadcastHazard(packet))]
+      : [];
+    if (decision.sendLiveKit) {
       sends.push(attempt('cloud', publishToCloud(packet)));
     }
     Promise.all(sends).then(() => setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${outcomes.join(', ')}`));
