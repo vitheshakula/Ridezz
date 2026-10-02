@@ -1,6 +1,5 @@
-import bcrypt from 'bcryptjs';
 import { Router, type RequestHandler } from 'express';
-import { Prisma, type PrismaClient, type User } from '@prisma/client';
+import type { PrismaClient, User } from '@prisma/client';
 import {
   emailError,
   isAllowedEmailDomain,
@@ -10,18 +9,11 @@ import {
 } from '../auth/validation';
 import { isEmailAllowed, NOT_ALLOWED_MESSAGE } from '../auth/access';
 import { signAuthToken } from '../auth/tokens';
-import { createUserWithRoomCode, ensureRoomCode, withRoomCode } from '../auth/roomCode';
-import { toAuthUser } from '../auth/user';
 import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
 import { asyncHandler } from '../http';
+import { loginWithPassword, prepareCurrentUser, prepareSessionUser, registerWithPassword } from '../services/authService';
 import { reconcileGoogleAccount } from '../services/googleAuthService';
-
-const BCRYPT_ROUNDS = 10;
-
-/** Compared against when the email is unknown, so a miss costs the same time as a wrong password
- * and the response time can't be used to discover which emails have accounts. */
-const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_ROUNDS);
 
 interface AuthRouterDeps {
   prisma: PrismaClient;
@@ -31,18 +23,14 @@ interface AuthRouterDeps {
   verifyGoogleIdToken?: GoogleVerifier;
 }
 
-function isUniqueViolation(err: unknown): boolean {
-  return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
-}
-
 export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken }: AuthRouterDeps): Router {
   const router = Router();
 
   // Every way of signing in ends here, so this is where a rider from before room codes existed is
   // given theirs: whoever gets a session gets a room code with it.
   const session = async (account: User) => {
-    const user = await withRoomCode(prisma, account);
-    return { token: signAuthToken(user.id, env.jwtSecret), user: toAuthUser(user) };
+    const user = await prepareSessionUser(prisma, account);
+    return { token: signAuthToken(user.id, env.jwtSecret), user };
   };
 
   // ---- Email + password -------------------------------------------------------------------
@@ -65,26 +53,15 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
       }
 
       const taken = { message: 'An account with this email already exists.' };
-      if (await prisma.user.findUnique({ where: { email: cleanEmail } })) {
+      const result = await registerWithPassword(prisma, {
+        riderName: cleanName,
+        email: cleanEmail,
+        password,
+      });
+      if (result.kind === 'duplicate') {
         return res.status(409).json(taken);
       }
-
-      const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
-      try {
-        // Created unverified: the address was typed in, not proven to belong to this person.
-        const user = await createUserWithRoomCode(prisma, {
-          riderName: cleanName,
-          email: cleanEmail,
-          password: passwordHash,
-        });
-        return res.status(201).json(await session(user));
-      } catch (err) {
-        // Two sign-ups for the same address racing past the check above.
-        if (isUniqueViolation(err)) {
-          return res.status(409).json(taken);
-        }
-        throw err;
-      }
+      return res.status(201).json(await session(result.user));
     }),
   );
 
@@ -101,16 +78,14 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
         return res.status(403).json({ message: NOT_ALLOWED_MESSAGE });
       }
 
-      const user = await prisma.user.findUnique({ where: { email: cleanEmail } });
-      const passwordMatches = await bcrypt.compare(password, user?.password ?? DUMMY_HASH);
-
-      if (user && !user.password) {
+      const result = await loginWithPassword(prisma, cleanEmail, password);
+      if (result.kind === 'google_only') {
         return res.status(401).json({ message: 'This account uses Google sign-in. Tap "Continue with Google".' });
       }
-      if (!user || !passwordMatches) {
+      if (result.kind === 'invalid_credentials') {
         return res.status(401).json({ message: 'Invalid credentials.' });
       }
-      return res.status(200).json(await session(user));
+      return res.status(200).json(await session(result.user));
     }),
   );
 
@@ -177,8 +152,7 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
     '/me',
     requireAuth,
     asyncHandler(async (req, res) => {
-      const me = req.user!;
-      return res.json({ user: { ...me, roomCode: me.roomCode ?? (await ensureRoomCode(prisma, me.id)) } });
+      return res.json({ user: await prepareCurrentUser(prisma, req.user!) });
     }),
   );
 
