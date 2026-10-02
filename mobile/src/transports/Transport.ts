@@ -20,13 +20,18 @@ export interface TransportStatus {
   error: string | null;
 }
 
-/** Minimal broadcast transport contract. Payload interpretation belongs to protocol code. */
-export interface Transport<Payload extends string | Uint8Array> {
+/** Minimal raw-payload contract shared by transports with different lifecycle ownership. */
+export interface BroadcastTransport<Payload extends string | Uint8Array> {
   readonly capabilities: Readonly<TransportCapabilities>;
-  start(session: TransportSession): Promise<void>;
-  stop(): Promise<void>;
   broadcast(payload: Payload): Promise<void>;
   onPayload(callback: (payload: Payload) => void): () => void;
+}
+
+/** Broadcast transport whose session lifecycle and mesh state are managed by the caller. */
+export interface Transport<Payload extends string | Uint8Array>
+  extends BroadcastTransport<Payload> {
+  start(session: TransportSession): Promise<void>;
+  stop(): Promise<void>;
   onStatus(callback: (status: TransportStatus) => void): () => void;
   onPeerCountChanged(callback: (peerCount: number) => void): () => void;
 }

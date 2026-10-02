@@ -52,7 +52,6 @@ import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderP
 import type { PresenceEvent } from '../utils/riderPresence';
 import {
   HAZARD_LABELS,
-  HAZARD_TOPIC,
   createEchoGuard,
   speakHazardAudio,
   speakText,
@@ -73,6 +72,7 @@ import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
 import { nearbyTransport } from '../transports/NearbyTransport';
+import { createLiveKitHazardTransport } from '../transports/LiveKitHazardTransport';
 import type { TransportStatus } from '../transports/Transport';
 import { brand, font, homeType } from '../homeTheme';
 import { Logo } from '../components/Logo';
@@ -342,6 +342,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const hasLoggedJoinRef = useRef(false);
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false);
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+  const liveKitHazardTransport = useMemo(() => createLiveKitHazardTransport(room), [room]);
 
   useKeepAwake(keepAwakeEnabled);
 
@@ -626,11 +627,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const publishToCloud = useCallback(
     (packet: HazardPacket) =>
-      room.localParticipant.publishData(encodeHazardPacket(packet), {
-        reliable: true,
-        topic: HAZARD_TOPIC,
-      }),
-    [room],
+      liveKitHazardTransport.broadcast(encodeHazardPacket(packet)),
+    [liveKitHazardTransport],
   );
 
   const handleIncomingHazard = useCallback(
@@ -667,25 +665,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 
   useEffect(() => {
-    function handleData(
-      payload: Uint8Array,
-      _participant?: Participant,
-      _kind?: DataPacket_Kind,
-      topic?: string,
-    ) {
-      if (topic !== HAZARD_TOPIC) {
-        return;
-      }
+    return liveKitHazardTransport.onPayload(payload => {
       const packet = parseHazardPacket(payload);
       if (packet) {
         handleIncomingHazard(packet, 'livekit');
       }
-    }
-    room.on(RoomEvent.DataReceived, handleData);
-    return () => {
-      room.off(RoomEvent.DataReceived, handleData);
-    };
-  }, [room, handleIncomingHazard]);
+    });
+  }, [liveKitHazardTransport, handleIncomingHazard]);
 
   useEffect(() => {
     return nearbyTransport.onPayload(payload => {

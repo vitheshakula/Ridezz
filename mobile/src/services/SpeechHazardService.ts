@@ -197,42 +197,6 @@ export const HAZARD_LABELS = Object.fromEntries(
   HAZARD_RULES.map(rule => [rule.id, rule.label]),
 ) as Record<HazardType, string>;
 
-/** LiveKit data-channel topic for hazard packets (reliable: they're rare and must arrive). */
-export const HAZARD_TOPIC = 'ridezz.hazard';
-
-<<<<<<< ours
-/** Same hazard type is only raised once per this window (the same call-out is often heard twice). */
-export const HAZARD_THROTTLE_MS = 4000;
-
-/** True when a hazard of this type was already recorded in `recent` within HAZARD_THROTTLE_MS.
- * A read-only peek -- see claimHazardWindow for the version that also records. */
-export function isWithinHazardWindow(
-  recent: Map<HazardType, number>,
-  hazard: HazardType,
-  now: number = Date.now(),
-): boolean {
-  const last = recent.get(hazard);
-  return last !== undefined && now - last < HAZARD_THROTTLE_MS;
-}
-
-/** Records that a hazard of this type was just raised or shown, and reports whether it is new.
- * Returns false when the same type already happened within HAZARD_THROTTLE_MS -- by anyone. This
- * stops one real hazard from being reported several times when riders hear each other (phone
- * speakers, phones side by side) or when one rider's alert arrives over both transports. */
-export function claimHazardWindow(
-  recent: Map<HazardType, number>,
-  hazard: HazardType,
-  now: number = Date.now(),
-): boolean {
-  if (isWithinHazardWindow(recent, hazard, now)) {
-    return false;
-  }
-  recent.set(hazard, now);
-  return true;
-}
-
-=======
->>>>>>> theirs
 /** How long after an announcement finishes playing the recognizer is still treated as possibly
  * hearing it. Vosk only emits its result for an utterance once it detects the trailing silence,
  * so the text of an announcement can arrive a moment after the audio has stopped. */
