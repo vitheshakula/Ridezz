@@ -54,21 +54,26 @@ import {
   HAZARD_LABELS,
   HAZARD_TOPIC,
   createEchoGuard,
-  encodeHazardPacket,
-  parseHazardPacket,
   speakHazardAudio,
   speakText,
   startSpeechHazardDetection,
-  type HazardPacket,
 } from '../services/SpeechHazardService';
+import {
+  encodeHazardPacket,
+  parseHazardPacket,
+  serializeHazardPacket,
+  type HazardPacket,
+} from '../protocol/hazardProtocol';
 import {
   createHazardPolicy,
   type HazardIngress,
   type HazardPolicy,
 } from '../protocol/hazardPolicy';
-import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
+import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
+import { nearbyTransport } from '../transports/NearbyTransport';
+import type { TransportStatus } from '../transports/Transport';
 import { brand, font, homeType } from '../homeTheme';
 import { Logo } from '../components/Logo';
 import {
@@ -463,7 +468,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [meshMode, setMeshMode] = useState(false);
   const [meshPermission, setMeshPermission] = useState<boolean | null>(null);
   const [meshError, setMeshError] = useState<string | null>(null);
-  const [meshStatus, setMeshStatus] = useState<MeshStatus>({ active: false, peers: 0, error: null });
+  const [meshStatus, setMeshStatus] = useState<TransportStatus>({
+    active: false,
+    peers: 0,
+    error: null,
+  });
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -555,12 +564,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   // Tracks connected mesh peers independently of meshStatus, for the "Riders Connected Offline"
   // sub-label -- always subscribed (a no-op while the mesh session isn't running). Also feeds
-  // meshSyncManager: NearbyMeshModule exposes no per-peer connect event, so a 0 -> positive jump
-  // here is how it detects "this device just regained mesh connectivity" and announces a
-  // SYNC_REQUEST to flush anything it missed.
+  // meshSyncManager: a 0 -> positive jump means mesh connectivity was regained.
   useEffect(
     () =>
-      nearbyMeshService.onPeerCountChanged(count => {
+      nearbyTransport.onPeerCountChanged(count => {
         setOfflinePeerCount(count);
         meshSyncManager.handlePeerCountChanged(count);
       }),
@@ -582,8 +589,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     let timer: ReturnType<typeof setTimeout> | undefined;
 
     const startMesh = () => {
-      nearbyMeshService
-        .start(session.roomCode, session.riderName)
+      nearbyTransport
+        .start({ roomCode: session.roomCode, riderName: session.riderName })
         .then(() => {
           if (!cancelled) {
             setMeshError(null);
@@ -602,8 +609,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         });
     };
     startMesh();
-    const unsubscribeStatus = nearbyMeshService.onStatus(setMeshStatus);
-    const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet => meshSyncManager.handlePacket(packet));
+    const unsubscribeStatus = nearbyTransport.onStatus(setMeshStatus);
+    const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet =>
+      meshSyncManager.handlePacket(packet),
+    );
 
     return () => {
       cancelled = true;
@@ -611,7 +620,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       unsubscribeStatus();
       unsubscribeMeshPacket();
       meshSyncManager.stop();
-      nearbyMeshService.stop().catch(() => {});
+      nearbyTransport.stop().catch(() => {});
     };
   }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
 
@@ -651,7 +660,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         publishToCloud(packet).catch(() => {});
       }
       if (decision.relayNearby) {
-        nearbyMeshService.broadcastHazard(packet).catch(() => {});
+        nearbyTransport.broadcast(serializeHazardPacket(packet)).catch(() => {});
       }
     },
     [hazardPolicy, publishToCloud, room],
@@ -678,10 +687,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     };
   }, [room, handleIncomingHazard]);
 
-  useEffect(
-    () => nearbyMeshService.onHazardReceived(packet => handleIncomingHazard(packet, 'nearby')),
-    [handleIncomingHazard],
-  );
+  useEffect(() => {
+    return nearbyTransport.onPayload(payload => {
+      const packet = parseHazardPacket(payload);
+      if (packet) {
+        handleIncomingHazard(packet, 'nearby');
+      }
+    });
+  }, [handleIncomingHazard]);
 
   // Send on every channel that is up: the cloud reaches online riders anywhere, the mesh reaches
   // offline riders nearby. Called for a hazard this rider's own mic just detected -- the sender
@@ -713,7 +726,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       );
 
     const sends = decision.sendNearby
-      ? [attempt('mesh', nearbyMeshService.broadcastHazard(packet))]
+      ? [attempt('mesh', nearbyTransport.broadcast(serializeHazardPacket(packet)))]
       : [];
     if (decision.sendLiveKit) {
       sends.push(attempt('cloud', publishToCloud(packet)));

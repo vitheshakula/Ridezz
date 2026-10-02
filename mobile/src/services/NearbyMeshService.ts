@@ -1,9 +1,10 @@
-import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
 import {
   parseHazardPacket,
   serializeHazardPacket,
   type HazardPacket,
-} from './SpeechHazardService';
+} from '../protocol/hazardProtocol';
+import { nearbyTransport } from '../transports/NearbyTransport';
+import type { TransportStatus } from '../transports/Transport';
 import { isMeshPacket, type MeshPacket } from '../types/telemetry';
 
 /**
@@ -11,83 +12,35 @@ import { isMeshPacket, type MeshPacket } from '../types/telemetry';
  * independently of the LiveKit cloud room -- see RideScreen for how the two are bridged.
  */
 
-interface NearbyMeshNative {
-  startMeshSession(roomCode: string, riderName: string): Promise<void>;
-  stopMeshSession(): Promise<void>;
-  broadcastHazard(payloadJson: string): Promise<void>;
-}
-
-const meshModule: NearbyMeshNative | undefined = NativeModules.NearbyMeshModule;
-
-const MESH_UNAVAILABLE = new Error('Nearby mesh is not available on this platform');
-
 /** Live state of the local mesh session, pushed from native. */
-export interface MeshStatus {
-  active: boolean;
-  /** Riders in the same room currently connected over the mesh. */
-  peers: number;
-  error: string | null;
-}
+export type MeshStatus = TransportStatus;
 
-// Keep sends ordered and one at a time so a burst of hazards can't interleave or overtake each other.
-let broadcastChain: Promise<unknown> = Promise.resolve();
-
+/** @deprecated Prefer nearbyTransport and perform protocol serialization/parsing at the caller. */
 export const nearbyMeshService = {
   start(roomCode: string, riderName: string): Promise<void> {
-    return Platform.OS === 'android' && meshModule
-      ? meshModule.startMeshSession(roomCode, riderName)
-      : Promise.reject(MESH_UNAVAILABLE);
+    return nearbyTransport.start({ roomCode, riderName });
   },
   stop(): Promise<void> {
-    return Platform.OS === 'android' && meshModule ? meshModule.stopMeshSession() : Promise.resolve();
+    return nearbyTransport.stop();
   },
   broadcastHazard(packet: HazardPacket): Promise<void> {
-    if (Platform.OS !== 'android' || !meshModule) {
-      return Promise.reject(MESH_UNAVAILABLE);
-    }
-    const module = meshModule;
-    const run = broadcastChain.then(() => module.broadcastHazard(serializeHazardPacket(packet)));
-    broadcastChain = run.catch(() => {});
-    return run;
+    return nearbyTransport.broadcast(serializeHazardPacket(packet));
   },
   /** Subscribes to hazards heard over the mesh; invalid/stale packets are dropped. */
   onHazardReceived(callback: (packet: HazardPacket) => void): () => void {
-    const subscription = DeviceEventEmitter.addListener('onHazardReceived', (raw: unknown) => {
-      const packet = typeof raw === 'string' ? parseHazardPacket(raw) : null;
+    return nearbyTransport.onPayload(raw => {
+      const packet = parseHazardPacket(raw);
       if (packet) {
         callback(packet);
       }
     });
-    return () => subscription.remove();
   },
   onStatus(callback: (status: MeshStatus) => void): () => void {
-    const subscription = DeviceEventEmitter.addListener('onMeshStatus', (raw: unknown) => {
-      try {
-        const parsed = JSON.parse(String(raw)) as Partial<MeshStatus>;
-        callback({
-          active: parsed.active === true,
-          peers: typeof parsed.peers === 'number' ? parsed.peers : 0,
-          error: typeof parsed.error === 'string' ? parsed.error : null,
-        });
-      } catch {
-        // ignore a malformed status push
-      }
-    });
-    return () => subscription.remove();
+    return nearbyTransport.onStatus(callback);
   },
   /** Number of riders of this room currently connected over the mesh; fires on every join/leave. */
   onPeerCountChanged(callback: (peerCount: number) => void): () => void {
-    const subscription = DeviceEventEmitter.addListener('onPeerCountChanged', (raw: unknown) => {
-      try {
-        const parsed = JSON.parse(String(raw)) as { peerCount?: unknown };
-        if (typeof parsed.peerCount === 'number') {
-          callback(parsed.peerCount);
-        }
-      } catch {
-        // ignore a malformed push
-      }
-    });
-    return () => subscription.remove();
+    return nearbyTransport.onPeerCountChanged(callback);
   },
   /**
    * Sends an offline mesh-sync packet (telemetry ping, hazard event, sync request/response) to
@@ -96,13 +49,7 @@ export const nearbyMeshService = {
    * changes what the voice-hazard feature above sends or receives.
    */
   sendMeshPacket(packet: MeshPacket): Promise<void> {
-    if (Platform.OS !== 'android' || !meshModule) {
-      return Promise.reject(MESH_UNAVAILABLE);
-    }
-    const module = meshModule;
-    const run = broadcastChain.then(() => module.broadcastHazard(JSON.stringify(packet)));
-    broadcastChain = run.catch(() => {});
-    return run;
+    return nearbyTransport.broadcast(JSON.stringify(packet));
   },
   /**
    * Subscribes to mesh-sync packets heard over the same link onHazardReceived listens on.
@@ -111,10 +58,7 @@ export const nearbyMeshService = {
    * parseHazardPacket ignores ours.
    */
   onMeshPacket(callback: (packet: MeshPacket) => void): () => void {
-    const subscription = DeviceEventEmitter.addListener('onHazardReceived', (raw: unknown) => {
-      if (typeof raw !== 'string') {
-        return;
-      }
+    return nearbyTransport.onPayload(raw => {
       let parsed: unknown;
       try {
         parsed = JSON.parse(raw);
@@ -125,6 +69,5 @@ export const nearbyMeshService = {
         callback(parsed);
       }
     });
-    return () => subscription.remove();
   },
 };
