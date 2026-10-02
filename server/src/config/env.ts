@@ -14,6 +14,56 @@ export interface Env {
 }
 
 const MIN_JWT_SECRET_LENGTH = 32;
+const DEFAULT_PORT = 5000;
+
+function requireNonBlank(source: NodeJS.ProcessEnv, name: string): string {
+  const value = source[name]?.trim();
+  if (!value) {
+    throw new Error(`${name} is not set.`);
+  }
+  return value;
+}
+
+function validateDatabaseUrl(source: NodeJS.ProcessEnv): void {
+  const databaseUrl = requireNonBlank(source, 'DATABASE_URL');
+
+  try {
+    if (!databaseUrl.startsWith('postgresql://') && !databaseUrl.startsWith('postgres://')) {
+      throw new Error('unsupported protocol');
+    }
+    const parsed = new URL(databaseUrl);
+    if ((parsed.protocol !== 'postgresql:' && parsed.protocol !== 'postgres:') || !parsed.hostname) {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new Error('DATABASE_URL must be a valid PostgreSQL URL using postgresql:// or postgres://.');
+  }
+}
+
+function parsePort(raw: string | undefined): number {
+  const value = raw?.trim();
+  if (!value) {
+    return DEFAULT_PORT;
+  }
+
+  const port = Number(value);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('PORT must be an integer between 1 and 65535.');
+  }
+  return port;
+}
+
+function validateLiveKitUrl(raw: string): string {
+  try {
+    const url = new URL(raw);
+    if ((url.protocol !== 'ws:' && url.protocol !== 'wss:') || !url.hostname) {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new Error('LIVEKIT_URL must be a valid WebSocket URL using ws:// or wss://.');
+  }
+  return raw;
+}
 
 /** "a@gmail.com, B@gmail.com" (commas, semicolons, spaces or newlines) -> a set, or null if empty. */
 export function parseAllowedEmails(raw: string | undefined): ReadonlySet<string> | null {
@@ -41,15 +91,21 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     throw new Error(`JWT_SECRET is too short (${jwtSecret.length} chars); use at least ${MIN_JWT_SECRET_LENGTH}.`);
   }
 
+  validateDatabaseUrl(source);
+
+  const livekitApiKey = requireNonBlank(source, 'LIVEKIT_API_KEY');
+  const livekitApiSecret = requireNonBlank(source, 'LIVEKIT_API_SECRET');
+  const livekitUrl = validateLiveKitUrl(requireNonBlank(source, 'LIVEKIT_URL'));
+
   return {
-    port: Number(source.PORT) || 5000,
+    port: parsePort(source.PORT),
     jwtSecret,
     googleClientId: source.GOOGLE_CLIENT_ID?.trim() || null,
     allowedEmails: parseAllowedEmails(source.ALLOWED_EMAILS),
     livekit: {
-      apiKey: source.LIVEKIT_API_KEY || 'devkey',
-      apiSecret: source.LIVEKIT_API_SECRET || 'secret',
-      url: source.LIVEKIT_URL || 'ws://127.0.0.1:7880',
+      apiKey: livekitApiKey,
+      apiSecret: livekitApiSecret,
+      url: livekitUrl,
     },
   };
 }
