@@ -31,6 +31,9 @@ describe('loadEnv', () => {
     const result = loadEnv(env({
       PORT: '4321',
       GOOGLE_CLIENT_ID: ' my-client-id ',
+      CORS_ORIGINS: ' https://app.example,https://admin.example ',
+      AUTH_RATE_LIMIT_WINDOW_MS: '60000',
+      AUTH_RATE_LIMIT_MAX: '25',
       LIVEKIT_API_KEY: ' k ',
       LIVEKIT_API_SECRET: ' s ',
       LIVEKIT_URL: ' wss://x.example ',
@@ -38,6 +41,8 @@ describe('loadEnv', () => {
     assert.equal(result.port, 4321);
     assert.equal(result.jwtSecret, SECRET);
     assert.equal(result.googleClientId, 'my-client-id');
+    assert.deepEqual([...result.corsOrigins!], ['https://app.example', 'https://admin.example']);
+    assert.deepEqual(result.authRateLimit, { windowMs: 60000, max: 25 });
     assert.deepEqual(result.livekit, { apiKey: 'k', apiSecret: 's', url: 'wss://x.example' });
   });
 
@@ -49,6 +54,35 @@ describe('loadEnv', () => {
   it('keeps the previous default port when PORT is missing or blank', () => {
     assert.equal(loadEnv(env({ PORT: undefined })).port, 5000);
     assert.equal(loadEnv(env({ PORT: '  ' })).port, 5000);
+  });
+
+  it('uses prototype-friendly defaults for CORS and rate limiting', () => {
+    const result = loadEnv(env());
+    assert.equal(result.corsOrigins, null);
+    assert.deepEqual(result.authRateLimit, { windowMs: 900000, max: 100 });
+  });
+});
+
+describe('HTTP security configuration', () => {
+  it('treats blank CORS origins as permissive and parses comma-separated exact origins', () => {
+    assert.equal(loadEnv(env({ CORS_ORIGINS: '  ' })).corsOrigins, null);
+    assert.deepEqual(
+      [...(loadEnv(env({ CORS_ORIGINS: 'https://one.example, https://two.example' })).corsOrigins ?? [])],
+      ['https://one.example', 'https://two.example'],
+    );
+  });
+
+  it('rejects invalid rate-limit configuration', () => {
+    for (const value of ['0', '-1', '1.5', 'NaN']) {
+      assert.throws(
+        () => loadEnv(env({ AUTH_RATE_LIMIT_WINDOW_MS: value })),
+        /AUTH_RATE_LIMIT_WINDOW_MS must be a positive integer/,
+      );
+      assert.throws(
+        () => loadEnv(env({ AUTH_RATE_LIMIT_MAX: value })),
+        /AUTH_RATE_LIMIT_MAX must be a positive integer/,
+      );
+    }
   });
 });
 

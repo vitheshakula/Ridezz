@@ -13,6 +13,8 @@ const TEST_ENV: Env = {
   jwtSecret: 'test-secret'.padEnd(40, 'x'),
   googleClientId: null,
   allowedEmails: null,
+  corsOrigins: null,
+  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100 },
   livekit: {
     apiKey: 'test-key',
     apiSecret: 'test-secret',

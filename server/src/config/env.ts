@@ -10,11 +10,17 @@ export interface Env {
    * not always, for plain sign-in), and this server never sees it.
    */
   allowedEmails: ReadonlySet<string> | null;
+  /** Exact browser origins allowed by CORS, or null for permissive local/prototype behavior. */
+  corsOrigins: ReadonlySet<string> | null;
+  /** Shared limits for abuse-sensitive authentication and room-join endpoints. */
+  authRateLimit: { windowMs: number; max: number };
   livekit: { apiKey: string; apiSecret: string; url: string };
 }
 
 const MIN_JWT_SECRET_LENGTH = 32;
 const DEFAULT_PORT = 5000;
+const DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+const DEFAULT_AUTH_RATE_LIMIT_MAX = 100;
 
 function requireNonBlank(source: NodeJS.ProcessEnv, name: string): string {
   const value = source[name]?.trim();
@@ -53,6 +59,19 @@ function parsePort(raw: string | undefined): number {
   return port;
 }
 
+function parsePositiveInteger(raw: string | undefined, fallback: number, name: string): number {
+  const value = raw?.trim();
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return parsed;
+}
+
 function validateLiveKitUrl(raw: string): string {
   try {
     const url = new URL(raw);
@@ -72,6 +91,15 @@ export function parseAllowedEmails(raw: string | undefined): ReadonlySet<string>
     .map(email => email.trim().toLowerCase())
     .filter(Boolean);
   return emails.length > 0 ? new Set(emails) : null;
+}
+
+/** Comma-separated exact browser origins, or null to keep permissive development behavior. */
+export function parseCorsOrigins(raw: string | undefined): ReadonlySet<string> | null {
+  const origins = (raw ?? '')
+    .split(',')
+    .map(origin => origin.trim())
+    .filter(Boolean);
+  return origins.length > 0 ? new Set(origins) : null;
 }
 
 /**
@@ -102,6 +130,15 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     jwtSecret,
     googleClientId: source.GOOGLE_CLIENT_ID?.trim() || null,
     allowedEmails: parseAllowedEmails(source.ALLOWED_EMAILS),
+    corsOrigins: parseCorsOrigins(source.CORS_ORIGINS),
+    authRateLimit: {
+      windowMs: parsePositiveInteger(
+        source.AUTH_RATE_LIMIT_WINDOW_MS,
+        DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS,
+        'AUTH_RATE_LIMIT_WINDOW_MS',
+      ),
+      max: parsePositiveInteger(source.AUTH_RATE_LIMIT_MAX, DEFAULT_AUTH_RATE_LIMIT_MAX, 'AUTH_RATE_LIMIT_MAX'),
+    },
     livekit: {
       apiKey: livekitApiKey,
       apiSecret: livekitApiSecret,

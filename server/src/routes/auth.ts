@@ -11,7 +11,7 @@ import { isEmailAllowed, NOT_ALLOWED_MESSAGE } from '../auth/access';
 import { signAuthToken } from '../auth/tokens';
 import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
-import { asyncHandler } from '../http';
+import { asyncHandler, logRequestError } from '../http';
 import { loginWithPassword, prepareCurrentUser, prepareSessionUser, registerWithPassword } from '../services/authService';
 import { reconcileGoogleAccount } from '../services/googleAuthService';
 
@@ -117,7 +117,7 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
       try {
         identity = await verifyGoogleIdToken(idToken);
       } catch (err) {
-        console.warn('Google ID token rejected:', err instanceof Error ? err.message : err);
+        logRequestError(req, 'google_token_rejected', err, 'warn');
         return res.status(401).json({ message: 'Google sign-in failed. Please try again.' });
       }
 

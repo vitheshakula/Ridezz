@@ -3,6 +3,7 @@ import type { PrismaClient, Room } from '@prisma/client';
 import { isRoomCode } from '../auth/roomCode';
 import { NAME_MAX_LENGTH } from '../auth/validation';
 import type { Env } from '../config/env';
+import { logRequestError } from '../http';
 import { parseDestination } from '../rooms/destination';
 import { createLiveKitToken } from '../services/livekitService';
 import { createOrReuseHostedRoom, findRoomForJoin, updateRoomDestination } from '../services/roomService';
@@ -68,7 +69,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         ...destinationFields(room),
       });
     } catch (error) {
-      console.error('Create room error:', error);
+      logRequestError(req, 'room_create_error', error);
       return res.status(500).json({ message: 'Failed to create room.' });
     }
   });
@@ -100,7 +101,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         ...destinationFields(room),
       });
     } catch (error) {
-      console.error('Join room error:', error);
+      logRequestError(req, 'room_join_error', error);
       return res.status(500).json({ message: 'Failed to join room.' });
     }
   });
@@ -128,7 +129,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
 
       return res.status(200).json(destinationFields(result.room));
     } catch (error) {
-      console.error('Update destination error:', error);
+      logRequestError(req, 'room_destination_error', error);
       return res.status(500).json({ message: 'Failed to update destination.' });
     }
   });
