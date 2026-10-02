@@ -3,10 +3,8 @@ import { Router, type RequestHandler } from 'express';
 import { Prisma, type PrismaClient, type User } from '@prisma/client';
 import {
   emailError,
-  fallbackRiderName,
   isAllowedEmailDomain,
   nameError,
-  NAME_MAX_LENGTH,
   normalizeEmail,
   passwordError,
 } from '../auth/validation';
@@ -17,6 +15,7 @@ import { toAuthUser } from '../auth/user';
 import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
 import { asyncHandler } from '../http';
+import { reconcileGoogleAccount } from '../services/googleAuthService';
 
 const BCRYPT_ROUNDS = 10;
 
@@ -158,7 +157,7 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
         return res.status(403).json({ message: NOT_ALLOWED_MESSAGE });
       }
 
-      const result = await findOrCreateGoogleUser(prisma, identity, email, mode);
+      const result = await reconcileGoogleAccount(prisma, identity, email, mode);
       if (result.kind === 'not_found') {
         return res.status(404).json({
           message: 'No account found for this Google account. Create an account first.',
@@ -184,69 +183,4 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
   );
 
   return router;
-}
-
-type GoogleMode = 'login' | 'signup';
-
-type GoogleAccountResult =
-  | { kind: 'ok'; user: User }
-  | { kind: 'conflict' }
-  | { kind: 'not_found' };
-
-/**
- * Resolves the account for a Google-verified identity.
- *
- * - **login** only ever finds an account that already exists. Someone who has never registered
- *   gets 'not_found' and NOTHING is created -- signing in must not be a back door to sign-up.
- * - **signup** finds the account, or creates it.
- *
- * An existing email + password account for this address is linked and marked verified in either
- * mode -- but its password is deleted. That account was never proven to belong to the address:
- * whoever registered it may not own the mailbox, and keeping their password would let them keep
- * signing in to the real owner's account after the owner proves themselves with Google.
- */
-async function findOrCreateGoogleUser(
-  prisma: PrismaClient,
-  identity: GoogleIdentity,
-  email: string,
-  mode: GoogleMode,
-): Promise<GoogleAccountResult> {
-  const byGoogleId = await prisma.user.findUnique({ where: { googleId: identity.googleId } });
-  if (byGoogleId) {
-    return { kind: 'ok', user: byGoogleId };
-  }
-
-  const byEmail = await prisma.user.findUnique({ where: { email } });
-  if (byEmail) {
-    if (byEmail.googleId && byEmail.googleId !== identity.googleId) {
-      return { kind: 'conflict' };
-    }
-    const linked = await prisma.user.update({
-      where: { id: byEmail.id },
-      data: { googleId: identity.googleId, emailVerified: true, password: null },
-    });
-    return { kind: 'ok', user: linked };
-  }
-
-  if (mode === 'login') {
-    return { kind: 'not_found' };
-  }
-
-  try {
-    const created = await createUserWithRoomCode(prisma, {
-      riderName: (identity.name?.trim() || fallbackRiderName(email)).slice(0, NAME_MAX_LENGTH),
-      email,
-      googleId: identity.googleId,
-      emailVerified: true,
-      password: null,
-    });
-    return { kind: 'ok', user: created };
-  } catch (err) {
-    // The same person's first two requests raced; the other one created the account.
-    if (isUniqueViolation(err)) {
-      const existing = await prisma.user.findUnique({ where: { googleId: identity.googleId } });
-      return existing ? { kind: 'ok', user: existing } : { kind: 'conflict' };
-    }
-    throw err;
-  }
 }
