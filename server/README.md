@@ -1,17 +1,39 @@
 # Ridezz server
 
-Node + Express + Prisma (SQLite). Handles rider accounts and sign-in, creates ride rooms, and
+Node + Express + Prisma (PostgreSQL). Handles rider accounts and sign-in, creates ride rooms, and
 issues the short-lived LiveKit tokens the mobile app joins them with, so the LiveKit API secret
 never lives on a phone.
 
+The Prisma schema now targets PostgreSQL, but the migrations currently committed under
+`prisma/migrations` were generated for SQLite. That migration history must be repaired separately
+before a fresh PostgreSQL database can be deployed successfully. Do not use `prisma db push` as a
+substitute for repairing and reviewing the migrations.
+
 ```sh
-npm install
-cp .env.example .env      # then fill it in
-npx prisma migrate deploy
+npm ci
+cp .env.example .env      # then replace DATABASE_URL with a PostgreSQL URL and fill in the rest
 npm run dev               # tsx watch
-npm test                  # real routes against a throwaway database
 npm run build && npm start
 ```
+
+## Integration-test database
+
+The route integration tests require a dedicated, isolated PostgreSQL database supplied through
+`TEST_DATABASE_URL`. They never fall back to the application's `DATABASE_URL`.
+
+The database name must begin with `ridezz_test`, for example:
+
+```sh
+TEST_DATABASE_URL=postgresql://user:password@localhost:5432/ridezz_test npm test
+```
+
+Names such as `ridezz_test_local` and `ridezz_test_ci` are also accepted. The test setup verifies
+both the URL and PostgreSQL's reported `current_database()` before deleting any application test
+rows. Never point `TEST_DATABASE_URL` at a development, shared, or production database.
+
+Tests deploy the committed migrations with `npx --no-install prisma migrate deploy`; they do not
+use `db push` or `migrate reset`. PostgreSQL integration tests are therefore expected to remain
+red until the currently SQLite-based migration history is repaired in a separate, reviewed change.
 
 ## Authentication
 

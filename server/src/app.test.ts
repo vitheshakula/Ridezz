@@ -2,9 +2,6 @@ import assert from 'node:assert/strict';
 import { execSync } from 'node:child_process';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
@@ -17,10 +14,55 @@ import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from
 const JWT_SECRET = 'test-secret-'.padEnd(48, 'x');
 const GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
 
+// Tests below can use `prisma` only after the before hook succeeds. The separate optional handle
+// lets teardown disconnect a client created before a later setup step failed.
 let prisma: PrismaClient;
-let server: Server;
+let prismaForTeardown: PrismaClient | undefined;
+let server: Server | undefined;
 let base: string;
-let workDir: string;
+let applicationTablesReady = false;
+
+const TEST_DATABASE_PREFIX = 'ridezz_test';
+
+interface TestDatabaseConfig {
+  url: string;
+  databaseName: string;
+}
+
+function requireTestDatabaseConfig(source: NodeJS.ProcessEnv = process.env): TestDatabaseConfig {
+  const rawUrl = source.TEST_DATABASE_URL?.trim();
+  if (!rawUrl) {
+    throw new Error('TEST_DATABASE_URL is required for server integration tests.');
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    throw new Error('TEST_DATABASE_URL must be a valid PostgreSQL URL.');
+  }
+
+  if (parsed.protocol !== 'postgres:' && parsed.protocol !== 'postgresql:') {
+    throw new Error('TEST_DATABASE_URL must use the postgres: or postgresql: protocol.');
+  }
+
+  let databaseName: string;
+  try {
+    databaseName = decodeURIComponent(parsed.pathname.replace(/^\/+/, ''));
+  } catch {
+    throw new Error('TEST_DATABASE_URL contains an invalid encoded database name.');
+  }
+  if (!databaseName || databaseName.includes('/') || !databaseName.startsWith(TEST_DATABASE_PREFIX)) {
+    throw new Error(`TEST_DATABASE_URL database name must begin with "${TEST_DATABASE_PREFIX}".`);
+  }
+
+  const applicationUrl = source.DATABASE_URL?.trim();
+  if (applicationUrl && rawUrl === applicationUrl) {
+    throw new Error('TEST_DATABASE_URL must not equal DATABASE_URL; use a dedicated isolated test database.');
+  }
+
+  return { url: rawUrl, databaseName };
+}
 
 // Google is the one thing we can't run for real here (no genuine token can be minted), so the
 // verifier is faked: it "verifies" tokens registered in this map and rejects everything else.
@@ -66,12 +108,40 @@ async function register(overrides: Record<string, unknown> = {}) {
 }
 
 before(async () => {
-  workDir = mkdtempSync(join(tmpdir(), 'ridezz-test-'));
-  const dbUrl = `file:${join(workDir, 'test.db').replace(/\\/g, '/')}`;
-  // A real database built from the real migrations, not a hand-rolled fake.
-  execSync('npx prisma migrate deploy', { env: { ...process.env, DATABASE_URL: dbUrl }, stdio: 'pipe' });
+  const testDatabase = requireTestDatabaseConfig();
+  prisma = new PrismaClient({ datasources: { db: { url: testDatabase.url } } });
+  prismaForTeardown = prisma;
 
-  prisma = new PrismaClient({ datasources: { db: { url: dbUrl } } });
+  const [identity] = await prisma.$queryRaw<Array<{ databaseName: string }>>`
+    SELECT current_database() AS "databaseName"
+  `;
+  const connectedDatabaseName = identity?.databaseName;
+  if (!connectedDatabaseName?.startsWith(TEST_DATABASE_PREFIX)) {
+    throw new Error(
+      `Connected PostgreSQL database name must begin with "${TEST_DATABASE_PREFIX}"; received ` +
+        `${JSON.stringify(connectedDatabaseName)}.`,
+    );
+  }
+  if (connectedDatabaseName !== testDatabase.databaseName) {
+    throw new Error(
+      `TEST_DATABASE_URL names database "${testDatabase.databaseName}", but PostgreSQL connected to ` +
+        `"${connectedDatabaseName}".`,
+    );
+  }
+
+  // Build the test database from the committed migration history. `--no-install` guarantees this
+  // uses the repository's pinned Prisma CLI rather than downloading a different version.
+  execSync('npx --no-install prisma migrate deploy', {
+    env: { ...process.env, DATABASE_URL: testDatabase.url },
+    stdio: 'pipe',
+  });
+
+  // The URL and the server-reported identity have both been verified. Delete only application
+  // rows, in foreign-key-safe order; migration metadata and unrelated tables are untouched.
+  await prisma.room.deleteMany();
+  await prisma.user.deleteMany();
+  applicationTablesReady = true;
+
   const env = loadEnv({
     JWT_SECRET,
     GOOGLE_CLIENT_ID,
@@ -87,9 +157,23 @@ before(async () => {
 });
 
 after(async () => {
-  await new Promise(resolve => server.close(resolve));
-  await prisma.$disconnect();
-  rmSync(workDir, { recursive: true, force: true });
+  const runningServer = server;
+  const testPrisma = prismaForTeardown;
+  try {
+    if (runningServer) {
+      await new Promise<void>(resolve => {
+        runningServer.close(() => resolve());
+      });
+    }
+    if (testPrisma && applicationTablesReady) {
+      await testPrisma.room.deleteMany();
+      await testPrisma.user.deleteMany();
+    }
+  } finally {
+    if (testPrisma) {
+      await testPrisma.$disconnect();
+    }
+  }
 });
 
 describe('POST /api/auth/register', () => {
