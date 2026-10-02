@@ -1,4 +1,22 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import {
+  HAZARD_PACKET_MAX_AGE_MS,
+  createHazardPacket,
+  type HazardPacket,
+  type HazardType,
+} from '../protocol/hazardProtocol';
+
+export {
+  HAZARD_PACKET_MAX_AGE_MS,
+  HAZARD_PACKET_MAX_FUTURE_MS,
+  HAZARD_PROTOCOL_VERSION,
+  HAZARD_TYPE_IDS,
+  createHazardPacket,
+  encodeHazardPacket,
+  parseHazardPacket,
+  serializeHazardPacket,
+} from '../protocol/hazardProtocol';
+export type { HazardPacket, HazardType } from '../protocol/hazardProtocol';
 
 /** Spoken phrases that raise a hazard alert, grouped by what they mean. Matching is on whole
  * words / whole phrases ("stop" does not match "stopping"). */
@@ -147,8 +165,6 @@ export const HAZARD_RULES = [
     ],
   },
 ] as const;
-
-export type HazardType = (typeof HAZARD_RULES)[number]['id'];
 
 /**
  * The four hazards added for group-ride safety, under their named constants. LOW_FUEL and
@@ -304,24 +320,6 @@ export function rememberHazardOnce(
   remembered.set(id, now);
   return true;
 }
-
-/** A packet older than this is rejected by parseHazardPacket below as stale, on every device --
- * so nothing needs to remember a packet id for longer than this to dedup it correctly (see
- * rememberHazardOnce). */
-export const HAZARD_PACKET_MAX_AGE_MS = 30_000;
-const HAZARD_MAX_FUTURE_MS = 30_000;
-const MAX_NAME_LENGTH = 24;
-
-export interface HazardPacket {
-  v: 1;
-  id: string;
-  hazard: HazardType;
-  senderId: string;
-  senderName: string;
-  timestamp: number;
-}
-
-const HAZARD_IDS: ReadonlySet<string> = new Set(HAZARD_RULES.map(rule => rule.id));
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -483,73 +481,6 @@ export function parseSpeechText(raw: unknown): string {
   } catch {
     return '';
   }
-}
-
-export function createHazardPacket(
-  hazard: HazardType,
-  senderId: string,
-  senderName: string,
-  now: number = Date.now(),
-): HazardPacket {
-  return {
-    v: 1,
-    id: `${senderId}-${now}-${hazard}`,
-    hazard,
-    senderId,
-    // Kept short: packets travel over cellular data and short-range radio links.
-    senderName: senderName.slice(0, MAX_NAME_LENGTH),
-    timestamp: now,
-  };
-}
-
-export function serializeHazardPacket(packet: HazardPacket): string {
-  return JSON.stringify(packet);
-}
-
-export function encodeHazardPacket(packet: HazardPacket): Uint8Array<ArrayBuffer> {
-  return new TextEncoder().encode(serializeHazardPacket(packet));
-}
-
-/** Decodes + validates a packet from either transport. Returns null (never throws) for anything
- * malformed, unknown, or stale -- callers silently drop it. */
-export function parseHazardPacket(
-  input: string | Uint8Array,
-  now: number = Date.now(),
-): HazardPacket | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(typeof input === 'string' ? input : new TextDecoder().decode(input));
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null) {
-    return null;
-  }
-  const p = parsed as Record<string, unknown>;
-
-  if (
-    p.v !== 1 ||
-    typeof p.hazard !== 'string' ||
-    !HAZARD_IDS.has(p.hazard) ||
-    typeof p.id !== 'string' ||
-    typeof p.senderId !== 'string' ||
-    typeof p.senderName !== 'string' ||
-    typeof p.timestamp !== 'number' ||
-    !Number.isFinite(p.timestamp)
-  ) {
-    return null;
-  }
-  if (now - p.timestamp > HAZARD_PACKET_MAX_AGE_MS || p.timestamp - now > HAZARD_MAX_FUTURE_MS) {
-    return null;
-  }
-  return {
-    v: 1,
-    id: p.id.slice(0, 96),
-    hazard: p.hazard as HazardType,
-    senderId: p.senderId.slice(0, 32),
-    senderName: p.senderName.slice(0, MAX_NAME_LENGTH),
-    timestamp: p.timestamp,
-  };
 }
 
 // ---------------------------------------------------------------------------
