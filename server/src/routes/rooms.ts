@@ -1,10 +1,10 @@
 import { Router, type RequestHandler } from 'express';
 import type { PrismaClient, Room } from '@prisma/client';
-import { AccessToken } from 'livekit-server-sdk';
 import { ensureRoomCode } from '../auth/roomCode';
 import { NAME_MAX_LENGTH } from '../auth/validation';
 import type { Env } from '../config/env';
 import { parseDestination } from '../rooms/destination';
+import { createLiveKitToken } from '../services/livekitService';
 
 interface RoomsRouterDeps {
   prisma: PrismaClient;
@@ -32,30 +32,6 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
 
   // Every room route needs a signed-in rider: it hands out a LiveKit token that can publish audio.
   router.use(requireAuth);
-
-  /** `identity` is the rider's account id plus a per-join suffix, so two riders with the same
-   * display name never collide; `metadata` lets every client see who the host is. */
-  async function createLiveKitToken(
-    roomCode: string,
-    riderName: string,
-    userId: string,
-    isHost: boolean,
-  ) {
-    const at = new AccessToken(env.livekit.apiKey, env.livekit.apiSecret, {
-      identity: `${userId}_${Date.now()}`,
-      name: riderName,
-      metadata: JSON.stringify({ userId, isHost }),
-      ttl: '6h',
-    });
-    at.addGrant({
-      roomJoin: true,
-      room: roomCode,
-      canPublish: true,
-      canPublishData: true,
-      canSubscribe: true,
-    });
-    return at.toJwt();
-  }
 
   // Starts a ride hosted by the signed-in rider, optionally with a destination, and returns a token
   // to join it. A missing or out-of-range destination just means "no destination".
@@ -95,7 +71,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         roomCode: room.code,
         roomId: room.id,
         isHost: true,
-        token: await createLiveKitToken(room.code, riderName, user.id, true),
+        token: await createLiveKitToken(env.livekit, room.code, riderName, user.id, true),
         serverUrl: env.livekit.url,
         ...destinationFields(room),
       });
@@ -126,7 +102,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         roomCode: room.code,
         roomId: room.id,
         isHost,
-        token: await createLiveKitToken(room.code, riderName, user.id, isHost),
+        token: await createLiveKitToken(env.livekit, room.code, riderName, user.id, isHost),
         serverUrl: env.livekit.url,
         ...destinationFields(room),
       });
