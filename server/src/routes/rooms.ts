@@ -1,10 +1,10 @@
 import { Router, type RequestHandler } from 'express';
 import type { PrismaClient, Room } from '@prisma/client';
-import { ensureRoomCode } from '../auth/roomCode';
 import { NAME_MAX_LENGTH } from '../auth/validation';
 import type { Env } from '../config/env';
 import { parseDestination } from '../rooms/destination';
 import { createLiveKitToken } from '../services/livekitService';
+import { createOrReuseHostedRoom, findRoomForJoin, updateRoomDestination } from '../services/roomService';
 
 interface RoomsRouterDeps {
   prisma: PrismaClient;
@@ -45,27 +45,18 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
       const riderName = displayName(req.body?.riderName, user.name);
       const destination = parseDestination(req.body);
 
-      // Accounts from before room codes existed get theirs the first time they host.
-      const code = user.roomCode ?? (await ensureRoomCode(prisma, user.id));
-
-      const existing = await prisma.room.findUnique({ where: { code } });
-      if (existing && existing.hostId !== user.id) {
+      const result = await createOrReuseHostedRoom(prisma, {
+        userId: user.id,
+        roomCode: user.roomCode,
+        riderName,
+        destination,
+      });
+      if (result.kind === 'ownership_conflict') {
         // Room codes only ever come from riders' own codes, so this shouldn't happen -- but hosting
         // another rider's room must be impossible, not merely unlikely.
         return res.status(409).json({ message: 'That room code is already in use.' });
       }
-
-      const fields = {
-        name: `${riderName}'s Ride`,
-        destinationName: destination?.name ?? null,
-        destinationLat: destination?.lat ?? null,
-        destinationLng: destination?.lng ?? null,
-      };
-      const room = await prisma.room.upsert({
-        where: { code },
-        create: { code, hostId: user.id, ...fields },
-        update: fields,
-      });
+      const { room } = result;
 
       return res.status(201).json({
         roomCode: room.code,
@@ -89,13 +80,13 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         return res.status(400).json({ message: 'Room code is required.' });
       }
 
-      const room = await prisma.room.findUnique({ where: { code: roomCode.trim().toUpperCase() } });
-      if (!room) {
+      const user = req.user!;
+      const result = await findRoomForJoin(prisma, roomCode.trim().toUpperCase(), user.id);
+      if (!result) {
         return res.status(404).json({ message: 'Ride room not found. Check the 5-digit code.' });
       }
 
-      const user = req.user!;
-      const isHost = room.hostId === user.id;
+      const { room, isHost } = result;
       const riderName = displayName(req.body?.riderName, user.name);
 
       return res.status(200).json({
@@ -121,23 +112,15 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         return res.status(400).json({ message: 'A valid destination is required.' });
       }
 
-      const room = await prisma.room.findUnique({ where: { code } });
-      if (!room) {
+      const result = await updateRoomDestination(prisma, code, req.user!.id, destination);
+      if (result.kind === 'not_found') {
         return res.status(404).json({ message: 'Ride room not found.' });
       }
-      if (room.hostId !== req.user!.id) {
+      if (result.kind === 'forbidden') {
         return res.status(403).json({ message: 'Only the ride creator can change the destination.' });
       }
 
-      const updated = await prisma.room.update({
-        where: { code },
-        data: {
-          destinationName: destination.name,
-          destinationLat: destination.lat,
-          destinationLng: destination.lng,
-        },
-      });
-      return res.status(200).json(destinationFields(updated));
+      return res.status(200).json(destinationFields(result.room));
     } catch (error) {
       console.error('Update destination error:', error);
       return res.status(500).json({ message: 'Failed to update destination.' });
