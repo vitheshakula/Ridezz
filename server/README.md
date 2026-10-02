@@ -4,10 +4,9 @@ Node + Express + Prisma (PostgreSQL). Handles rider accounts and sign-in, create
 issues the short-lived LiveKit tokens the mobile app joins them with, so the LiveKit API secret
 never lives on a phone.
 
-The Prisma schema now targets PostgreSQL, but the migrations currently committed under
-`prisma/migrations` were generated for SQLite. That migration history must be repaired separately
-before a fresh PostgreSQL database can be deployed successfully. Do not use `prisma db push` as a
-substitute for repairing and reviewing the migrations.
+The active Prisma migration history targets PostgreSQL. The original SQLite migrations are
+preserved unchanged under `prisma/sqlite-migrations-archive` for provenance only; Prisma does not
+deploy that archive. Do not use `prisma db push` as a substitute for reviewed migrations.
 
 ```sh
 npm ci
@@ -15,6 +14,26 @@ cp .env.example .env      # then replace DATABASE_URL with a PostgreSQL URL and 
 npm run dev               # tsx watch
 npm run build && npm start
 ```
+
+## PostgreSQL migration history
+
+`prisma/migrations/20261002_postgresql_baseline` is the initial PostgreSQL migration generated
+from the current Prisma schema. For a new, empty PostgreSQL database, deploy the committed history:
+
+```sh
+npx --no-install prisma migrate deploy
+```
+
+Do not execute the baseline SQL against an existing database that already contains these tables.
+Before adopting this history for such a database, take a recoverable backup or branch and verify
+that its schema is equivalent to the baseline. Only then mark the baseline as already applied:
+
+```sh
+npx --no-install prisma migrate resolve --applied 20261002_postgresql_baseline
+```
+
+That resolve step is a deployment operation and has not been performed by this repository change.
+It must be run separately against the intended database after review.
 
 ## Integration-test database
 
@@ -32,8 +51,7 @@ both the URL and PostgreSQL's reported `current_database()` before deleting any 
 rows. Never point `TEST_DATABASE_URL` at a development, shared, or production database.
 
 Tests deploy the committed migrations with `npx --no-install prisma migrate deploy`; they do not
-use `db push` or `migrate reset`. PostgreSQL integration tests are therefore expected to remain
-red until the currently SQLite-based migration history is repaired in a separate, reviewed change.
+use `db push` or `migrate reset`.
 
 ## Authentication
 
