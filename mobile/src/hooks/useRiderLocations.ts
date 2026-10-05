@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import {
+  ConnectionState,
   RoomEvent,
   type DataPacket_Kind,
   type Participant,
@@ -19,11 +20,14 @@ import {
 } from '../utils/riderLocation';
 import { logDiagnosticEvent } from '../services/diagnosticsLog';
 
-/** Motorcycle-appropriate balance between freshness and battery/data: not a
- * maximum-precision GPS lock, roughly one fix every 3-5s, and only published
- * when the rider has actually moved a meaningful distance. */
+/** Motorcycle-appropriate balance between freshness and battery/data: roughly one fix every
+ * 3-5s, and only published when the rider has actually moved a meaningful distance.
+ * enableHighAccuracy requests the GPS chip instead of network/cell-tower positioning -- the
+ * latter is what produced ~19m of apparent drift between two phones sitting side by side in
+ * testing. This costs more battery than the previous network-based fix; distanceFilter/interval
+ * are left as they were since publish frequency (not single-fix accuracy) is what those control. */
 const WATCH_OPTIONS = {
-  enableHighAccuracy: false,
+  enableHighAccuracy: true,
   distanceFilter: 15, // meters
   interval: 4000, // ms
   fastestInterval: 3000, // ms
@@ -265,8 +269,34 @@ export function useRiderLocations(
 
     start();
 
+    // Re-publish this rider's last-known fix the moment the room is reachable again, instead of
+    // waiting up to REBROADCAST_INTERVAL_MS for the timer -- covers both LiveKit's own transient
+    // reconnect and this app's own full reconnect-after-Disconnected retry (RideScreen), since
+    // both end in the same ConnectionStateChanged -> Connected transition. Without this, a rider
+    // who comes back online can sit at their stale pre-outage position (shown "stale"/"offline")
+    // for up to 5 seconds even though their phone has had a connection the whole time.
+    const handleConnectionStateChanged = (newState: ConnectionState) => {
+      if (newState !== ConnectionState.Connected) {
+        return;
+      }
+      const fix = latestFixRef.current;
+      const identity = currentIdentity();
+      if (cancelled || !fix || !identity) {
+        return;
+      }
+      const payload = { ...fix, timestamp: Date.now() };
+      setState(prev =>
+        upsertRiderLocation(prev, { identity, name: nameRef.current, payload: { v: 1, ...payload } }),
+      );
+      room.localParticipant
+        .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
+        .catch(() => {});
+    };
+    room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
+
     return () => {
       cancelled = true;
+      room.off(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
       if (watchId !== null) {
         Geolocation.clearWatch(watchId);
       }

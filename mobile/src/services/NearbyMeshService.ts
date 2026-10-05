@@ -4,6 +4,7 @@ import {
   serializeHazardPacket,
   type HazardPacket,
 } from './SpeechHazardService';
+import { isMeshPacket, type MeshPacket } from '../types/telemetry';
 
 /**
  * Offline rider-to-rider transport (NearbyMeshModule / Google Nearby Connections). Runs
@@ -84,6 +85,44 @@ export const nearbyMeshService = {
         }
       } catch {
         // ignore a malformed push
+      }
+    });
+    return () => subscription.remove();
+  },
+  /**
+   * Sends an offline mesh-sync packet (telemetry ping, hazard event, sync request/response) to
+   * every connected peer, over the exact same native call broadcastHazard above uses -- the
+   * native side only ever forwards an opaque JSON string, so this is purely additive and never
+   * changes what the voice-hazard feature above sends or receives.
+   */
+  sendMeshPacket(packet: MeshPacket): Promise<void> {
+    if (Platform.OS !== 'android' || !meshModule) {
+      return Promise.reject(MESH_UNAVAILABLE);
+    }
+    const module = meshModule;
+    const run = broadcastChain.then(() => module.broadcastHazard(JSON.stringify(packet)));
+    broadcastChain = run.catch(() => {});
+    return run;
+  },
+  /**
+   * Subscribes to mesh-sync packets heard over the same link onHazardReceived listens on.
+   * Anything that isn't one of the four mesh-sync packet types -- in particular, a voice-hazard
+   * packet, which has no `type` field -- is ignored here, the same way onHazardReceived's own
+   * parseHazardPacket ignores ours.
+   */
+  onMeshPacket(callback: (packet: MeshPacket) => void): () => void {
+    const subscription = DeviceEventEmitter.addListener('onHazardReceived', (raw: unknown) => {
+      if (typeof raw !== 'string') {
+        return;
+      }
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (isMeshPacket(parsed)) {
+        callback(parsed);
       }
     });
     return () => subscription.remove();

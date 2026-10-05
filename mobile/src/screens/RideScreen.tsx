@@ -37,7 +37,8 @@ import type { RideSession } from './JoinScreen';
 import MuteButton from '../components/MuteButton';
 import RiderRow from '../components/RiderRow';
 import PresenceToast from '../components/PresenceToast';
-import RiderMap from '../components/RiderMap';
+import RiderMap, { MAPTILER_STYLE_URL } from '../components/RiderMap';
+import OfflineRiderMap from '../components/OfflineRiderMap';
 import DiagnosticsModal from '../components/DiagnosticsModal';
 import HazardAlertBanner, { type HazardBannerKind } from '../components/HazardAlertBanner';
 import { startIntercomService, stopIntercomService } from '../services/intercomService';
@@ -64,6 +65,8 @@ import {
   type HazardType,
 } from '../services/SpeechHazardService';
 import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
+import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
+import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
 import { brand, font, homeType } from '../homeTheme';
 import { Logo } from '../components/Logo';
 import {
@@ -283,6 +286,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [currentDestination, setCurrentDestination] = useState<RideDestination | null>(
     session.destination ?? null,
   );
+  // The real road-route RiderMap last fetched (OSRM), so OfflineRiderMap can keep showing an
+  // actual route line -- not just a destination pin -- after the app falls back to mesh-only.
+  // Stable identity (deps: []) so RiderMap's own effect that calls this doesn't re-fire on every
+  // RideScreen render.
+  const [cachedRouteGeometry, setCachedRouteGeometry] = useState<GeoJSON.LineString | null>(null);
+  const handleRouteGeometryChange = useCallback((geometry: GeoJSON.LineString | null) => {
+    setCachedRouteGeometry(geometry);
+  }, []);
   const [destinationEditorVisible, setDestinationEditorVisible] = useState(false);
   const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
   const [destinationUpdating, setDestinationUpdating] = useState(false);
@@ -474,6 +485,29 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
 
+  // --- Offline mesh-sync: 3-min telemetry pings + hazard relay + reconnect flush, layered on the
+  // same Nearby Connections session as the voice-hazard mesh above (see meshSyncManager.ts). ---
+  const selfLocationRef = useRef<GeoPoint | null>(null);
+  const onMeshHazardRef = useRef<(hazard: HazardEventPacket) => void>(() => {});
+  const [offlineRiders, setOfflineRiders] = useState<RiderNode[]>([]);
+  const meshSyncManagerRef = useRef<MeshSyncManager | null>(null);
+  if (!meshSyncManagerRef.current) {
+    meshSyncManagerRef.current = createMeshSyncManager({
+      selfRiderId: senderIdRef.current,
+      selfRiderName: session.riderName,
+      send: packet => {
+        nearbyMeshService.sendMeshPacket(packet).catch(() => {});
+      },
+      getLocation: () => selfLocationRef.current,
+      onRidersChanged: setOfflineRiders,
+      onHazardReceived: hazard => onMeshHazardRef.current(hazard),
+    });
+  }
+  const meshSyncManager = meshSyncManagerRef.current;
+  onMeshHazardRef.current = hazard => {
+    logDiagnosticEvent('mesh_hazard_received', `${hazard.hazardType} relayed from ${hazard.riderName}`);
+  };
+
   const transport: Transport = isOnline ? 'cloud' : meshMode ? 'mesh' : 'connecting';
 
   // Enter mesh mode only after a sustained outage; leave it the moment the room is back.
@@ -524,8 +558,18 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }, []);
 
   // Tracks connected mesh peers independently of meshStatus, for the "Riders Connected Offline"
-  // sub-label -- always subscribed (a no-op while the mesh session isn't running).
-  useEffect(() => nearbyMeshService.onPeerCountChanged(setOfflinePeerCount), []);
+  // sub-label -- always subscribed (a no-op while the mesh session isn't running). Also feeds
+  // meshSyncManager: NearbyMeshModule exposes no per-peer connect event, so a 0 -> positive jump
+  // here is how it detects "this device just regained mesh connectivity" and announces a
+  // SYNC_REQUEST to flush anything it missed.
+  useEffect(
+    () =>
+      nearbyMeshService.onPeerCountChanged(count => {
+        setOfflinePeerCount(count);
+        meshSyncManager.handlePeerCountChanged(count);
+      }),
+    [meshSyncManager],
+  );
 
   // The mesh runs for the whole ride, not only while offline: an online rider has to hear a hazard
   // from an offline neighbour (over Nearby Connections) to relay it into the room. Costs some
@@ -547,6 +591,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         .then(() => {
           if (!cancelled) {
             setMeshError(null);
+            meshSyncManager.start();
           }
         })
         .catch((e: { code?: string; message?: string }) => {
@@ -562,14 +607,17 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     };
     startMesh();
     const unsubscribeStatus = nearbyMeshService.onStatus(setMeshStatus);
+    const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet => meshSyncManager.handlePacket(packet));
 
     return () => {
       cancelled = true;
       clearTimeout(timer);
       unsubscribeStatus();
+      unsubscribeMeshPacket();
+      meshSyncManager.stop();
       nearbyMeshService.stop().catch(() => {});
     };
-  }, [meshPermission, session.roomCode, session.riderName]);
+  }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
 
   const publishToCloud = useCallback(
     (packet: HazardPacket) =>
@@ -672,6 +720,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     if (!claimHazardWindow(recentSentHazardsRef.current, packet.hazard)) {
       return;
     }
+    // Pothole/accident/obstacle also feed the offline mesh-sync relay (meshSyncManager), which is
+    // a separate system from the cloud/mesh send below: it carries ttl + visitedNodes so the
+    // report keeps hopping bike-to-bike beyond this rider's own radio range, and it's what feeds
+    // OfflineRiderMap. Reuses the exact same throttle gate above, so a voice echo can't double-fire
+    // it either. Skipped without a GPS fix -- there's no sensible location to raise it at.
+    if (isMeshHazardKind(packet.hazard) && selfLocationRef.current) {
+      meshSyncManager.raiseHazard(packet.hazard, selfLocationRef.current);
+    }
     // Silent, visual-only confirmation -- no TTS. The rider already knows what they just said.
     setBannerAlert({ packet, kind: 'sent' });
     const outcomes: string[] = [];
@@ -740,6 +796,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     localParticipant.identity,
     session.riderName,
   );
+
+  // Keeps meshSyncManager's 3-minute telemetry ping fed with this device's latest GPS fix,
+  // reusing the same location source the online rider map already has -- no second GPS watch.
+  useEffect(() => {
+    const local = locations.find(l => l.participantIdentity === localParticipant.identity);
+    selfLocationRef.current = local ? { latitude: local.latitude, longitude: local.longitude } : null;
+  }, [locations, localParticipant.identity]);
 
   const mapStatusMessage = useMemo(() => {
     if (locationPermissionGranted === null) {
@@ -850,25 +913,51 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   return (
     <View style={styles.container}>
       <View style={StyleSheet.absoluteFill}>
-        <RiderMap
-          locations={locations}
-          localIdentity={localParticipant.identity}
-          statusMessage={mapStatusMessage}
-          destination={currentDestination}
-          topInset={hudBottom}
-          bottomInset={panelHeight}
-          speakingIdentities={speakingIdentities}
-          onChangeDestination={
-            session.isHost
-              ? () => {
-                  setDestinationQuery(currentDestination?.name ?? '');
-                  setPickedDestination(currentDestination);
-                  setDestinationError(null);
-                  setDestinationEditorVisible(true);
-                }
-              : undefined
-          }
-        />
+        {transport === 'mesh' ? (
+          // No cloud room means no LiveKit data channel, so RiderMap's `locations` never carries
+          // anyone but this device -- meshSyncManager's TELEMETRY_PING relay is what still knows
+          // where other riders are while offline, so the map switches to that source instead.
+          <OfflineRiderMap
+            riders={offlineRiders}
+            mapStyleUrl={MAPTILER_STYLE_URL}
+            initialCenter={
+              localLocation
+                ? { latitude: localLocation.latitude, longitude: localLocation.longitude }
+                : undefined
+            }
+            topInset={hudBottom}
+            bottomInset={panelHeight}
+            selfRiderId={senderIdRef.current}
+            selfLocation={
+              localLocation
+                ? { latitude: localLocation.latitude, longitude: localLocation.longitude }
+                : null
+            }
+            destination={currentDestination}
+            routeGeometry={cachedRouteGeometry}
+          />
+        ) : (
+          <RiderMap
+            locations={locations}
+            localIdentity={localParticipant.identity}
+            statusMessage={mapStatusMessage}
+            destination={currentDestination}
+            topInset={hudBottom}
+            bottomInset={panelHeight}
+            speakingIdentities={speakingIdentities}
+            onRouteGeometryChange={handleRouteGeometryChange}
+            onChangeDestination={
+              session.isHost
+                ? () => {
+                    setDestinationQuery(currentDestination?.name ?? '');
+                    setPickedDestination(currentDestination);
+                    setDestinationError(null);
+                    setDestinationEditorVisible(true);
+                  }
+                : undefined
+            }
+          />
+        )}
       </View>
 
       {/* Visual presence notifications */}

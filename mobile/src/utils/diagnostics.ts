@@ -9,7 +9,8 @@ export type DiagnosticEventType =
   | 'location_paused'
   | 'location_resumed'
   | 'location_fix_received'
-  | 'location_error';
+  | 'location_error'
+  | 'mesh_hazard_received';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

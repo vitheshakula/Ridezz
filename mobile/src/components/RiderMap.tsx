@@ -36,6 +36,11 @@ interface RiderMapProps {
   speakingIdentities?: string[];
   /** Host-only: opens the existing "Change destination" editor. */
   onChangeDestination?: () => void;
+  /** Fires whenever the real road-route geometry (OSRM) changes -- null while none is loaded
+   * (no destination, or still on the straight-line fallback). Lets the parent cache the last
+   * known route so OfflineRiderMap can keep showing it after the app falls back to mesh-only,
+   * instead of just a destination pin with no path. */
+  onRouteGeometryChange?: (geometry: GeoJSON.LineString | null) => void;
 }
 
 /** Deterministic per-rider marker palette, distinct from the local rider's blue
@@ -58,7 +63,9 @@ const RIDER_COLOR_PALETTE: string[] = [
 /** Stable hash of a participant identity -> a palette index, so a given rider
  * keeps the same color for the whole ride (and across re-renders) without any
  * server-assigned color state. */
-function colorForRider(identity: string): string {
+// Exported so OfflineRiderMap can use the exact same palette/hash -- a rider keeps the same
+// marker colour whether the group is seeing them over the cloud map or the offline one.
+export function colorForRider(identity: string): string {
   let hash = 0;
   for (let i = 0; i < identity.length; i++) {
     hash = (hash * 31 + identity.charCodeAt(i)) >>> 0;
@@ -85,7 +92,9 @@ const MAX_ZOOM = 20;
 // Dark variant so the map reads as part of the app's black UI instead of a bright
 // rectangle dropped into it -- confirmed this style exists on the same MapTiler
 // account/key as the light one (streets-v4-dark, verified via a direct request).
-const MAPTILER_STYLE_URL = `https://api.maptiler.com/maps/streets-v4-dark/style.json?key=${encodeURIComponent(
+// Exported so OfflineRiderMap can be pointed at the exact same style -- OfflineManager's cached
+// pack is keyed by style URL, so the offline map must request this one verbatim to get the hit.
+export const MAPTILER_STYLE_URL = `https://api.maptiler.com/maps/streets-v4-dark/style.json?key=${encodeURIComponent(
   MAPTILER_API_KEY || '',
 )}`;
 
@@ -136,6 +145,7 @@ export default function RiderMap({
   bottomInset = 0,
   speakingIdentities,
   onChangeDestination,
+  onRouteGeometryChange,
 }: RiderMapProps) {
   const cameraRef = useRef<ElementRef<typeof Camera>>(null);
   const zoomRef = useRef(INITIAL_ZOOM);
@@ -191,6 +201,10 @@ export default function RiderMap({
   const [routeRetry, setRouteRetry] = useState(0);
   const lastSuccessfulRouteRef = useRef<{ from: LngLat; destination: LngLat } | null>(null);
   const REROUTE_THRESHOLD_METERS = 300;
+
+  useEffect(() => {
+    onRouteGeometryChange?.(roadRoute ? { type: 'LineString', coordinates: roadRoute.coordinates } : null);
+  }, [roadRoute, onRouteGeometryChange]);
 
   useEffect(() => {
     if (!localLocation || !destinationLngLat) {
@@ -451,7 +465,7 @@ export default function RiderMap({
               key={markerKey}
               id={markerKey}
               lngLat={toLngLat(location)}
-              anchor="center"
+              anchor="bottom"
               onPress={() => setSelectedKey(current => (current === markerKey ? null : markerKey))}
             >
               <RiderMarker
@@ -655,8 +669,16 @@ function RiderMarker({
   const tagColor = offline ? brand.outline : brand.warning;
   const firstName = displayName.split(' ')[0];
 
+  // The label (namePill/detailCard) is a normal in-flow sibling stacked above markerBox, not an
+  // absolutely-positioned overlay inside it -- a label floating outside its parent's own bounds
+  // inside a native marker-annotation host view is what caused both the earlier "y..." truncation
+  // and, once numberOfLines was removed to stop that, letters wrapping one-per-line instead.
+  // Normal flow layout has no such edge case. markerBox itself (the avatar and everything
+  // positioned relative to it -- aura, pulse, heading arrow, talk badge) is untouched below; only
+  // the Marker's anchor changes from "center" to "bottom" to compensate for the stack now being
+  // taller than just the avatar (see the anchor="bottom" change at this component's call site).
   return (
-    <View style={[styles.markerBox, offline && styles.markerOffline]}>
+    <View style={styles.markerStack}>
       {selected ? (
         <View style={styles.detailCard}>
           <Text style={styles.detailName} numberOfLines={1}>
@@ -682,7 +704,8 @@ function RiderMarker({
         </View>
       ) : (
         <View style={styles.namePill}>
-          <Text style={styles.namePillText} numberOfLines={1}>
+          {/* No numberOfLines here deliberately -- see the comment above this return. */}
+          <Text style={styles.namePillText}>
             {isLocal ? 'You' : firstName}
             {distance !== null ? `  ${formatDistance(distance)}` : ''}
           </Text>
@@ -690,28 +713,30 @@ function RiderMarker({
         </View>
       )}
 
-      {isLocal ? <View style={styles.localAura} /> : null}
-      {talking && !offline ? <PulseRing color={brand.success} /> : null}
-      {showHeading ? (
-        <View
-          style={[
-            styles.headingArrow,
-            { borderBottomColor: color, transform: [{ rotate: `${location.heading}deg` }] },
-          ]}
-        />
-      ) : null}
-      <View style={[styles.avatar, { borderColor: ring }, selected && styles.avatarSelected]}>
-        {isLocal ? (
-          <Logo size={22} />
-        ) : (
-          <Text style={[styles.avatarInitial, { color }]}>{initial}</Text>
-        )}
-      </View>
-      {talking && !offline ? (
-        <View style={styles.talkBadge}>
-          <MicIcon size={10} color={brand.darkest} />
+      <View style={[styles.markerBox, offline && styles.markerOffline]}>
+        {isLocal ? <View style={styles.localAura} /> : null}
+        {talking && !offline ? <PulseRing color={brand.success} /> : null}
+        {showHeading ? (
+          <View
+            style={[
+              styles.headingArrow,
+              { borderBottomColor: color, transform: [{ rotate: `${location.heading}deg` }] },
+            ]}
+          />
+        ) : null}
+        <View style={[styles.avatar, { borderColor: ring }, selected && styles.avatarSelected]}>
+          {isLocal ? (
+            <Logo size={22} />
+          ) : (
+            <Text style={[styles.avatarInitial, { color }]}>{initial}</Text>
+          )}
         </View>
-      ) : null}
+        {talking && !offline ? (
+          <View style={styles.talkBadge}>
+            <MicIcon size={10} color={brand.darkest} />
+          </View>
+        ) : null}
+      </View>
     </View>
   );
 }
@@ -820,6 +845,11 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.primaryBorder,
   },
+  // Plain column flow, sized to its content (the label plus markerBox below it) -- deliberately
+  // not position:'absolute' anywhere inside it; see the comment in RiderMarker's return.
+  markerStack: {
+    alignItems: 'center',
+  },
   markerBox: {
     width: MARKER_SIZE,
     height: MARKER_SIZE,
@@ -882,26 +912,27 @@ const styles = StyleSheet.create({
     borderRightColor: 'transparent',
   },
   namePill: {
-    position: 'absolute',
-    bottom: MARKER_SIZE - 2,
     flexDirection: 'row',
     alignItems: 'center',
     gap: 6,
-    maxWidth: 170,
+    minWidth: 44,
+    maxWidth: 200,
     paddingHorizontal: 8,
     paddingVertical: 3,
+    marginBottom: 6,
     borderRadius: 999,
     backgroundColor: 'rgba(7, 15, 24, 0.92)',
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  namePillText: { ...homeType.labelMedium, color: brand.textPrimary, flexShrink: 1 },
+  // flexShrink: 0 -- never let the name itself be squeezed by the "OFFLINE"/"FAR"/"STALE" tag
+  // sharing this row; the pill grows to fit both (up to maxWidth above) instead.
+  namePillText: { ...homeType.labelMedium, color: brand.textPrimary, flexShrink: 0 },
   tagText: { ...homeType.labelSmall },
   detailCard: {
-    position: 'absolute',
-    bottom: MARKER_SIZE - 2,
     minWidth: 150,
     padding: 10,
+    marginBottom: 6,
     borderRadius: 14,
     backgroundColor: brand.card,
     borderWidth: 1,
