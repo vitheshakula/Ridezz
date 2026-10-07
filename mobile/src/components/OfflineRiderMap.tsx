@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, type ElementRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { Camera, GeoJSONSource, Layer, Map, Marker } from '@maplibre/maplibre-react-native';
 import { colorForRider, type RideDestination } from './RiderMap';
@@ -6,6 +6,7 @@ import { FitIcon, FlagIcon, LocateIcon, MinusIcon, PlusIcon } from './HomeIcons'
 import { Logo } from './Logo';
 import { haversineDistanceMeters } from '../utils/geoMath';
 import { formatDistance } from '../utils/riderLocation';
+import { OffRouteTracker, type OffRouteState } from '../utils/routeDeviation';
 import { brand, font, homeType } from '../homeTheme';
 import type { GeoPoint, RiderNode } from '../types/telemetry';
 
@@ -42,8 +43,14 @@ export interface OfflineRiderMapProps {
   /** A cached road-route geometry (e.g. RiderMap's last successful OSRM fetch) to keep showing
    * while offline -- this component never fetches a route itself, since there's no connectivity to
    * assume. Falls back to a straight ("as the crow flies") line from selfLocation to destination
-   * when omitted. */
+   * when omitted. Off-route detection (below) only runs against a real route here, never the
+   * straight-line fallback -- a rider is trivially "off" a pure point-to-point line at all times,
+   * so checking against it would do nothing but false-positive. */
   routeGeometry?: GeoJSON.LineString | null;
+  /** Fires once per on-route/off-route transition (not on every fix) -- the parent decides what to
+   * do with it (RideScreen speaks an alert). This component only detects and reports; it has no
+   * TTS/audio access of its own, consistent with it only ever rendering what it's given. */
+  onOffRouteChange?: (isOffRoute: boolean) => void;
 }
 
 const DEFAULT_ZOOM = 13;
@@ -100,9 +107,15 @@ export default function OfflineRiderMap({
   selfLocation,
   destination,
   routeGeometry,
+  onOffRouteChange,
 }: OfflineRiderMapProps) {
   const cameraRef = useRef<ElementRef<typeof Camera>>(null);
   const zoomRef = useRef(initialZoom);
+  // Follows this device's live position as selfLocation updates -- the initial placement is
+  // handled declaratively by Camera's initialViewState below, so this only re-centers on fixes
+  // after that. Any manual map gesture switches it off (same behaviour as RiderMap's own
+  // auto-follow); "Center Me" is the only thing that switches it back on.
+  const autoFollowRef = useRef(true);
 
   const shown = useMemo(
     () => (selfRiderId === undefined ? riders : riders.filter(r => r.riderId !== selfRiderId)),
@@ -131,13 +144,58 @@ export default function OfflineRiderMap({
     };
   }, [routeGeometry, selfLocation, destinationLngLat]);
 
+  useEffect(() => {
+    if (selfLocation && autoFollowRef.current) {
+      cameraRef.current?.easeTo({ center: toLngLat(selfLocation), duration: CAMERA_ANIMATION_MS });
+    }
+  }, [selfLocation]);
+
+  // Off-route detection: debounced (OffRouteTracker) so one stray GPS fix can't trigger a false
+  // "off route" alert, and reset whenever the destination itself changes so a genuinely new route
+  // starts its own debounce window instead of inheriting the old route's streak.
+  const offRouteTrackerRef = useRef(new OffRouteTracker());
+  const [offRouteState, setOffRouteState] = useState<OffRouteState | null>(null);
+  useEffect(() => {
+    offRouteTrackerRef.current.reset();
+    setOffRouteState(null);
+  }, [destination?.latitude, destination?.longitude]);
+
+  useEffect(() => {
+    if (!selfLocation || !routeGeometry) {
+      return;
+    }
+    const routePoints: GeoPoint[] = routeGeometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude }));
+    const state = offRouteTrackerRef.current.update(selfLocation, routePoints);
+    setOffRouteState(state);
+    if (state.justChanged) {
+      onOffRouteChange?.(state.isOffRoute);
+    }
+  }, [selfLocation, routeGeometry, onOffRouteChange]);
+
+  // A dashed guide from the rider's current position back to the nearest point on the cached
+  // route -- the "snap-to-nearest-corridor" rejoin guidance: there's no offline routing engine
+  // packaged in this app to calculate a genuinely new path, so this points at getting back onto
+  // the one already cached rather than pretending to replace it.
+  const rejoinGuidanceFeature = useMemo((): GeoJSON.Feature<GeoJSON.LineString> | null => {
+    if (!offRouteState?.isOffRoute || !offRouteState.nearestPoint || !selfLocation) {
+      return null;
+    }
+    return {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: [toLngLat(selfLocation), toLngLat(offRouteState.nearestPoint)] },
+    };
+  }, [offRouteState, selfLocation]);
+
   const handleZoom = useCallback((delta: number) => {
+    autoFollowRef.current = false;
     const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current + delta));
     zoomRef.current = next;
     cameraRef.current?.zoomTo(next, { duration: CAMERA_ANIMATION_MS });
   }, []);
 
   const handleCenterMe = useCallback(() => {
+    autoFollowRef.current = true;
     if (!selfLocation) {
       return;
     }
@@ -145,6 +203,7 @@ export default function OfflineRiderMap({
   }, [selfLocation]);
 
   const handleGroupMe = useCallback(() => {
+    autoFollowRef.current = false;
     const points: LngLat[] = [...(selfLocation ? [selfLocation] : []), ...shown].map(toLngLat);
     if (points.length === 0) {
       return;
@@ -170,6 +229,13 @@ export default function OfflineRiderMap({
       <Map
         style={styles.map}
         mapStyle={mapStyleUrl}
+        onRegionWillChange={event => {
+          // Switch auto-follow off the instant a drag/pinch/rotate starts -- not onRegionDidChange,
+          // which only fires once the gesture has already finished moving the camera around.
+          if (event.nativeEvent.userInteraction) {
+            autoFollowRef.current = false;
+          }
+        }}
         onRegionDidChange={event => {
           zoomRef.current = event.nativeEvent.zoom;
         }}
@@ -197,6 +263,17 @@ export default function OfflineRiderMap({
                   ? { 'line-color': brand.primary, 'line-width': 4 }
                   : { 'line-color': brand.outline, 'line-width': 3, 'line-dasharray': [2, 2] }
               }
+            />
+          </GeoJSONSource>
+        ) : null}
+
+        {rejoinGuidanceFeature ? (
+          <GeoJSONSource id="offlineRejoinGuidance" data={rejoinGuidanceFeature}>
+            <Layer
+              id="offlineRejoinGuidanceLine"
+              type="line"
+              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
+              paint={{ 'line-color': brand.warning, 'line-width': 3, 'line-dasharray': [1, 1] }}
             />
           </GeoJSONSource>
         ) : null}

@@ -449,3 +449,12 @@ export function speakHazardAudio(packet: HazardPacket): Promise<void> {
   }
   return ttsModule.speak(buildHazardAnnouncement(packet)).catch(() => {});
 }
+
+/** Reads arbitrary text aloud through the same engine as speakHazardAudio -- for alerts that
+ * aren't a hazard report (e.g. "You are off route"). Same never-rejects contract. */
+export function speakText(text: string): Promise<void> {
+  if (Platform.OS !== 'android' || !ttsModule) {
+    return Promise.resolve();
+  }
+  return ttsModule.speak(text).catch(() => {});
+}

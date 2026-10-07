@@ -1,5 +1,7 @@
+import { useState } from 'react';
 import { FlatList, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { useDiagnosticsLog } from '../hooks/useDiagnosticsLog';
 import type { DiagnosticEvent } from '../utils/diagnostics';
 import { color, radius, spacing, type } from '../theme';
@@ -13,6 +15,13 @@ function formatTime(timestamp: number): string {
   const d = new Date(timestamp);
   const pad = (n: number) => String(n).padStart(2, '0');
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+/** Plain-text rendering of the whole log, oldest first (so a pasted copy reads chronologically,
+ * unlike the on-screen newest-first list) -- for pasting into a bug report from a device with no
+ * adb attached. */
+function formatLogForCopy(events: DiagnosticEvent[]): string {
+  return events.map(e => `${new Date(e.timestamp).toISOString()}  ${e.type}  ${e.message}`).join('\n');
 }
 
 function renderItem({ item }: { item: DiagnosticEvent }) {
@@ -30,15 +39,29 @@ export default function DiagnosticsModal({ visible, onClose }: DiagnosticsModalP
   const events = useDiagnosticsLog();
   const reversed = [...events].reverse();
   const insets = useSafeAreaInsets();
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    Clipboard.setString(formatLogForCopy(events));
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom }]}>
         <View style={styles.header}>
           <Text style={styles.title}>Diagnostics</Text>
-          <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
-            <Text style={styles.closeButtonText}>Close</Text>
-          </Pressable>
+          <View style={styles.headerActions}>
+            {events.length > 0 ? (
+              <Pressable style={styles.closeButton} onPress={handleCopy} hitSlop={8}>
+                <Text style={styles.closeButtonText}>{copied ? 'Copied' : 'Copy log'}</Text>
+              </Pressable>
+            ) : null}
+            <Pressable style={styles.closeButton} onPress={onClose} hitSlop={8}>
+              <Text style={styles.closeButtonText}>Close</Text>
+            </Pressable>
+          </View>
         </View>
         {reversed.length === 0 ? (
           <Text style={styles.empty}>No events yet.</Text>
@@ -68,6 +91,10 @@ const styles = StyleSheet.create({
     marginBottom: spacing.lg,
   },
   title: { ...type.title, color: color.textPrimary },
+  headerActions: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+  },
   closeButton: {
     paddingVertical: spacing.sm + 2,
     paddingHorizontal: spacing.lg,

@@ -60,6 +60,7 @@ import {
   parseHazardPacket,
   rememberHazardOnce,
   speakHazardAudio,
+  speakText,
   startSpeechHazardDetection,
   type HazardPacket,
   type HazardType,
@@ -293,6 +294,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [cachedRouteGeometry, setCachedRouteGeometry] = useState<GeoJSON.LineString | null>(null);
   const handleRouteGeometryChange = useCallback((geometry: GeoJSON.LineString | null) => {
     setCachedRouteGeometry(geometry);
+  }, []);
+  // OfflineRiderMap only detects and reports off-route transitions (it has no TTS access of its
+  // own); speaking the alert is this screen's job, same division as every other audio cue here.
+  const handleOffRouteChange = useCallback((isOffRoute: boolean) => {
+    speakText(isOffRoute ? 'You are off route.' : 'Back on route.').catch(() => {});
   }, []);
   const [destinationEditorVisible, setDestinationEditorVisible] = useState(false);
   const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
@@ -935,6 +941,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             }
             destination={currentDestination}
             routeGeometry={cachedRouteGeometry}
+            onOffRouteChange={handleOffRouteChange}
           />
         ) : (
           <RiderMap

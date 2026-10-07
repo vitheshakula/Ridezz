@@ -10,7 +10,9 @@ export type DiagnosticEventType =
   | 'location_resumed'
   | 'location_fix_received'
   | 'location_error'
-  | 'mesh_hazard_received';
+  | 'mesh_hazard_received'
+  | 'remote_participant_disconnected'
+  | 'remote_location_resumed';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

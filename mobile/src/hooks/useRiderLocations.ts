@@ -320,16 +320,30 @@ export function useRiderLocations(
       if (!decoded) {
         return;
       }
-      setState(prev =>
-        upsertRiderLocation(prev, {
+      setState(prev => {
+        // Diagnostic only: tells us, after the fact, whether this rider's location data ever
+        // actually resumed flowing once they'd gone stale/offline -- the one thing a screenshot of
+        // "still shows OFFLINE" can't show, since by definition it's taken while nothing has
+        // arrived yet.
+        if (prev[participant.identity] && !prev[participant.identity].connected) {
+          logDiagnosticEvent(
+            'remote_location_resumed',
+            `${participant.name || participant.identity} sending location again`,
+          );
+        }
+        return upsertRiderLocation(prev, {
           identity: participant.identity,
           name: participant.name || participant.identity,
           payload: decoded,
-        }),
-      );
+        });
+      });
     }
 
     function handleDisconnected(participant: RemoteParticipant) {
+      logDiagnosticEvent(
+        'remote_participant_disconnected',
+        `${participant.name || participant.identity} disconnected`,
+      );
       setState(prev => markRiderDisconnected(prev, participant.identity));
     }
 

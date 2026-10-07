@@ -279,18 +279,29 @@ export default function RiderMap({
     return () => clearInterval(interval);
   }, []);
 
-  // Center on the first local GPS fix once. After that, manual map panning wins.
+  // Follows the rider's live position as it updates -- starts enabled, and only the FIRST fix
+  // forces a zoom level (CENTER_ZOOM, a wide establishing view); every fix after that just
+  // re-centers, leaving whatever zoom the rider currently has alone. Any manual map gesture
+  // (onRegionWillChange's userInteraction) switches this off so the camera stops yanking back
+  // mid-pan; "Center Me" is the only thing that switches it back on.
   const hasCenteredOnceRef = useRef(false);
+  const autoFollowRef = useRef(true);
   useEffect(() => {
-    if (hasCenteredOnceRef.current || !localLocation) {
+    if (!localLocation) {
       return;
     }
-    hasCenteredOnceRef.current = true;
-    cameraRef.current?.easeTo({
-      center: toLngLat(localLocation),
-      zoom: CENTER_ZOOM,
-      duration: CAMERA_ANIMATION_MS,
-    });
+    if (!hasCenteredOnceRef.current) {
+      hasCenteredOnceRef.current = true;
+      cameraRef.current?.easeTo({
+        center: toLngLat(localLocation),
+        zoom: CENTER_ZOOM,
+        duration: CAMERA_ANIMATION_MS,
+      });
+      return;
+    }
+    if (autoFollowRef.current) {
+      cameraRef.current?.easeTo({ center: toLngLat(localLocation), duration: CAMERA_ANIMATION_MS });
+    }
   }, [localLocation]);
 
   // Bumped by every map-control press, so a slow precise fix from "Center Me" can't yank the
@@ -299,6 +310,7 @@ export default function RiderMap({
 
   const handleFitGroup = useCallback(() => {
     cameraIntentRef.current += 1;
+    autoFollowRef.current = false;
     // Every rider still in the ride, however far apart -- and only riders: the destination
     // is left out so the view frames the group, not the route.
     const points: LngLat[] = validLocations.filter(location => location.connected).map(toLngLat);
@@ -332,6 +344,7 @@ export default function RiderMap({
 
   const handleZoom = useCallback((delta: number) => {
     cameraIntentRef.current += 1;
+    autoFollowRef.current = false;
     const next = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, zoomRef.current + delta));
     zoomRef.current = next;
     cameraRef.current?.zoomTo(next, { duration: CAMERA_ANIMATION_MS });
@@ -339,6 +352,7 @@ export default function RiderMap({
 
   const handleCenterMe = useCallback(() => {
     const intent = ++cameraIntentRef.current;
+    autoFollowRef.current = true;
     // Jump to the last shared fix right away, then refine with a fresh high-accuracy GPS fix:
     // the shared one is deliberately coarse (battery-balanced, only updated every 15 m).
     if (localLocation) {
@@ -371,6 +385,13 @@ export default function RiderMap({
       <Map
         style={styles.map}
         mapStyle={MAPTILER_STYLE_URL}
+        onRegionWillChange={event => {
+          // Switch auto-follow off the instant a drag/pinch/rotate starts -- not onRegionDidChange,
+          // which only fires once the gesture has already finished moving the camera around.
+          if (event.nativeEvent.userInteraction) {
+            autoFollowRef.current = false;
+          }
+        }}
         onRegionDidChange={event => {
           zoomRef.current = event.nativeEvent.zoom;
         }}

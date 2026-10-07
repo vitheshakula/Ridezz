@@ -180,6 +180,93 @@ describe('OfflineRiderMap: route line (persists the active destination offline)'
   });
 });
 
+describe('OfflineRiderMap: off-route detection', () => {
+  const ROAD_ROUTE: GeoJSON.LineString = {
+    type: 'LineString',
+    coordinates: [
+      [78.5, 17.4],
+      [78.6, 17.5],
+    ],
+  };
+  const ON_ROUTE = { latitude: 17.4, longitude: 78.5 };
+  const FAR_OFF_ROUTE = { latitude: 17.5, longitude: 78.4 }; // well over 40m from ROAD_ROUTE
+
+  function renderWithRoute(selfLocation: { latitude: number; longitude: number }, onOffRouteChange = jest.fn()) {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <OfflineRiderMap
+          riders={[]}
+          mapStyleUrl="https://example.com/style.json"
+          selfLocation={selfLocation}
+          destination={{ name: null, latitude: 17.5, longitude: 78.6 }}
+          routeGeometry={ROAD_ROUTE}
+          onOffRouteChange={onOffRouteChange}
+        />,
+      );
+    });
+    return { renderer, onOffRouteChange };
+  }
+
+  it('does not fire on a single off-route fix (debounced)', () => {
+    const { onOffRouteChange } = renderWithRoute(FAR_OFF_ROUTE);
+    expect(onOffRouteChange).not.toHaveBeenCalled();
+  });
+
+  it('fires with true after a second consecutive off-route fix, and renders rejoin guidance', () => {
+    const { renderer, onOffRouteChange } = renderWithRoute(FAR_OFF_ROUTE);
+    ReactTestRenderer.act(() => {
+      renderer.update(
+        <OfflineRiderMap
+          riders={[]}
+          mapStyleUrl="https://example.com/style.json"
+          selfLocation={{ ...FAR_OFF_ROUTE, latitude: FAR_OFF_ROUTE.latitude + 0.00001 }}
+          destination={{ name: null, latitude: 17.5, longitude: 78.6 }}
+          routeGeometry={ROAD_ROUTE}
+          onOffRouteChange={onOffRouteChange}
+        />,
+      );
+    });
+    expect(onOffRouteChange).toHaveBeenCalledWith(true);
+    expect(onOffRouteChange).toHaveBeenCalledTimes(1); // only on the transition, not every fix
+    expect(geoJsonSource(renderer.root, 'offlineRejoinGuidance')).toBeTruthy();
+  });
+
+  it('never fires against the straight-line fallback -- only a real cached route', () => {
+    const onOffRouteChange = jest.fn();
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(
+        <OfflineRiderMap
+          riders={[]}
+          mapStyleUrl="https://example.com/style.json"
+          selfLocation={FAR_OFF_ROUTE}
+          destination={{ name: null, latitude: 17.5, longitude: 78.6 }}
+          onOffRouteChange={onOffRouteChange}
+        />,
+      );
+    });
+    ReactTestRenderer.act(() => {
+      renderer.update(
+        <OfflineRiderMap
+          riders={[]}
+          mapStyleUrl="https://example.com/style.json"
+          selfLocation={{ ...FAR_OFF_ROUTE, latitude: FAR_OFF_ROUTE.latitude + 0.00001 }}
+          destination={{ name: null, latitude: 17.5, longitude: 78.6 }}
+          onOffRouteChange={onOffRouteChange}
+        />,
+      );
+    });
+    expect(onOffRouteChange).not.toHaveBeenCalled();
+    expect(geoJsonSource(renderer.root, 'offlineRejoinGuidance')).toBeUndefined();
+  });
+
+  it('no rejoin guidance while on-route', () => {
+    const { renderer } = renderWithRoute(ON_ROUTE);
+    expect(geoJsonSource(renderer.root, 'offlineRejoinGuidance')).toBeUndefined();
+  });
+});
+
 describe('OfflineRiderMap: map setup', () => {
   it('passes the given style URL through to the map', () => {
     const root = render({ mapStyleUrl: 'https://example.com/offline-style.json' });

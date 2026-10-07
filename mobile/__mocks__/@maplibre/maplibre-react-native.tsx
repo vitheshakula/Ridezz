@@ -8,7 +8,22 @@ const Component = React.forwardRef<any, any>(({ children, ...props }, ref) => (
 ));
 
 export const Map = Component;
-export const Camera = Component;
+
+// Camera's real ref exposes imperative methods (easeTo/zoomTo/fitBounds/...), not a View --
+// components that drive the camera (RiderMap, OfflineRiderMap) call these directly off
+// cameraRef.current. Exposed as jest.fn() stubs via useImperativeHandle so that code can run
+// under test without crashing, and so a test can assert a call was made if it wants to.
+export const Camera = React.forwardRef<any, any>(({ children, ...props }, ref) => {
+  React.useImperativeHandle(ref, () => ({
+    easeTo: jest.fn(),
+    zoomTo: jest.fn(),
+    fitBounds: jest.fn(),
+    flyTo: jest.fn(),
+    setCamera: jest.fn(),
+  }));
+  return <View {...props}>{children}</View>;
+});
+
 export const GeoJSONSource = Component;
 export const Layer = Component;
 export const Marker = Component;
