@@ -88,6 +88,12 @@ import type { RideDestination } from '../components/RiderMap';
 import { DestinationSuggestions } from '../components/DestinationSuggestions';
 import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
 import { createDestinationBroadcaster } from '../services/destinationBroadcast';
+import {
+  createAppRideNodeIdentity,
+  createNearbyRideConnectivity,
+  registerRideConnectivityDevMenu,
+} from '../services/rideConnectivityService';
+import type { RideNodeIdentity } from '../connectivity/rideConnectivityLifecycle';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -473,6 +479,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     null,
   );
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
+  // Ride Connectivity Protocol (Phase 2): one secure node identity per mounted ride, created on
+  // first use and reused across Nearby retries and rider-name changes; never persisted.
+  const rideNodeIdentityRef = useRef<RideNodeIdentity | null>(null);
   // True while this phone's own speaker is reading an alert (plus a short tail), so the always-on
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
@@ -619,6 +628,12 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Phase 2 protocol on this Nearby session: started after Nearby starts, stopped before Nearby
+    // stops. At most one runtime per effect run; a late start after cleanup is ignored.
+    const connectivity = createNearbyRideConnectivity({
+      roomCode: session.roomCode,
+      getNodeIdentity: () => (rideNodeIdentityRef.current ??= createAppRideNodeIdentity()),
+    });
 
     const startMesh = () => {
       nearbyTransport
@@ -627,6 +642,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           if (!cancelled) {
             setMeshError(null);
             meshSyncManager.start();
+            connectivity.transportStarted();
           }
         })
         .catch((e: { code?: string; message?: string }) => {
@@ -652,9 +668,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       unsubscribeStatus();
       unsubscribeMeshPacket();
       meshSyncManager.stop();
+      connectivity.dispose();
       nearbyTransport.stop().catch(() => {});
     };
   }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
+
+  // Debug builds only: dev-menu switch to make this one phone a test cloud gateway.
+  useEffect(registerRideConnectivityDevMenu, []);
 
   useEffect(() => hazardCoordinator.subscribe(), [hazardCoordinator]);
 

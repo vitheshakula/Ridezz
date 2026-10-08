@@ -49,6 +49,16 @@ import org.json.JSONObject
  * `onPeerCountChanged` (JSON: peerCount) every time a rider connects or disconnects. Logs under
  * tag "NearbyMesh" (`adb logcat -s NearbyMesh`).
  *
+ * Endpoint-aware interface (Ride Connectivity Protocol): every received bytes payload is ALSO
+ * emitted as `onPayloadReceivedFrom` (JSON: endpointId, payload), and `sendPayloadTo` sends to one
+ * confirmed endpoint. Phase 1 consumes `onHazardReceived` only; the protocol layer must consume
+ * `onPayloadReceivedFrom` only, or each packet is processed twice. endpointId is a transport-local
+ * Nearby endpoint id, never a Rideaze node id.
+ *
+ * Connection lifecycle: discovered -> (dialled: `connecting`) -> initiated: `pending` ->
+ * STATUS_OK: `connected`. Only `connected` endpoints count as peers or receive payloads; failure,
+ * disconnect and stop remove an endpoint from every collection.
+ *
  * Limits: single hop here (the JS layer relays between riders and to/from the cloud room), and the
  * radio range is whatever Bluetooth/BLE/Wi-Fi give the phones -- typically tens of metres outdoors,
  * less with phones in pockets/helmets. Requires Google Play Services, Bluetooth on, and the runtime
@@ -74,8 +84,10 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   @Volatile private var riderId: String = ""
   @Volatile private var lastError: String? = null
 
-  /** Endpoints we are connected to. */
+  /** Confirmed connections (STATUS_OK). The only valid peers and send targets. */
   private val connected = ConcurrentHashMap<String, Peer>()
+  /** Initiated and accepted, awaiting the connection result. Not yet a peer or send target. */
+  private val pending = ConcurrentHashMap<String, Peer>()
   /** Same-room endpoints seen by discovery -> their rider id. */
   private val discovered = ConcurrentHashMap<String, String>()
   /** Endpoints with a connection attempt in flight. */
@@ -185,6 +197,39 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       }
   }
 
+  /**
+   * Sends [payload] to exactly one confirmed endpoint. Rejects, and never falls back to broadcast,
+   * when the session is inactive or [endpointId] is empty, pending, unknown or disconnected.
+   * Resolving means the Nearby send Task succeeded; it is not Rideaze delivery acknowledgement.
+   */
+  @ReactMethod
+  fun sendPayloadTo(endpointId: String, payload: String, promise: Promise) {
+    val nearby = client
+    if (!active || nearby == null) {
+      promise.reject("mesh_inactive", "Mesh session is not running")
+      return
+    }
+    if (endpointId.isBlank()) {
+      promise.reject("mesh_invalid_endpoint", "Endpoint id is empty")
+      return
+    }
+    if (!connected.containsKey(endpointId)) {
+      promise.reject("mesh_unknown_endpoint", "Endpoint $endpointId is not a confirmed connection")
+      return
+    }
+    val bytes = payload.toByteArray(Charsets.UTF_8)
+    nearby
+      .sendPayload(endpointId, Payload.fromBytes(bytes))
+      .addOnSuccessListener {
+        Log.d(TAG, "payload (${bytes.size} bytes) sent to $endpointId")
+        promise.resolve(null)
+      }
+      .addOnFailureListener {
+        Log.d(TAG, "send to $endpointId failed: ${describe(it)}")
+        promise.reject("mesh_send_failed", describe(it), it)
+      }
+  }
+
   // --- discovery ---------------------------------------------------------------------------
 
   private val discoveryCallback =
@@ -208,7 +253,12 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   private fun connectToDiscovered() {
     val nearby = client ?: return
     for ((endpointId, remoteId) in discovered) {
-      if (riderId >= remoteId || connected.containsKey(endpointId) || !connecting.add(endpointId)) continue
+      if (
+        riderId >= remoteId ||
+        connected.containsKey(endpointId) ||
+        pending.containsKey(endpointId) ||
+        !connecting.add(endpointId)
+      ) continue
       Log.d(TAG, "requesting connection to $endpointId")
       nearby
         .requestConnection("$room|$riderId|$riderName", endpointId, lifecycle)
@@ -231,14 +281,23 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
           connecting.remove(endpointId)
           return
         }
-        connected[endpointId] = Peer(parsed.third) // provisional; removed again if the result fails
-        client?.acceptConnection(endpointId, payloadCallback)
+        // Pending until onConnectionResult reports STATUS_OK; not a peer or send target yet.
+        pending[endpointId] = Peer(parsed.third)
+        client
+          ?.acceptConnection(endpointId, payloadCallback)
+          ?.addOnFailureListener {
+            Log.d(TAG, "acceptConnection $endpointId failed: ${describe(it)}")
+            pending.remove(endpointId)
+            connecting.remove(endpointId)
+          }
       }
 
       override fun onConnectionResult(endpointId: String, result: ConnectionResolution) {
         connecting.remove(endpointId)
+        val peer = pending.remove(endpointId)
         if (result.status.statusCode == ConnectionsStatusCodes.STATUS_OK) {
           Log.d(TAG, "connected: $endpointId")
+          connected[endpointId] = peer ?: Peer("")
         } else {
           Log.d(TAG, "connection to $endpointId failed: ${result.status.statusCode}")
           connected.remove(endpointId)
@@ -249,6 +308,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       override fun onDisconnected(endpointId: String) {
         Log.d(TAG, "disconnected: $endpointId")
         connected.remove(endpointId)
+        pending.remove(endpointId)
         connecting.remove(endpointId)
         emitStatus()
       }
@@ -260,7 +320,13 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
         val bytes = payload.asBytes() ?: return
         val json = String(bytes, Charsets.UTF_8)
         Log.d(TAG, "hazard received from $endpointId: $json")
+        // Phase 1 event, unchanged shape (raw payload string).
         emit("onHazardReceived", json)
+        // Endpoint-aware event for the connectivity protocol; the same payload with its sender.
+        emit(
+          "onPayloadReceivedFrom",
+          JSONObject().put("endpointId", endpointId).put("payload", json).toString(),
+        )
       }
 
       override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
@@ -306,6 +372,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     val nearby = client
     client = null
     connected.clear()
+    pending.clear()
     discovered.clear()
     connecting.clear()
     if (nearby != null) {

@@ -27,6 +27,21 @@ export interface BroadcastTransport<Payload extends string | Uint8Array> {
   onPayload(callback: (payload: Payload) => void): () => void;
 }
 
+/** The direct transport endpoint that handed over a payload. Transport-local: never a Rideaze node
+ * id (the connectivity layer maps endpoints to nodes through direct heartbeats). */
+export interface TransportEndpointSource {
+  readonly endpointId: string;
+}
+
+/** Endpoint-aware send/receive for transports that expose direct peer identity. */
+export interface TargetedTransport<Payload extends string | Uint8Array> {
+  /** Sends to exactly one connected endpoint. Rejects, and never falls back to broadcast, when the
+   * endpoint is not usable. Resolution is transport acceptance, not end-to-end acknowledgement. */
+  sendTo(endpointId: string, payload: Payload): Promise<void>;
+  /** Every received payload together with the endpoint that sent it. */
+  onPayloadFrom(callback: (source: TransportEndpointSource, payload: Payload) => void): () => void;
+}
+
 /** Broadcast transport whose session lifecycle and mesh state are managed by the caller. */
 export interface Transport<Payload extends string | Uint8Array>
   extends BroadcastTransport<Payload> {

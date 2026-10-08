@@ -37,10 +37,11 @@ describe('nearbyTransport', () => {
   });
 
   test('reports only the capabilities implemented by Nearby', () => {
+    // targeted/peerIdentity became true with the endpoint-aware interface (sendTo/onPayloadFrom).
     expect(transport.capabilities).toEqual({
       broadcast: true,
-      targeted: false,
-      peerIdentity: false,
+      targeted: true,
+      peerIdentity: true,
       linkMetrics: false,
       deliveryAck: false,
     });

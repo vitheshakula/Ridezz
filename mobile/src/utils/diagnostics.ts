@@ -12,7 +12,9 @@ export type DiagnosticEventType =
   | 'location_error'
   | 'mesh_hazard_received'
   | 'remote_participant_disconnected'
-  | 'remote_location_resumed';
+  | 'remote_location_resumed'
+  /** Ride Connectivity Protocol (Phase 2) device-testing diagnostics. */
+  | 'mesh_protocol';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;
