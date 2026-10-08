@@ -11,6 +11,10 @@ import {
   createHazardPacket,
   encodeHazardPacket,
   extractHazards,
+  extractHazardsFromWords,
+  GRAMMAR_DISTRUSTED_PHRASES,
+  GRAMMAR_MIN_CONFIDENCE,
+  parseSpeechPayload,
   isAnnouncementEcho,
   isWithinHazardWindow,
   parseHazardPacket,
@@ -444,12 +448,109 @@ describe('startSpeechHazardDetection', () => {
     stop();
   });
 
-  it('throttles the same word across partial and final results', () => {
+  it('never raises a hazard from a partial result, only from a finished utterance', () => {
     const onHazard = jest.fn();
     const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
 
+    // Partial hypotheses change word while Vosk is still listening and gave false alerts.
     speak('gravel', 'onSpeechPartial');
+    speak('police', 'onSpeechPartial');
+    expect(onHazard).not.toHaveBeenCalled();
+
     speak('gravel', 'onSpeechResult');
+    expect(onHazard).toHaveBeenCalledTimes(1);
+    stop();
+  });
+
+  describe('two recognizers (full vocabulary + hazard-restricted)', () => {
+    const grammarResult = (...words: [string, number][]) =>
+      DeviceEventEmitter.emit(
+        'onSpeechResult',
+        JSON.stringify({
+          source: 'grammar',
+          text: words.map(([w]) => w).join(' '),
+          result: words.map(([word, conf]) => ({ word, conf, start: 0, end: 1 })),
+        }),
+      );
+
+    it('raises a hazard the restricted recognizer is confident about', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      grammarResult(['there', 1], ['is', 1], ['a', 1], ['pothole', 1], ['ahead', 1]);
+      expect(onHazard).toHaveBeenCalledTimes(1);
+      expect(onHazard.mock.calls[0][0].hazard).toBe('pothole');
+      stop();
+    });
+
+    it('ignores a hazard word the restricted recognizer was unsure of', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      grammarResult(['my', 1], ['phone', 1], ['fallen', GRAMMAR_MIN_CONFIDENCE - 0.01], ['battery', 1]);
+      expect(onHazard).not.toHaveBeenCalled();
+      stop();
+    });
+
+    it('does not show the restricted recognizer text as "Heard" (it garbles ordinary speech)', () => {
+      const onHeard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard: jest.fn(), onHeard });
+      grammarResult(['the', 1], ['dead', 0.4], ['end', 0.4]);
+      expect(onHeard).not.toHaveBeenCalled();
+      speak('how is the weather today');
+      expect(onHeard).toHaveBeenCalledWith('how is the weather today');
+      stop();
+    });
+
+    it('does not trust the restricted recognizer with the single words it mixes up with common ones', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      grammarResult(['stop', 1], ['here', 1], ['police', 1]); // really "stop here please"
+      expect(onHazard.mock.calls.map(c => c[0].hazard)).toEqual(['stop']);
+      grammarResult(['a', 1], ['petrol', 1], ['bump', 1]); // really "a petrol pump"
+      expect(onHazard).toHaveBeenCalledTimes(1);
+      stop();
+    });
+
+    it('still takes longer police phrases from the restricted recognizer', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      grammarResult(['police', 1], ['checkpoint', 1], ['ahead', 1]);
+      expect(onHazard.mock.calls.map(c => c[0].hazard)).toEqual(['police']);
+      stop();
+    });
+
+    it('raises a call-out heard by both recognizers only once', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      speak('there is a pothole ahead');
+      grammarResult(['there', 1], ['is', 1], ['a', 1], ['pothole', 1], ['ahead', 1]);
+      expect(onHazard).toHaveBeenCalledTimes(1);
+      stop();
+    });
+
+    it('lets whichever recognizer caught it raise it when the other missed', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      speak('there is a boy told ahead'); // full vocabulary mixed it up
+      grammarResult(['there', 1], ['is', 1], ['a', 1], ['pothole', 1], ['ahead', 1]);
+      expect(onHazard.mock.calls.map(c => c[0].hazard)).toEqual(['pothole']);
+      stop();
+    });
+
+    it('still blocks announcement echoes from either recognizer', () => {
+      const onHazard = jest.fn();
+      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+      grammarResult(['bob', 1], ['reported', 1], ['pothole', 1]);
+      expect(onHazard).not.toHaveBeenCalled();
+      stop();
+    });
+  });
+
+  it('throttles the same word across repeated results', () => {
+    const onHazard = jest.fn();
+    const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
+
+    speak('gravel');
+    speak('gravel');
     expect(onHazard).toHaveBeenCalledTimes(1);
 
     jest.setSystemTime(NOW + HAZARD_THROTTLE_MS - 1);
@@ -492,7 +593,7 @@ describe('startSpeechHazardDetection', () => {
       const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => true });
 
       speak('low fuel');
-      speak('fuel', 'onSpeechPartial');
+      speak('fuel');
       expect(onHazard).not.toHaveBeenCalled();
       stop();
     });
@@ -516,7 +617,7 @@ describe('startSpeechHazardDetection', () => {
       const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => false });
 
       speak('bob reported low fuel'); // another phone's speaker, heard through the air
-      speak('bob reported low', 'onSpeechPartial');
+      speak('bob reported low');
       expect(onHazard).not.toHaveBeenCalled();
       stop();
     });
@@ -750,3 +851,59 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
   });
 });
 
+
+describe('extractHazardsFromWords', () => {
+  const said = (...words: [string, number][]) => words.map(([word, conf]) => ({ word, conf }));
+
+  it('finds a phrase whose words are all confident enough', () => {
+    expect(extractHazardsFromWords(said(['low', 1], ['fuel', 0.97]), 0.95)).toEqual(['fuel']);
+  });
+
+  it('needs every word of the phrase to clear the bar, not just the average', () => {
+    expect(extractHazardsFromWords(said(['missed', 1], ['the', 1], ['turn', 0.6]), 0.95)).toEqual([]);
+  });
+
+  it('keeps a longer phrase of another hazard swallowing a shorter one, even when it was unsure', () => {
+    // "emergency stop" is a stopped vehicle, never also a plain "stop" -- the same as extractHazards
+    expect(extractHazardsFromWords(said(['emergency', 0.5], ['stop', 1]), 0.95)).toEqual([]);
+    expect(extractHazardsFromWords(said(['emergency', 1], ['stop', 1]), 0.95)).toEqual(['vehicle_stopped']);
+  });
+
+  it('splits Vosk words with apostrophes the way the text matcher does, and orders by first spoken', () => {
+    expect(extractHazardsFromWords(said(['police', 1], ['ahead', 1], ['stop', 1]), 0.95)).toEqual(['police', 'stop']);
+    expect(extractHazardsFromWords(said(["i'm", 1], ['low', 1], ['on', 1], ['fuel', 1]), 0.95)).toEqual(['fuel']);
+  });
+
+  it('never raises a distrusted phrase, but a plain one is unaffected', () => {
+    expect(extractHazardsFromWords(said(['police', 1]), 0.95, GRAMMAR_DISTRUSTED_PHRASES)).toEqual([]);
+    expect(extractHazardsFromWords(said(['police', 1]), 0.95)).toEqual(['police']);
+  });
+
+  it('agrees with extractHazards when everything is certain', () => {
+    for (const talk of ['there is a pothole ahead', 'slippery road ahead', 'we missed the turn', 'nice weather today']) {
+      const words = talk.split(' ').map(word => ({ word, conf: 1 }));
+      expect(extractHazardsFromWords(words, 0.95)).toEqual(extractHazards(talk));
+    }
+  });
+});
+
+describe('parseSpeechPayload', () => {
+  it('reads the source, text and per-word confidences', () => {
+    const raw = JSON.stringify({ source: 'grammar', text: 'slow down', result: [{ word: 'slow', conf: 1 }, { word: 'down', conf: 0.9 }] });
+    expect(parseSpeechPayload(raw)).toEqual({
+      source: 'grammar',
+      text: 'slow down',
+      words: [{ word: 'slow', conf: 1 }, { word: 'down', conf: 0.9 }],
+    });
+  });
+
+  it('treats an untagged payload as the full-vocabulary recognizer', () => {
+    expect(parseSpeechPayload('{"text":"hello"}')).toEqual({ source: 'free', text: 'hello', words: [] });
+  });
+
+  it('never throws on garbage', () => {
+    for (const bad of [undefined, null, 5, '', 'not json', '{"result":[null,{"word":3}]}']) {
+      expect(parseSpeechPayload(bad).words).toEqual([]);
+    }
+  });
+});
