@@ -57,7 +57,9 @@ import {
   speakText,
   startSpeechHazardDetection,
 } from '../services/SpeechHazardService';
-import type { HazardPacket } from '../protocol/hazardProtocol';
+import { createHazardPacket, type HazardPacket } from '../protocol/hazardProtocol';
+import { useCrashDetection } from '../crash/useCrashDetection';
+import CrashCountdown from '../components/CrashCountdown';
 import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
@@ -549,8 +551,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     logDiagnosticEvent('mesh_hazard_received', `${hazard.hazardType} relayed from ${hazard.riderName}`);
   };
   onLocalMeshHazardRef.current = packet => {
-    if (isMeshHazardKind(packet.hazard) && selfLocationRef.current) {
-      meshSyncManager.raiseHazard(packet.hazard, selfLocationRef.current);
+    // A crash alert pins the map where the rider went down, not where the last periodic
+    // location ping happened to be.
+    const crashSpot =
+      packet.sos?.lat !== undefined && packet.sos.lng !== undefined
+        ? { latitude: packet.sos.lat, longitude: packet.sos.lng }
+        : null;
+    const where = crashSpot ?? selfLocationRef.current;
+    if (isMeshHazardKind(packet.hazard) && where) {
+      meshSyncManager.raiseHazard(packet.hazard, where);
     }
   };
 
@@ -731,6 +740,34 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     const local = locations.find(l => l.participantIdentity === localParticipant.identity);
     selfLocationRef.current = local ? { latitude: local.latitude, longitude: local.longitude } : null;
   }, [locations, localParticipant.identity]);
+
+  // Crash / laydown detection: IMU + GNSS evidence -> "Are you OK?" countdown -> an 'accident'
+  // alert to the group through the same hazard path as a spoken report (mesh and cloud). The
+  // announcement goes through the echo guard so the always-on recogniser ignores it.
+  const crash = useCrashDetection({
+    enabled: true,
+    onSos: sos => {
+      // Position, speed and severity ride along on the 'accident' packet (over the mesh and the
+      // cloud room); a missing GNSS fix simply leaves the position out.
+      const hasPosition = sos.latitude !== null && sos.longitude !== null;
+      hazardCoordinatorRef.current.submitLocal(
+        createHazardPacket('accident', senderIdRef.current, session.riderName, sos.timestamp, {
+          impactAt: sos.impactTimestamp,
+          severity: sos.severity,
+          ...(hasPosition ? { lat: sos.latitude as number, lng: sos.longitude as number } : {}),
+          ...(sos.speedBeforeImpactKmh !== null ? { speedKmh: sos.speedBeforeImpactKmh } : {}),
+        }),
+      );
+    },
+    announce: text => {
+      echoGuardRef.current.begin();
+      duckRemoteAudio(room, true);
+      return speakText(text).finally(() => {
+        duckRemoteAudio(room, false);
+        echoGuardRef.current.end();
+      });
+    },
+  });
 
   const mapStatusMessage = useMemo(() => {
     if (locationPermissionGranted === null) {
@@ -1057,6 +1094,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       </View>
 
       <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+
+      <CrashCountdown
+        state={crash.state}
+        onCancel={crash.cancel}
+        onSendNow={crash.sendNow}
+        onAcknowledge={crash.acknowledge}
+      />
 
       <Modal
         visible={settingsVisible}

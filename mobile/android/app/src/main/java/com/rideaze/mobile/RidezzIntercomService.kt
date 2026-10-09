@@ -32,6 +32,12 @@ class RidezzIntercomService : Service() {
     private const val CHANNEL_ID = "ridezz_intercom"
     private const val NOTIFICATION_ID = 1001
 
+    /** True between onCreate and onDestroy. Lets other features (crash detection) report whether
+     * the process is currently held at foreground priority; they must not rely on it for
+     * correctness, only to tell the rider when background survival is not guaranteed. */
+    @Volatile var isRunning: Boolean = false
+      private set
+
     fun start(context: Context) {
       val intent = Intent(context, RidezzIntercomService::class.java)
       context.startForegroundService(intent)
@@ -44,6 +50,7 @@ class RidezzIntercomService : Service() {
 
   override fun onCreate() {
     super.onCreate()
+    isRunning = true
     createNotificationChannel()
   }
 
@@ -74,6 +81,7 @@ class RidezzIntercomService : Service() {
     // Some OEM ROMs don't reliably clear the startForeground() notification just because the
     // service is being destroyed/stopped -- remove it explicitly so it doesn't linger after
     // Leave Ride. (STOP_FOREGROUND_REMOVE has existed since API 24, our minSdk.)
+    isRunning = false
     stopForeground(STOP_FOREGROUND_REMOVE)
     super.onDestroy()
   }
