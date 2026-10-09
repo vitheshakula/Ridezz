@@ -4,7 +4,7 @@ import { ConnectionQuality } from 'livekit-client';
  * Development Token Server has no way to configure server-side room capacity --
  * production-grade enforcement moves to the future Ridezz token backend, which can
  * set this authoritatively when minting tokens / creating rooms. */
-export const MAX_RIDERS = 10;
+export const MAX_RIDERS = 25;
 
 /** True once the local rider would be the (MAX_RIDERS + 1)th participant, based on
  * server-reported `room.numParticipants` at the moment we connected. This can't

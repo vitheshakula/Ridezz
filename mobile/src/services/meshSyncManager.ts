@@ -2,11 +2,13 @@ import { nearestUnvisited } from '../utils/geoMath';
 import { HazardSyncQueue, RECONNECT_FLUSH_SPACING_MS } from './hazardSyncQueue';
 import {
   HAZARD_PACKET_MAX_TTL,
+  TELEMETRY_PACKET_MAX_TTL,
   type GeoPoint,
   type HazardEventPacket,
   type MeshHazardKind,
   type MeshPacket,
   type RiderNode,
+  type TelemetryPingPacket,
 } from '../types/telemetry';
 
 /**
@@ -43,28 +45,71 @@ export function createHazardEventPacket(
 }
 
 /**
- * Whether `hazard` is still worth relaying: never once its ttl is spent or it has somehow already
- * passed through us, and otherwise only when some rider we currently know a position for hasn't
- * seen it yet (the nearest unvisited rider to the hazard's own location, from geoMath) -- so a
- * device deep in a cluster that has already fully relayed a hazard stops repeating it once nobody
- * left still needs it.
+ * Whether some rider this device currently knows a position for still hasn't seen a packet that
+ * has already passed through `visitedNodes` -- the nearest unvisited rider to `origin`, from
+ * geoMath. Shared by both the hazard and telemetry relay gates below: a device deep in a cluster
+ * that has already fully relayed something stops repeating it once nobody left still needs it.
  *
  * NearbyMeshModule's native bridge only exposes broadcastHazard-to-everyone, not a targeted send
  * to a single peer -- so this can only gate *whether* to relay at all, not pick a specific next
  * hop the way a true point-to-point mesh would. That gate is still real work: without it, every
- * device in a cluster would keep re-flooding a hazard for its full TTL even after everyone who
+ * device in a cluster would keep re-flooding something for its full TTL even after everyone who
  * could possibly want it already has it.
  */
+function hasUnvisitedRecipient(
+  origin: GeoPoint,
+  visitedNodes: readonly string[],
+  selfRiderId: string,
+  knownRiders: readonly RiderNode[],
+): boolean {
+  if (visitedNodes.includes(selfRiderId)) {
+    return false;
+  }
+  const visited = new Set(visitedNodes);
+  return nearestUnvisited(origin, knownRiders, visited, rider => rider.riderId) !== null;
+}
+
+/** Whether `hazard` is still worth relaying: never once its ttl is spent, otherwise per
+ * hasUnvisitedRecipient above. */
 export function shouldRelay(
   hazard: HazardEventPacket,
   selfRiderId: string,
   knownRiders: readonly RiderNode[],
 ): boolean {
-  if (hazard.ttl <= 0 || hazard.visitedNodes.includes(selfRiderId)) {
+  if (hazard.ttl <= 0) {
     return false;
   }
-  const visited = new Set(hazard.visitedNodes);
-  return nearestUnvisited(hazard, knownRiders, visited, rider => rider.riderId) !== null;
+  return hasUnvisitedRecipient(hazard, hazard.visitedNodes, selfRiderId, knownRiders);
+}
+
+/** A mesh with more known riders than this makes blanket telemetry relay expensive (every rider's
+ * duty-cycle ping, potentially relayed several hops, several times a minute) -- past this size,
+ * third-party relay is restricted to TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL (own-position
+ * broadcasts are never throttled; see sendPing). */
+export const TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD = 15;
+
+/** In a high-density mesh, a telemetry ping is only relayed while its ttl is still at or above
+ * this -- a shallower depth than TELEMETRY_PACKET_MAX_TTL allows the rest of the time, not
+ * necessarily down to one hop; the gap between the two numbers is exactly how much further relay
+ * gets cut back once the mesh crosses TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD. */
+export const TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL = 3;
+
+/** Whether `ping` (someone else's position, already received) is still worth relaying onward. */
+export function shouldRelayTelemetry(
+  ping: TelemetryPingPacket,
+  selfRiderId: string,
+  knownRiders: readonly RiderNode[],
+): boolean {
+  if (ping.ttl <= 0) {
+    return false;
+  }
+  if (
+    knownRiders.length > TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD &&
+    ping.ttl < TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL
+  ) {
+    return false;
+  }
+  return hasUnvisitedRecipient(ping, ping.visitedNodes, selfRiderId, knownRiders);
 }
 
 export interface MeshSyncManagerOptions {
@@ -126,19 +171,53 @@ export function createMeshSyncManager(options: MeshSyncManagerOptions): MeshSync
   let pingTimer: ReturnType<typeof setInterval> | null = null;
   let lastPeerCount = 0;
 
+  // Dedup for telemetry relay only (not for rider positions themselves -- upsertRiderPosition's
+  // own newer-timestamp check already makes applying a duplicate ping harmless). Without this, a
+  // ping arriving back via two different relay paths would be re-relayed twice, and a ping that
+  // bounces back to its own origin would never be recognised as "already seen". Pruned lazily by
+  // age on every check, the same way HazardSyncQueue prunes its own backlog -- no separate timer
+  // needed to keep this bounded.
+  const seenPingIds = new Map<string, number>();
+  const SEEN_PING_RETENTION_MS = 2 * 60 * 1000;
+
+  function rememberPingOnce(pingId: string): boolean {
+    const nowMs = now();
+    for (const [id, seenAt] of seenPingIds) {
+      if (nowMs - seenAt > SEEN_PING_RETENTION_MS) {
+        seenPingIds.delete(id);
+      }
+    }
+    if (seenPingIds.has(pingId)) {
+      return false;
+    }
+    seenPingIds.set(pingId, nowMs);
+    return true;
+  }
+
   function sendPing(): void {
     const location = getLocation();
     if (!location) {
       return;
     }
-    send({
+    const timestamp = now();
+    const packet: TelemetryPingPacket = {
       type: 'TELEMETRY_PING',
+      pingId: `${selfRiderId}-${timestamp}`,
       riderId: selfRiderId,
       riderName: selfRiderName,
       latitude: location.latitude,
       longitude: location.longitude,
-      timestamp: now(),
-    });
+      timestamp,
+      ttl: TELEMETRY_PACKET_MAX_TTL,
+      senderId: selfRiderId,
+      visitedNodes: [selfRiderId],
+    };
+    // Own-position broadcasts are never throttled, high-density mesh or not -- a rider must never
+    // disappear from their immediate neighbours' maps. Remembered before sending so a copy that
+    // bounces back (relayed by a neighbour who's also connected to us) is recognised as already
+    // seen rather than re-processed as a new fix for ourselves.
+    rememberPingOnce(packet.pingId);
+    send(packet);
   }
 
   /** Upserts a rider's known position, whether it came from a TELEMETRY_PING or from the GPS fix
@@ -161,8 +240,24 @@ export function createMeshSyncManager(options: MeshSyncManagerOptions): MeshSync
     onRidersChanged?.([...knownRiders.values()]);
   }
 
+  function relayTelemetryIfNeeded(ping: TelemetryPingPacket): void {
+    if (!shouldRelayTelemetry(ping, selfRiderId, [...knownRiders.values()])) {
+      return;
+    }
+    send({
+      ...ping,
+      senderId: selfRiderId,
+      ttl: ping.ttl - 1,
+      visitedNodes: [...ping.visitedNodes, selfRiderId],
+    });
+  }
+
   function handleTelemetryPing(packet: Extract<MeshPacket, { type: 'TELEMETRY_PING' }>): void {
+    if (!rememberPingOnce(packet.pingId)) {
+      return; // already processed this exact fix, whether via another relay path or our own echo
+    }
     upsertRiderPosition(packet.riderId, packet.riderName, packet.latitude, packet.longitude, packet.timestamp);
+    relayTelemetryIfNeeded(packet);
   }
 
   function relayIfNeeded(hazard: HazardEventPacket): void {

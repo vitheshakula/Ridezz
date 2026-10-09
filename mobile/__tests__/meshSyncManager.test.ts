@@ -2,10 +2,14 @@ import {
   createHazardEventPacket,
   createMeshSyncManager,
   shouldRelay,
+  shouldRelayTelemetry,
+  TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL,
+  TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD,
   TELEMETRY_PING_INTERVAL_MS,
 } from '../src/services/meshSyncManager';
 import { RECONNECT_FLUSH_SPACING_MS } from '../src/services/hazardSyncQueue';
-import type { HazardEventPacket, MeshPacket, RiderNode } from '../src/types/telemetry';
+import { HAZARD_PACKET_MAX_TTL, TELEMETRY_PACKET_MAX_TTL } from '../src/types/telemetry';
+import type { HazardEventPacket, MeshPacket, RiderNode, TelemetryPingPacket } from '../src/types/telemetry';
 
 const NOW = 1_800_000_000_000;
 const HYD: RiderNode = { riderId: 'bilal', latitude: 17.4, longitude: 78.48, timestampMs: NOW };
@@ -20,8 +24,22 @@ const hazard = (over: Partial<HazardEventPacket> = {}): HazardEventPacket => ({
   latitude: 17.385,
   longitude: 78.4867,
   visitedNodes: ['alex'],
-  ttl: 5,
+  ttl: HAZARD_PACKET_MAX_TTL,
   timestamp: NOW,
+  ...over,
+});
+
+const ping = (over: Partial<TelemetryPingPacket> = {}): TelemetryPingPacket => ({
+  type: 'TELEMETRY_PING',
+  pingId: `${over.riderId ?? 'bilal'}-${over.timestamp ?? NOW}`,
+  riderId: 'bilal',
+  riderName: 'Bilal',
+  latitude: 17.39,
+  longitude: 78.49,
+  timestamp: NOW,
+  ttl: TELEMETRY_PACKET_MAX_TTL,
+  senderId: over.riderId ?? 'bilal',
+  visitedNodes: [over.riderId ?? 'bilal'],
   ...over,
 });
 
@@ -35,7 +53,7 @@ describe('createHazardEventPacket', () => {
       senderId: 'alex',
       hazardType: 'pothole',
       visitedNodes: ['alex'],
-      ttl: 5,
+      ttl: HAZARD_PACKET_MAX_TTL,
       timestamp: NOW,
     });
   });
@@ -126,7 +144,7 @@ describe('telemetry duty cycle', () => {
 describe('handlePacket: TELEMETRY_PING', () => {
   it('adds a newly heard rider and notifies', () => {
     const { manager, ridersSeen } = harness('alex');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestamp: NOW });
+    manager.handlePacket(ping({ latitude: 1, longitude: 2 }));
     expect(manager.getKnownRiders()).toEqual([
       { riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestampMs: NOW },
     ]);
@@ -135,24 +153,145 @@ describe('handlePacket: TELEMETRY_PING', () => {
 
   it('ignores a ping older than or equal to the one already known for that rider', () => {
     const { manager, ridersSeen } = harness('alex');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestamp: NOW });
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 9, longitude: 9, timestamp: NOW });
+    manager.handlePacket(ping({ pingId: 'p1', latitude: 1, longitude: 2 }));
+    manager.handlePacket(ping({ pingId: 'p2', latitude: 9, longitude: 9 })); // same timestamp, different pingId
     expect(manager.getKnownRiders()[0]).toEqual({ riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestampMs: NOW });
     expect(ridersSeen).toHaveLength(1); // second ping did not fire another notification
   });
 
   it('accepts a strictly newer ping and updates position', () => {
     const { manager } = harness('alex');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestamp: NOW });
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 9, longitude: 9, timestamp: NOW + 1 });
+    manager.handlePacket(ping({ latitude: 1, longitude: 2, timestamp: NOW }));
+    manager.handlePacket(ping({ latitude: 9, longitude: 9, timestamp: NOW + 1 }));
     expect(manager.getKnownRiders()[0].latitude).toBe(9);
   });
 
   it('keeps the previously known name if a later ping somehow omits one', () => {
     const { manager } = harness('alex');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestamp: NOW });
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'bilal', riderName: '', latitude: 9, longitude: 9, timestamp: NOW + 1 });
+    manager.handlePacket(ping({ riderName: 'Bilal', timestamp: NOW }));
+    manager.handlePacket(ping({ riderName: '', timestamp: NOW + 1 }));
     expect(manager.getKnownRiders()[0].riderName).toBe('Bilal');
+  });
+
+  it('drops an exact duplicate ping (same pingId) without re-notifying or re-relaying', () => {
+    const { manager, ridersSeen, sent } = harness('alex');
+    manager.handlePacket(ping({ pingId: 'dup' }));
+    ridersSeen.length = 0;
+    sent.length = 0;
+    manager.handlePacket(ping({ pingId: 'dup' }));
+    expect(ridersSeen).toHaveLength(0);
+    expect(sent).toHaveLength(0);
+  });
+
+  it('a self-sent ping that bounces back is recognised as already seen, not re-added as a rider', () => {
+    const { manager, sent, ridersSeen } = harness('alex', { latitude: 17.4, longitude: 78.48 });
+    manager.start();
+    const ownPing = sent[0] as TelemetryPingPacket;
+    sent.length = 0;
+    ridersSeen.length = 0;
+
+    manager.handlePacket({ ...ownPing, senderId: 'bilal', ttl: ownPing.ttl - 1, visitedNodes: [...ownPing.visitedNodes, 'bilal'] });
+
+    expect(manager.getKnownRiders()).toHaveLength(0); // never adds self as a known rider
+    expect(ridersSeen).toHaveLength(0);
+    expect(sent).toHaveLength(0); // and never relays its own echo onward
+    manager.stop(); // no fake timers in this describe block -- don't leak a real interval
+  });
+
+  it('relays a third party\'s ping onward when a known rider has not seen it, decrementing ttl', () => {
+    const { manager, sent } = harness('bilal');
+    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.4, longitude: 78.5 })); // bilal now knows casey
+    sent.length = 0;
+    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex', ttl: TELEMETRY_PACKET_MAX_TTL, visitedNodes: ['alex'] }));
+
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({
+      type: 'TELEMETRY_PING',
+      riderId: 'alex',
+      senderId: 'bilal',
+      ttl: TELEMETRY_PACKET_MAX_TTL - 1,
+      visitedNodes: ['alex', 'bilal'],
+    });
+  });
+
+  it('does not relay a ping when no known rider still needs it', () => {
+    const { manager, sent } = harness('bilal');
+    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex' }));
+    expect(sent).toHaveLength(0);
+  });
+
+  it('never relays a ping already at ttl 0', () => {
+    const { manager, sent } = harness('bilal');
+    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey' }));
+    sent.length = 0;
+    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex', ttl: 0 }));
+    expect(sent).toHaveLength(0);
+  });
+
+  it('in a high-density mesh, only relays a ping whose ttl is still at or above the high-density floor', () => {
+    const { manager, sent } = harness('bilal');
+    // Enough other known riders to cross the high-density threshold.
+    for (let i = 0; i < TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 1; i++) {
+      manager.handlePacket(ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }));
+    }
+    sent.length = 0;
+
+    manager.handlePacket(
+      ping({ riderId: 'alex', riderName: 'Alex', ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1, visitedNodes: ['alex'] }),
+    );
+    expect(sent).toHaveLength(0); // below the high-density floor -- dropped, not relayed
+
+    manager.handlePacket(
+      ping({ riderId: 'dana', riderName: 'Dana', ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL, visitedNodes: ['dana'] }),
+    );
+    expect(sent).toHaveLength(1); // at the floor -- still relayed once
+  });
+
+  it('own-position broadcasts are never throttled by high density', () => {
+    const { manager, sent } = harness('alex', { latitude: 17.4, longitude: 78.48 });
+    for (let i = 0; i < TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 5; i++) {
+      manager.handlePacket(ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }));
+    }
+    sent.length = 0;
+    manager.start();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toMatchObject({ type: 'TELEMETRY_PING', riderId: 'alex' });
+    manager.stop(); // no fake timers in this describe block -- don't leak a real interval
+  });
+});
+
+describe('shouldRelayTelemetry', () => {
+  it('never relays once ttl is spent', () => {
+    expect(shouldRelayTelemetry(ping({ ttl: 0 }), 'alex', [HYD])).toBe(false);
+  });
+
+  it('never relays a ping that has already passed through us', () => {
+    expect(shouldRelayTelemetry(ping({ visitedNodes: ['bilal', 'alex'] }), 'alex', [HYD])).toBe(false);
+  });
+
+  it('does not relay when no known rider still needs it', () => {
+    expect(shouldRelayTelemetry(ping(), 'alex', [])).toBe(false);
+  });
+
+  it('relays when a known rider has not seen it yet', () => {
+    const casey: RiderNode = { riderId: 'casey', latitude: 17.41, longitude: 78.49, timestampMs: NOW };
+    expect(shouldRelayTelemetry(ping(), 'alex', [casey])).toBe(true);
+  });
+
+  it('below the high-density threshold, relays even at a low ttl', () => {
+    const casey: RiderNode = { riderId: 'casey', latitude: 17.41, longitude: 78.49, timestampMs: NOW };
+    expect(shouldRelayTelemetry(ping({ ttl: 1 }), 'alex', [casey])).toBe(true);
+  });
+
+  it('above the high-density threshold, refuses to relay below the high-density floor', () => {
+    const knownRiders: RiderNode[] = Array.from({ length: TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 1 }, (_, i) => ({
+      riderId: `r${i}`,
+      latitude: 17.4 + i * 0.001,
+      longitude: 78.5,
+      timestampMs: NOW,
+    }));
+    expect(shouldRelayTelemetry(ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1 }), 'alex', knownRiders)).toBe(false);
+    expect(shouldRelayTelemetry(ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL }), 'alex', knownRiders)).toBe(true);
   });
 });
 
@@ -182,7 +321,7 @@ describe('handlePacket: HAZARD_EVENT', () => {
 
   it('does not regress a rider to an older fix carried by a late-arriving hazard', () => {
     const { manager } = harness('bilal');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'alex', riderName: 'Alex', latitude: 1, longitude: 1, timestamp: NOW + 1000 });
+    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex', latitude: 1, longitude: 1, timestamp: NOW + 1000 }));
     manager.handlePacket(hazard({ originRiderId: 'alex', latitude: 9, longitude: 9, timestamp: NOW }));
     expect(manager.getKnownRiders()[0]).toEqual({ riderId: 'alex', riderName: 'Alex', latitude: 1, longitude: 1, timestampMs: NOW + 1000 });
   });
@@ -198,7 +337,8 @@ describe('handlePacket: HAZARD_EVENT', () => {
 
   it('relays onward when a known rider has not seen it, decrementing ttl and extending visitedNodes', () => {
     const { manager, sent } = harness('bilal');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW });
+    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW }));
+    sent.length = 0; // the setup ping itself may have been eligible to relay -- isolate the hazard assertion below
     manager.handlePacket(hazard());
 
     expect(sent).toHaveLength(1);
@@ -206,7 +346,7 @@ describe('handlePacket: HAZARD_EVENT', () => {
       type: 'HAZARD_EVENT',
       hazardId: 'h1',
       senderId: 'bilal',
-      ttl: 4,
+      ttl: HAZARD_PACKET_MAX_TTL - 1,
       visitedNodes: ['alex', 'bilal'],
     });
   });
@@ -219,7 +359,7 @@ describe('handlePacket: HAZARD_EVENT', () => {
 
   it('never relays a packet already at ttl 0', () => {
     const { manager, sent } = harness('bilal');
-    manager.handlePacket({ type: 'TELEMETRY_PING', riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW });
+    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW }));
     manager.handlePacket(hazard({ ttl: 0 }));
     expect(sent).toHaveLength(0);
   });
