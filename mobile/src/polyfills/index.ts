@@ -10,3 +10,8 @@
  */
 import './domException';
 import './textEncoding';
+// Secure crypto.getRandomValues (Hermes has none): a TurboModule backed by SecureRandom on Android
+// and SecRandomCopyBytes on iOS. Ride Connectivity Protocol message ids depend on it. It adds only
+// getRandomValues; the crypto.randomUUID that LiveKit's registerGlobals installs afterwards is
+// Math.random-based and must not be used for protocol ids.
+import 'react-native-get-random-values';

@@ -52,22 +52,19 @@ import { MAX_RIDERS, isRoomOverCapacity, sortByJoinOrder } from '../utils/riderP
 import type { PresenceEvent } from '../utils/riderPresence';
 import {
   HAZARD_LABELS,
-  HAZARD_TOPIC,
-  claimHazardWindow,
   createEchoGuard,
-  encodeHazardPacket,
-  isWithinHazardWindow,
-  parseHazardPacket,
-  rememberHazardOnce,
   speakHazardAudio,
   speakText,
   startSpeechHazardDetection,
-  type HazardPacket,
-  type HazardType,
 } from '../services/SpeechHazardService';
-import { nearbyMeshService, type MeshStatus } from '../services/NearbyMeshService';
+import type { HazardPacket } from '../protocol/hazardProtocol';
+import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
+import { nearbyTransport } from '../transports/NearbyTransport';
+import { createLiveKitHazardTransport } from '../transports/LiveKitHazardTransport';
+import type { TransportStatus } from '../transports/Transport';
+import { createHazardCoordinator } from '../hazards/HazardCoordinator';
 import { brand, font, homeType } from '../homeTheme';
 import { Logo } from '../components/Logo';
 import {
@@ -91,6 +88,12 @@ import type { RideDestination } from '../components/RiderMap';
 import { DestinationSuggestions } from '../components/DestinationSuggestions';
 import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
 import { createDestinationBroadcaster } from '../services/destinationBroadcast';
+import {
+  createAppRideNodeIdentity,
+  createNearbyRideConnectivity,
+  registerRideConnectivityDevMenu,
+} from '../services/rideConnectivityService';
+import type { RideNodeIdentity } from '../connectivity/rideConnectivityLifecycle';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -103,7 +106,6 @@ const HAZARD_DUCK_VOLUME = 0.2;
 const CALL_VOLUME = 1.0;
 
 type Transport = 'cloud' | 'mesh' | 'connecting';
-type HazardSource = 'cloud' | 'mesh';
 
 /** Turns every other rider's mic volume down (or back up) in this room. Used to duck the live
  * call for the exact duration of a spoken hazard announcement -- see speakHazardAudio's promise,
@@ -337,6 +339,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const hasLoggedJoinRef = useRef(false);
   const [keepAwakeEnabled, setKeepAwakeEnabled] = useState(false);
   const [diagnosticsVisible, setDiagnosticsVisible] = useState(false);
+  const liveKitHazardTransport = useMemo(() => createLiveKitHazardTransport(room), [room]);
 
   useKeepAwake(keepAwakeEnabled);
 
@@ -463,7 +466,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [meshMode, setMeshMode] = useState(false);
   const [meshPermission, setMeshPermission] = useState<boolean | null>(null);
   const [meshError, setMeshError] = useState<string | null>(null);
-  const [meshStatus, setMeshStatus] = useState<MeshStatus>({ active: false, peers: 0, error: null });
+  const [meshStatus, setMeshStatus] = useState<TransportStatus>({
+    active: false,
+    peers: 0,
+    error: null,
+  });
   const [lastHeard, setLastHeard] = useState<string | null>(null);
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
@@ -472,24 +479,52 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     null,
   );
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
-  // Packet-id memory for the general dedup/relay gate below (rememberHazardOnce prunes this by
-  // age, not count -- see that function for why a fixed-size cache caused hazards to loop).
-  const seenHazardIdsRef = useRef<Map<string, number>>(new Map());
-  // A second, independent id memory dedicated to the TTS call site: guarantees a given packet is
-  // read aloud at most once, regardless of anything the banner/relay logic above does or changes
-  // to in the future.
-  const spokenHazardIdsRef = useRef<Map<string, number>>(new Map());
-  // Two dedup windows with a deliberate ONE-WAY relationship:
-  //  - a hazard this rider just SENT never suppresses an incoming report of the same type -- a
-  //    false local trigger (e.g. overhearing another phone) must not hide a real alert; but
-  //  - a hazard this rider just RECEIVED does suppress a local re-send of the same type -- they
-  //    already know about it, and a re-send is what turns a readout heard by our own mic into an
-  //    echo that bounces back to the original rider.
-  const recentSentHazardsRef = useRef<Map<HazardType, number>>(new Map());
-  const recentReceivedHazardsRef = useRef<Map<HazardType, number>>(new Map());
+  // Ride Connectivity Protocol (Phase 2): one secure node identity per mounted ride, created on
+  // first use and reused across Nearby retries and rider-name changes; never persisted.
+  const rideNodeIdentityRef = useRef<RideNodeIdentity | null>(null);
   // True while this phone's own speaker is reading an alert (plus a short tail), so the always-on
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
+  const onLocalMeshHazardRef = useRef<(packet: HazardPacket) => void>(() => {});
+  const hazardCoordinator = useMemo(
+    () =>
+      createHazardCoordinator({
+        senderId: senderIdRef.current,
+        nearbyTransport,
+        liveKitTransport: liveKitHazardTransport,
+        isOnline: () => isOnlineRef.current,
+        onLocalAccepted: packet => {
+          onLocalMeshHazardRef.current(packet);
+          // Silent, visual-only confirmation: the rider already knows what they just said.
+          setBannerAlert({ packet, kind: 'sent' });
+        },
+        onIncomingAccepted: (packet, _ingress, shouldAnnounce) => {
+          setBannerAlert({ packet, kind: 'received' });
+          // Presentation stays in RideScreen: announce once, duck for the readout, then restore.
+          if (shouldAnnounce) {
+            echoGuardRef.current.begin();
+            duckRemoteAudio(room, true);
+            speakHazardAudio(packet).finally(() => {
+              duckRemoteAudio(room, false);
+              echoGuardRef.current.end();
+            });
+          }
+        },
+        onLocalSendResult: (packet, outcomes) => {
+          const result = outcomes
+            .map(outcome =>
+              outcome.ok
+                ? `${outcome.channel} ok`
+                : `${outcome.channel} FAILED (${outcome.error})`,
+            )
+            .join(', ');
+          setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${result}`);
+        },
+      }),
+    [liveKitHazardTransport, room],
+  );
+  const hazardCoordinatorRef = useRef(hazardCoordinator);
+  hazardCoordinatorRef.current = hazardCoordinator;
 
   // --- Offline mesh-sync: 3-min telemetry pings + hazard relay + reconnect flush, layered on the
   // same Nearby Connections session as the voice-hazard mesh above (see meshSyncManager.ts). ---
@@ -512,6 +547,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const meshSyncManager = meshSyncManagerRef.current;
   onMeshHazardRef.current = hazard => {
     logDiagnosticEvent('mesh_hazard_received', `${hazard.hazardType} relayed from ${hazard.riderName}`);
+  };
+  onLocalMeshHazardRef.current = packet => {
+    if (isMeshHazardKind(packet.hazard) && selfLocationRef.current) {
+      meshSyncManager.raiseHazard(packet.hazard, selfLocationRef.current);
+    }
   };
 
   const transport: Transport = isOnline ? 'cloud' : meshMode ? 'mesh' : 'connecting';
@@ -565,12 +605,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   // Tracks connected mesh peers independently of meshStatus, for the "Riders Connected Offline"
   // sub-label -- always subscribed (a no-op while the mesh session isn't running). Also feeds
-  // meshSyncManager: NearbyMeshModule exposes no per-peer connect event, so a 0 -> positive jump
-  // here is how it detects "this device just regained mesh connectivity" and announces a
-  // SYNC_REQUEST to flush anything it missed.
+  // meshSyncManager: a 0 -> positive jump means mesh connectivity was regained.
   useEffect(
     () =>
-      nearbyMeshService.onPeerCountChanged(count => {
+      nearbyTransport.onPeerCountChanged(count => {
         setOfflinePeerCount(count);
         meshSyncManager.handlePeerCountChanged(count);
       }),
@@ -590,14 +628,21 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     }
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    // Phase 2 protocol on this Nearby session: started after Nearby starts, stopped before Nearby
+    // stops. At most one runtime per effect run; a late start after cleanup is ignored.
+    const connectivity = createNearbyRideConnectivity({
+      roomCode: session.roomCode,
+      getNodeIdentity: () => (rideNodeIdentityRef.current ??= createAppRideNodeIdentity()),
+    });
 
     const startMesh = () => {
-      nearbyMeshService
-        .start(session.roomCode, session.riderName)
+      nearbyTransport
+        .start({ roomCode: session.roomCode, riderName: session.riderName })
         .then(() => {
           if (!cancelled) {
             setMeshError(null);
             meshSyncManager.start();
+            connectivity.transportStarted();
           }
         })
         .catch((e: { code?: string; message?: string }) => {
@@ -612,8 +657,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         });
     };
     startMesh();
-    const unsubscribeStatus = nearbyMeshService.onStatus(setMeshStatus);
-    const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet => meshSyncManager.handlePacket(packet));
+    const unsubscribeStatus = nearbyTransport.onStatus(setMeshStatus);
+    const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet =>
+      meshSyncManager.handlePacket(packet),
+    );
 
     return () => {
       cancelled = true;
@@ -621,140 +668,15 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       unsubscribeStatus();
       unsubscribeMeshPacket();
       meshSyncManager.stop();
-      nearbyMeshService.stop().catch(() => {});
+      connectivity.dispose();
+      nearbyTransport.stop().catch(() => {});
     };
   }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
 
-  const publishToCloud = useCallback(
-    (packet: HazardPacket) =>
-      room.localParticipant.publishData(encodeHazardPacket(packet), {
-        reliable: true,
-        topic: HAZARD_TOPIC,
-      }),
-    [room],
-  );
+  // Debug builds only: dev-menu switch to make this one phone a test cloud gateway.
+  useEffect(registerRideConnectivityDevMenu, []);
 
-  /** True the first time an id is seen. The same packet can arrive repeatedly (mesh
-   * re-discovery/relay), over both transports, or bounce back after being relayed. */
-  const rememberHazardId = useCallback((id: string): boolean => {
-    return rememberHazardOnce(seenHazardIdsRef.current, id);
-  }, []);
-
-  const handleIncomingHazard = useCallback(
-    (packet: HazardPacket, source: HazardSource) => {
-      // This rider's own hazard, bounced back by a relay: it already got its silent "sent"
-      // confirmation in broadcastHazard below, and must never be re-shown as a red "received"
-      // alert or read back to the rider who just said it.
-      const isLocalSender = packet.senderId === senderIdRef.current;
-      if (isLocalSender || !rememberHazardId(packet.id)) {
-        return;
-      }
-      // The same real hazard reported again by another rider within a few seconds (they heard
-      // each other, or it came in over both transports) is shown and relayed only once.
-      if (!claimHazardWindow(recentReceivedHazardsRef.current, packet.hazard)) {
-        return;
-      }
-      setBannerAlert({ packet, kind: 'received' });
-      // Single-play TTS guard: a dedicated, independent check that this exact packet is read
-      // aloud at most once -- never for this rider's own hazard (see broadcastHazard, which
-      // shows the green confirmation silently), and never a second time even if this function
-      // somehow ran again for the same packet. Duck other riders' voices for exactly the duration
-      // of the readout, then restore them; never left ducked even if speech fails, since the
-      // promise always settles. The echo guard covers the same span (plus a tail) so the
-      // recognizer never mistakes this readout for the rider speaking.
-      if (rememberHazardOnce(spokenHazardIdsRef.current, packet.id)) {
-        echoGuardRef.current.begin();
-        duckRemoteAudio(room, true);
-        speakHazardAudio(packet).finally(() => {
-          duckRemoteAudio(room, false);
-          echoGuardRef.current.end();
-        });
-      }
-
-      // Relay so a rider on any side reaches the whole ride: mesh -> room (any online neighbour
-      // pushes an offline rider's hazard into the room), and every hazard onward over the mesh, so
-      // riders spread out along the road pass it bike to bike beyond one radio hop. Duplicates are
-      // dropped by rememberHazardId, so this can't loop.
-      if (source === 'mesh' && isOnlineRef.current) {
-        publishToCloud(packet).catch(() => {});
-      }
-      nearbyMeshService.broadcastHazard(packet).catch(() => {});
-    },
-    [publishToCloud, rememberHazardId, room],
-  );
-
-  useEffect(() => {
-    function handleData(
-      payload: Uint8Array,
-      _participant?: Participant,
-      _kind?: DataPacket_Kind,
-      topic?: string,
-    ) {
-      if (topic !== HAZARD_TOPIC) {
-        return;
-      }
-      const packet = parseHazardPacket(payload);
-      if (packet) {
-        handleIncomingHazard(packet, 'cloud');
-      }
-    }
-    room.on(RoomEvent.DataReceived, handleData);
-    return () => {
-      room.off(RoomEvent.DataReceived, handleData);
-    };
-  }, [room, handleIncomingHazard]);
-
-  useEffect(
-    () => nearbyMeshService.onHazardReceived(packet => handleIncomingHazard(packet, 'mesh')),
-    [handleIncomingHazard],
-  );
-
-  // Send on every channel that is up: the cloud reaches online riders anywhere, the mesh reaches
-  // offline riders nearby. Called for a hazard this rider's own mic just detected -- the sender
-  // side of the flow, entirely separate from handleIncomingHazard above.
-  const broadcastHazard = (packet: HazardPacket) => {
-    rememberHazardId(packet.id);
-    // This rider was just TOLD about this hazard type: anything their mic picks up for it now is
-    // almost certainly an echo of the readout or of the rider who reported it, and sending it on
-    // is exactly what would bounce it back and start a loop. Drop it. (One-way on purpose -- see
-    // recentSentHazardsRef above.)
-    if (isWithinHazardWindow(recentReceivedHazardsRef.current, packet.hazard)) {
-      return;
-    }
-    // This rider's own mic already reported this hazard type a moment ago -- don't send/show it
-    // again.
-    if (!claimHazardWindow(recentSentHazardsRef.current, packet.hazard)) {
-      return;
-    }
-    // Pothole/accident/obstacle also feed the offline mesh-sync relay (meshSyncManager), which is
-    // a separate system from the cloud/mesh send below: it carries ttl + visitedNodes so the
-    // report keeps hopping bike-to-bike beyond this rider's own radio range, and it's what feeds
-    // OfflineRiderMap. Reuses the exact same throttle gate above, so a voice echo can't double-fire
-    // it either. Skipped without a GPS fix -- there's no sensible location to raise it at.
-    if (isMeshHazardKind(packet.hazard) && selfLocationRef.current) {
-      meshSyncManager.raiseHazard(packet.hazard, selfLocationRef.current);
-    }
-    // Silent, visual-only confirmation -- no TTS. The rider already knows what they just said.
-    setBannerAlert({ packet, kind: 'sent' });
-    const outcomes: string[] = [];
-    const attempt = (channel: string, send: Promise<unknown>) =>
-      send.then(
-        () => {
-          outcomes.push(`${channel} ok`);
-        },
-        (e: { message?: string }) => {
-          outcomes.push(`${channel} FAILED (${e?.message ?? 'error'})`);
-        },
-      );
-
-    const sends = [attempt('mesh', nearbyMeshService.broadcastHazard(packet))];
-    if (isOnlineRef.current) {
-      sends.push(attempt('cloud', publishToCloud(packet)));
-    }
-    Promise.all(sends).then(() => setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${outcomes.join(', ')}`));
-  };
-  const broadcastHazardRef = useRef(broadcastHazard);
-  broadcastHazardRef.current = broadcastHazard;
+  useEffect(() => hazardCoordinator.subscribe(), [hazardCoordinator]);
 
   // Always-on offline speech -> hazard detection; independent of connectivity and of the mic mute.
   useEffect(
@@ -762,7 +684,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       startSpeechHazardDetection({
         senderId: senderIdRef.current,
         senderName: session.riderName,
-        onHazard: packet => broadcastHazardRef.current(packet),
+        onHazard: packet => hazardCoordinatorRef.current.submitLocal(packet),
         onHeard: setLastHeard,
         isEchoLikely: () => echoGuardRef.current.isEchoLikely(),
         onError: setVoiceError,

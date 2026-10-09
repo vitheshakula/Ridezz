@@ -41,14 +41,14 @@ describe('nearbyMeshService', () => {
     await Promise.resolve();
     await Promise.resolve();
     expect(broadcastHazard).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(broadcastHazard.mock.calls[0][0]).hazard).toBe('pothole');
+    expect(broadcastHazard.mock.calls[0][0]).toBe(serializeHazardPacket(packet));
 
     resolvers[0]();
     await first$;
     await Promise.resolve();
     await Promise.resolve();
     expect(broadcastHazard).toHaveBeenCalledTimes(2);
-    expect(JSON.parse(broadcastHazard.mock.calls[1][0]).hazard).toBe('gravel');
+    expect(broadcastHazard.mock.calls[1][0]).toBe(serializeHazardPacket(second));
 
     resolvers[1]();
     await second$;

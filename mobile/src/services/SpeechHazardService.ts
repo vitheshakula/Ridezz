@@ -1,4 +1,28 @@
 import { DeviceEventEmitter, NativeModules, Platform } from 'react-native';
+import {
+  createHazardPacket,
+  type HazardPacket,
+  type HazardType,
+} from '../protocol/hazardProtocol';
+import { HAZARD_THROTTLE_MS } from '../protocol/hazardPolicy';
+
+export {
+  HAZARD_PACKET_MAX_AGE_MS,
+  HAZARD_PACKET_MAX_FUTURE_MS,
+  HAZARD_PROTOCOL_VERSION,
+  HAZARD_TYPE_IDS,
+  createHazardPacket,
+  encodeHazardPacket,
+  parseHazardPacket,
+  serializeHazardPacket,
+} from '../protocol/hazardProtocol';
+export type { HazardPacket, HazardType } from '../protocol/hazardProtocol';
+export {
+  HAZARD_THROTTLE_MS,
+  claimHazardWindow,
+  isWithinHazardWindow,
+  rememberHazardOnce,
+} from '../protocol/hazardPolicy';
 
 /** Spoken phrases that raise a hazard alert, grouped by what they mean. Matching is on whole
  * words / whole phrases ("stop" does not match "stopping"). */
@@ -148,8 +172,6 @@ export const HAZARD_RULES = [
   },
 ] as const;
 
-export type HazardType = (typeof HAZARD_RULES)[number]['id'];
-
 /**
  * The four hazards added for group-ride safety, under their named constants. LOW_FUEL and
  * SLOW_DOWN are the app's existing `fuel` and `slow` hazards -- extended with more trigger phrases
@@ -174,39 +196,6 @@ const CUSTOM_ANNOUNCEMENTS: Partial<Record<HazardType, string>> = {
 export const HAZARD_LABELS = Object.fromEntries(
   HAZARD_RULES.map(rule => [rule.id, rule.label]),
 ) as Record<HazardType, string>;
-
-/** LiveKit data-channel topic for hazard packets (reliable: they're rare and must arrive). */
-export const HAZARD_TOPIC = 'ridezz.hazard';
-
-/** Same hazard type is only raised once per this window (the same call-out is often heard twice). */
-export const HAZARD_THROTTLE_MS = 4000;
-
-/** True when a hazard of this type was already recorded in `recent` within HAZARD_THROTTLE_MS.
- * A read-only peek -- see claimHazardWindow for the version that also records. */
-export function isWithinHazardWindow(
-  recent: Map<HazardType, number>,
-  hazard: HazardType,
-  now: number = Date.now(),
-): boolean {
-  const last = recent.get(hazard);
-  return last !== undefined && now - last < HAZARD_THROTTLE_MS;
-}
-
-/** Records that a hazard of this type was just raised or shown, and reports whether it is new.
- * Returns false when the same type already happened within HAZARD_THROTTLE_MS -- by anyone. This
- * stops one real hazard from being reported several times when riders hear each other (phone
- * speakers, phones side by side) or when one rider's alert arrives over both transports. */
-export function claimHazardWindow(
-  recent: Map<HazardType, number>,
-  hazard: HazardType,
-  now: number = Date.now(),
-): boolean {
-  if (isWithinHazardWindow(recent, hazard, now)) {
-    return false;
-  }
-  recent.set(hazard, now);
-  return true;
-}
 
 /** How long after an announcement finishes playing the recognizer is still treated as possibly
  * hearing it. Vosk only emits its result for an utterance once it detects the trailing silence,
@@ -272,56 +261,6 @@ export function isAnnouncementEcho(text: string): boolean {
   const padded = ` ${(text.toLowerCase().match(/[a-z]+/g) ?? []).join(' ')} `;
   return padded.includes(' reported ') || ANNOUNCEMENT_PHRASES.some(phrase => padded.includes(` ${phrase} `));
 }
-
-/**
- * Records that a specific packet id has now been handled, and reports whether this is the first
- * time. Bounds the memory by age (pruning anything older than HAZARD_PACKET_MAX_AGE_MS) rather
- * than by count.
- *
- * This matters on a mesh that relays: every device forwards every hazard it sees to all its
- * connected peers, so the same packet id keeps bouncing back and forth between directly-connected
- * riders for as long as it stays within its 30s validity window. A fixed-size cache that evicts
- * its oldest entry under that traffic can forget a still-circulating id -- at which point a
- * device that already showed the banner and read it aloud sees the very same packet again and
- * treats it as brand new, repeating both indefinitely for as long as the mesh keeps bouncing it.
- * Pruning by age instead of count can never forget an id while the packet it names is still
- * something any device could legitimately relay or report -- past that age every device's
- * parseHazardPacket already rejects the packet outright, so there's nothing left to dedup.
- */
-export function rememberHazardOnce(
-  remembered: Map<string, number>,
-  id: string,
-  now: number = Date.now(),
-): boolean {
-  for (const [seenId, seenAt] of remembered) {
-    if (now - seenAt > HAZARD_PACKET_MAX_AGE_MS) {
-      remembered.delete(seenId);
-    }
-  }
-  if (remembered.has(id)) {
-    return false;
-  }
-  remembered.set(id, now);
-  return true;
-}
-
-/** A packet older than this is rejected by parseHazardPacket below as stale, on every device --
- * so nothing needs to remember a packet id for longer than this to dedup it correctly (see
- * rememberHazardOnce). */
-export const HAZARD_PACKET_MAX_AGE_MS = 30_000;
-const HAZARD_MAX_FUTURE_MS = 30_000;
-const MAX_NAME_LENGTH = 24;
-
-export interface HazardPacket {
-  v: 1;
-  id: string;
-  hazard: HazardType;
-  senderId: string;
-  senderName: string;
-  timestamp: number;
-}
-
-const HAZARD_IDS: ReadonlySet<string> = new Set(HAZARD_RULES.map(rule => rule.id));
 
 // ---------------------------------------------------------------------------
 // Pure helpers
@@ -483,73 +422,6 @@ export function parseSpeechText(raw: unknown): string {
   } catch {
     return '';
   }
-}
-
-export function createHazardPacket(
-  hazard: HazardType,
-  senderId: string,
-  senderName: string,
-  now: number = Date.now(),
-): HazardPacket {
-  return {
-    v: 1,
-    id: `${senderId}-${now}-${hazard}`,
-    hazard,
-    senderId,
-    // Kept short: packets travel over cellular data and short-range radio links.
-    senderName: senderName.slice(0, MAX_NAME_LENGTH),
-    timestamp: now,
-  };
-}
-
-export function serializeHazardPacket(packet: HazardPacket): string {
-  return JSON.stringify(packet);
-}
-
-export function encodeHazardPacket(packet: HazardPacket): Uint8Array<ArrayBuffer> {
-  return new TextEncoder().encode(serializeHazardPacket(packet));
-}
-
-/** Decodes + validates a packet from either transport. Returns null (never throws) for anything
- * malformed, unknown, or stale -- callers silently drop it. */
-export function parseHazardPacket(
-  input: string | Uint8Array,
-  now: number = Date.now(),
-): HazardPacket | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(typeof input === 'string' ? input : new TextDecoder().decode(input));
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== 'object' || parsed === null) {
-    return null;
-  }
-  const p = parsed as Record<string, unknown>;
-
-  if (
-    p.v !== 1 ||
-    typeof p.hazard !== 'string' ||
-    !HAZARD_IDS.has(p.hazard) ||
-    typeof p.id !== 'string' ||
-    typeof p.senderId !== 'string' ||
-    typeof p.senderName !== 'string' ||
-    typeof p.timestamp !== 'number' ||
-    !Number.isFinite(p.timestamp)
-  ) {
-    return null;
-  }
-  if (now - p.timestamp > HAZARD_PACKET_MAX_AGE_MS || p.timestamp - now > HAZARD_MAX_FUTURE_MS) {
-    return null;
-  }
-  return {
-    v: 1,
-    id: p.id.slice(0, 96),
-    hazard: p.hazard as HazardType,
-    senderId: p.senderId.slice(0, 32),
-    senderName: p.senderName.slice(0, MAX_NAME_LENGTH),
-    timestamp: p.timestamp,
-  };
 }
 
 // ---------------------------------------------------------------------------

@@ -1,17 +1,57 @@
 # Ridezz server
 
-Node + Express + Prisma (SQLite). Handles rider accounts and sign-in, creates ride rooms, and
+Node + Express + Prisma (PostgreSQL). Handles rider accounts and sign-in, creates ride rooms, and
 issues the short-lived LiveKit tokens the mobile app joins them with, so the LiveKit API secret
 never lives on a phone.
 
+The active Prisma migration history targets PostgreSQL. The original SQLite migrations are
+preserved unchanged under `prisma/sqlite-migrations-archive` for provenance only; Prisma does not
+deploy that archive. Do not use `prisma db push` as a substitute for reviewed migrations.
+
 ```sh
-npm install
-cp .env.example .env      # then fill it in
-npx prisma migrate deploy
+npm ci
+cp .env.example .env      # then replace DATABASE_URL with a PostgreSQL URL and fill in the rest
 npm run dev               # tsx watch
-npm test                  # real routes against a throwaway database
 npm run build && npm start
 ```
+
+## PostgreSQL migration history
+
+`prisma/migrations/20261002_postgresql_baseline` is the initial PostgreSQL migration generated
+from the current Prisma schema. For a new, empty PostgreSQL database, deploy the committed history:
+
+```sh
+npx --no-install prisma migrate deploy
+```
+
+Do not execute the baseline SQL against an existing database that already contains these tables.
+Before adopting this history for such a database, take a recoverable backup or branch and verify
+that its schema is equivalent to the baseline. Only then mark the baseline as already applied:
+
+```sh
+npx --no-install prisma migrate resolve --applied 20261002_postgresql_baseline
+```
+
+That resolve step is a deployment operation and has not been performed by this repository change.
+It must be run separately against the intended database after review.
+
+## Integration-test database
+
+The route integration tests require a dedicated, isolated PostgreSQL database supplied through
+`TEST_DATABASE_URL`. They never fall back to the application's `DATABASE_URL`.
+
+The database name must begin with `ridezz_test`, for example:
+
+```sh
+TEST_DATABASE_URL=postgresql://user:password@localhost:5432/ridezz_test npm test
+```
+
+Names such as `ridezz_test_local` and `ridezz_test_ci` are also accepted. The test setup verifies
+both the URL and PostgreSQL's reported `current_database()` before deleting any application test
+rows. Never point `TEST_DATABASE_URL` at a development, shared, or production database.
+
+Tests deploy the committed migrations with `npx --no-install prisma migrate deploy`; they do not
+use `db push` or `migrate reset`.
 
 ## Authentication
 

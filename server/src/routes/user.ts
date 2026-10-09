@@ -1,7 +1,7 @@
 import { Router, type RequestHandler } from 'express';
 import type { PrismaClient } from '@prisma/client';
-import { ensureRoomCode } from '../auth/roomCode';
 import { asyncHandler } from '../http';
+import { prepareCurrentUser } from '../services/authService';
 
 interface UserRouterDeps {
   prisma: PrismaClient;
@@ -18,9 +18,7 @@ export function createUserRouter({ prisma, requireAuth }: UserRouterDeps): Route
   router.get(
     '/profile',
     asyncHandler(async (req, res) => {
-      const me = req.user!;
-      const roomCode = me.roomCode ?? (await ensureRoomCode(prisma, me.id));
-      return res.json({ user: { ...me, roomCode } });
+      return res.json({ user: await prepareCurrentUser(prisma, req.user!) });
     }),
   );
 
