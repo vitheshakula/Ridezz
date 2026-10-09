@@ -60,6 +60,10 @@ import {
 import { createHazardPacket, type HazardPacket } from '../protocol/hazardProtocol';
 import { useCrashDetection } from '../crash/useCrashDetection';
 import CrashCountdown from '../components/CrashCountdown';
+import BrakeFlasher from '../components/BrakeFlasher';
+import { createBrakeCoordinator } from '../braking/brakeCoordinator';
+import { emitPeerBrakingAlert } from '../braking/brakingEvents';
+import { useHardBraking, usePeerBraking } from '../braking/useHardBraking';
 import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
@@ -769,6 +773,48 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     },
   });
 
+  // Emergency hard braking: the native detector alerts at IMU onset; the compact packet goes out
+  // over the mesh (and the cloud when online) before any local feedback. Riders behind get a
+  // flasher, a strong vibration and a spoken warning.
+  const brakeAnnounce = useCallback(
+    (text: string) => {
+      echoGuardRef.current.begin();
+      duckRemoteAudio(room, true);
+      return speakText(text).finally(() => {
+        duckRemoteAudio(room, false);
+        echoGuardRef.current.end();
+      });
+    },
+    [room],
+  );
+  const brakeCoordinator = useMemo(
+    () =>
+      createBrakeCoordinator({
+        senderId: senderIdRef.current,
+        nearbyTransport,
+        liveKitTransport: liveKitHazardTransport,
+        isOnline: () => isOnlineRef.current,
+        onPeerBraking: alert => emitPeerBrakingAlert(alert),
+      }),
+    [liveKitHazardTransport],
+  );
+  useEffect(() => brakeCoordinator.subscribe(), [brakeCoordinator]);
+  useHardBraking({
+    onLocalBraking: event => {
+      brakeCoordinator
+        .submitLocal({
+          seq: event.seq,
+          timestamp: event.onsetAt,
+          speedKmh: event.speedKmh,
+          peakDecelG: event.peakDecelG,
+          headingDeg: event.headingDeg,
+        })
+        .catch(() => {});
+    },
+    announce: brakeAnnounce,
+  });
+  const peerBrake = usePeerBraking({ announce: brakeAnnounce });
+
   const mapStatusMessage = useMemo(() => {
     if (locationPermissionGranted === null) {
       return 'Checking location permission...';
@@ -1094,6 +1140,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       </View>
 
       <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+
+      <BrakeFlasher visible={peerBrake !== null} />
 
       <CrashCountdown
         state={crash.state}

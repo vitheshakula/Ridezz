@@ -26,6 +26,7 @@ import com.rideaze.mobile.RidezzIntercomService
  *   consumePendingSos()         -> SOS payload | null   an alert whose event may have been missed
  *   getStatus()                 -> { monitoring, phase, ... }
  *   simulateCrash()             -- debuggable builds only
+ *   resetBrakingMount()         -> boolean   forget the learned mount axis (phone was re-mounted)
  *
  * Events (DeviceEventEmitter):
  *   onCrashCandidateDetected  { countdownMs, confidence, severity, path, evidence }
@@ -35,6 +36,11 @@ import com.rideaze.mobile.RidezzIntercomService
  *   onCrashStateChanged       { phase }       idle | countdown | sos | cancelled
  *   onCrashDecision           { outcome, ... }   every finished candidate, for tuning
  *   onCrashMonitorStatus      { sensorsStalled, gnss }
+ *   onHardBrakingDetected     { seq, onsetAt, raisedAt, speedMps, speedKmh, peakDecelG, headingDeg|null,
+ *                               source }   raised at IMU onset; broadcast it to the group
+ *   onHardBrakingDecision     { outcome, ... }   GNSS confirmation / rejection, for tuning
+ *
+ * startMonitoring options also accept { hardBraking: false } to run crash detection alone.
  *
  * The countdown is owned by the native side and keeps running if JS is busy; if the alert fires
  * while no React instance is attached, it is held and returned by consumePendingSos().
@@ -60,7 +66,7 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   fun startMonitoring(options: ReadableMap?, promise: Promise) {
     val wasRunning = monitor.isRunning
     try {
-      val info = monitor.start(configFrom(options))
+      val info = monitor.start(configFrom(options), HardBrakingConfig(), brakingEnabledFrom(options))
       val caps = info.capabilities
       val map = Arguments.createMap()
       map.putDouble("accelMaxRangeG", caps.accelMaxRange / STANDARD_GRAVITY)
@@ -68,6 +74,7 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
       map.putBoolean("hasGravity", caps.hasGravity)
       map.putString("gnss", info.gnss.wire)
       map.putInt("samplingHz", SAMPLING_HZ)
+      map.putBoolean("hardBraking", brakingEnabledFrom(options))
       // False means Android may freeze the process once the app is backgrounded.
       map.putBoolean("foregroundServiceActive", RidezzIntercomService.isRunning)
       map.putBoolean("alreadyRunning", wasRunning)
@@ -85,6 +92,11 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     lastPhase = CrashPhase.IDLE
     failCalibration("interrupted")
     promise.resolve(null)
+  }
+
+  @ReactMethod
+  fun resetBrakingMount(promise: Promise) {
+    monitor.resetBrakingMount { promise.resolve(it) }
   }
 
   @ReactMethod
@@ -154,7 +166,48 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
+  @ReactMethod
+  fun simulateHardBraking(promise: Promise) {
+    if (!isDebuggable()) {
+      promise.reject("braking_simulate_disabled", "simulateHardBraking is only available in debug builds")
+      return
+    }
+    monitor.simulateBraking { ok ->
+      if (ok) promise.resolve(null)
+      else promise.reject("crash_not_monitoring", "Monitoring is not running")
+    }
+  }
+
+  private fun isDebuggable() =
+    (reactContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+
+  // Debug builds only: `adb shell am broadcast -a com.rideaze.mobile.SIMULATE_BRAKING` replays the
+  // 30,30,30,30 -> 5 km/h scenario so two phones can be tested without riding.
+  private var debugReceiver: android.content.BroadcastReceiver? = null
+
+  override fun initialize() {
+    super.initialize()
+    if (!isDebuggable()) return
+    val receiver =
+      object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+          val cruise = intent?.getDoubleExtra("cruiseKmh", 30.0) ?: 30.0
+          val final = intent?.getDoubleExtra("finalKmh", 5.0) ?: 5.0
+          monitor.simulateBraking(cruise, final) { }
+        }
+      }
+    debugReceiver = receiver
+    androidx.core.content.ContextCompat.registerReceiver(
+      reactContext,
+      receiver,
+      android.content.IntentFilter("com.rideaze.mobile.SIMULATE_BRAKING"),
+      androidx.core.content.ContextCompat.RECEIVER_EXPORTED,
+    )
+  }
+
   override fun invalidate() {
+    debugReceiver?.let { runCatching { reactContext.unregisterReceiver(it) } }
+    debugReceiver = null
     monitor.stop()
     failCalibration("interrupted")
     super.invalidate()
@@ -202,6 +255,44 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     emit("onCrashDecision", map)
   }
 
+  override fun onHardBraking(event: BrakingEvent) {
+    emit(
+      "onHardBrakingDetected",
+      Arguments.createMap().apply {
+        putInt("seq", event.seq)
+        putDouble("onsetAt", event.onsetAt.toDouble())
+        putDouble("raisedAt", event.raisedAt.toDouble())
+        putDouble("speedMps", event.speedMps)
+        putDouble("speedKmh", event.speedMps * 3.6)
+        putDouble("peakDecelG", event.peakDecelG)
+        event.headingDeg?.let { putDouble("headingDeg", it) } ?: putNull("headingDeg")
+        putString("source", event.source.wire)
+      },
+    )
+  }
+
+  override fun onBrakingDecision(decision: BrakingDecision) {
+    val map = Arguments.createMap()
+    map.putDouble("at", decision.at.toDouble())
+    when (decision) {
+      is BrakingDecision.Confirmed -> {
+        map.putString("outcome", "confirmed")
+        map.putInt("seq", decision.seq)
+        map.putDouble("dropMps", decision.dropMps)
+      }
+      is BrakingDecision.Unconfirmed -> {
+        map.putString("outcome", "unconfirmed")
+        map.putInt("seq", decision.seq)
+      }
+      is BrakingDecision.Rejected -> {
+        map.putString("outcome", "rejected")
+        map.putString("reason", decision.reason.wire)
+        map.putDouble("peakDecelG", decision.peakG)
+      }
+    }
+    emit("onHardBrakingDecision", map)
+  }
+
   override fun onCalibration(result: CalibrationResult) {
     val promise = calibrationPromise ?: return
     calibrationPromise = null
@@ -232,6 +323,10 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
       .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
       .emit(event, payload)
   }
+
+  private fun brakingEnabledFrom(options: ReadableMap?): Boolean =
+    options == null || !options.hasKey("hardBraking") || options.isNull("hardBraking") ||
+      options.getBoolean("hardBraking")
 
   /** Optional tuning overrides from JS; anything absent or out of range keeps its default. */
   private fun configFrom(options: ReadableMap?): CrashConfig {

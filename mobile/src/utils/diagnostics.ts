@@ -19,7 +19,9 @@ export type DiagnosticEventType =
   | 'crash_sensors'
   | 'crash_decision'
   | 'crash_countdown'
-  | 'crash_sos';
+  | 'crash_sos'
+  /** Hard-braking warning: own alerts, GNSS confirmation, alerts heard from riders ahead. */
+  | 'braking';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

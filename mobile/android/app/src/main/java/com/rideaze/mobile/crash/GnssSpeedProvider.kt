@@ -32,7 +32,7 @@ enum class GnssStatus(val wire: String) {
 class GnssSpeedProvider(
   context: Context,
   private val clock: EpochClock,
-  private val onFix: (t: Long, speedMps: Double?, lat: Double, lon: Double) -> Unit,
+  private val onFix: (t: Long, speedMps: Double?, lat: Double, lon: Double, bearingDeg: Double?) -> Unit,
   private val onStatus: (GnssStatus) -> Unit,
 ) : LocationListener {
 
@@ -91,6 +91,7 @@ class GnssSpeedProvider(
       if (location.hasSpeed()) location.speed.toDouble() else null,
       location.latitude,
       location.longitude,
+      if (location.hasBearing()) location.bearing.toDouble() else null,
     )
   }
 

@@ -15,7 +15,7 @@ class CrashMonitor(
   private val listener: Listener,
 ) {
 
-  interface Listener : CrashDetectorListener {
+  interface Listener : CrashDetectorListener, HardBrakingListener {
     /** Sensor stall / GNSS availability changed. May be called from the sensor thread. */
     fun onMonitorStatus(status: MonitorStatus)
   }
@@ -31,16 +31,23 @@ class CrashMonitor(
 
   private var clock: EpochClock? = null
   private var core: CrashDetectorCore? = null
+  private var braking: HardBrakingDetector? = null
   private var sensors: RiderSensorManager? = null
   private var gnssProvider: GnssSpeedProvider? = null
   private var stalled = false
+  // While a simulated ride is replayed, live samples must not reach the braking detector.
+  @Volatile private var simulatedUntil = 0L
   private var gnssStatus = GnssStatus.STOPPED
 
   val isRunning: Boolean
     @Synchronized get() = sensors != null
 
   @Synchronized
-  fun start(config: CrashConfig): StartInfo {
+  fun start(
+    config: CrashConfig,
+    brakingConfig: HardBrakingConfig = HardBrakingConfig(),
+    brakingEnabled: Boolean = true,
+  ): StartInfo {
     val caps = RiderSensorManager.probe(appContext)
     if (!caps.hasAccelerometer) {
       throw UnsupportedDeviceException("crash_no_accelerometer", "This phone has no accelerometer")
@@ -61,18 +68,28 @@ class CrashMonitor(
     val clk = EpochClock()
     val detector = CrashDetectorCore(config, listener)
     detector.setGyroAvailable(caps.hasGyroscope)
+    // Braking shares the same streams and thread; a phone too weak for it still runs crash detection.
+    val brake = if (brakingEnabled) HardBrakingDetector(brakingConfig, listener) else null
     stalled = false
 
     val sink =
       object : ImuSink {
-        override fun onAccel(t: Long, x: Double, y: Double, z: Double) = detector.addAccel(t, x, y, z)
+        override fun onAccel(t: Long, x: Double, y: Double, z: Double) {
+          detector.addAccel(t, x, y, z)
+          if (!simulating()) brake?.addAccel(t, x, y, z)
+        }
 
         override fun onGyro(t: Long, x: Double, y: Double, z: Double) = detector.addGyro(t, x, y, z)
 
-        override fun onGravity(t: Long, x: Double, y: Double, z: Double) =
+        override fun onGravity(t: Long, x: Double, y: Double, z: Double) {
           detector.addGravity(t, x, y, z)
+          if (!simulating()) brake?.addGravity(t, x, y, z)
+        }
 
-        override fun onTick(now: Long) = detector.tick(now)
+        override fun onTick(now: Long) {
+          detector.tick(now)
+          brake?.tick(now)
+        }
       }
 
     val manager =
@@ -91,7 +108,10 @@ class CrashMonitor(
       GnssSpeedProvider(
         appContext,
         clk,
-        onFix = { t, speed, lat, lon -> detector.addGnss(t, speed, lat, lon) },
+        onFix = { t, speed, lat, lon, bearing ->
+          detector.addGnss(t, speed, lat, lon)
+          if (!simulating()) brake?.addGnss(t, speed, bearing)
+        },
         onStatus = { status ->
           gnssStatus = status
           publishStatus()
@@ -102,6 +122,7 @@ class CrashMonitor(
 
     clock = clk
     core = detector
+    braking = brake
     sensors = manager
     gnssProvider = gnss
     return StartInfo(caps, gnssStatus)
@@ -114,6 +135,7 @@ class CrashMonitor(
     gnssProvider = null
     sensors = null
     core = null
+    braking = null
     clock = null
     gnssStatus = GnssStatus.STOPPED
     stalled = false
@@ -167,6 +189,45 @@ class CrashMonitor(
       c.clearCalibration()
       true
     }
+
+  private fun simulating() = android.os.SystemClock.elapsedRealtime() < simulatedUntil
+
+  /** Dev/demo only: replays cruise (default 30) -> final (default 5) km/h through the real braking detector. */
+  fun simulateBraking(cruiseKmh: Double = 30.0, finalKmh: Double = 5.0, done: (Boolean) -> Unit) {
+    val manager: RiderSensorManager?
+    val detector: HardBrakingDetector?
+    val clk: EpochClock?
+    synchronized(this) {
+      manager = sensors
+      detector = braking
+      clk = clock
+    }
+    if (manager == null || detector == null || clk == null) {
+      done(false)
+      return
+    }
+    simulatedUntil = android.os.SystemClock.elapsedRealtime() + 3_000
+    if (!manager.post {
+        detector.reset()
+        BrakingSimulator.play(detector, clk.now(), cruiseKmh, finalKmh)
+        done(true)
+      }
+    ) {
+      simulatedUntil = 0
+      done(false)
+    }
+  }
+
+  /** Forgets the learned braking axis (the phone was re-mounted). */
+  fun resetBrakingMount(done: (Boolean) -> Unit) {
+    val manager: RiderSensorManager?
+    val detector: HardBrakingDetector?
+    synchronized(this) {
+      manager = sensors
+      detector = braking
+    }
+    if (manager == null || detector == null || !manager.post { detector.resetMount(); done(true) }) done(false)
+  }
 
   fun currentState(done: (CrashState?) -> Unit) =
     onSensorThread<CrashState?>(null, done) { c, _ -> c.getState() }
