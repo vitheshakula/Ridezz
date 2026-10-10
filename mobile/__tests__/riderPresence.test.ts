@@ -18,12 +18,12 @@ describe('isRoomOverCapacity', () => {
     expect(isRoomOverCapacity(2, MAX_RIDERS)).toBe(false);
   });
 
-  test('exactly 10 riders is at, not over, capacity', () => {
-    expect(isRoomOverCapacity(10, MAX_RIDERS)).toBe(false);
+  test('exactly MAX_RIDERS riders is at, not over, capacity', () => {
+    expect(isRoomOverCapacity(MAX_RIDERS, MAX_RIDERS)).toBe(false);
   });
 
-  test('an 11th rider is over capacity', () => {
-    expect(isRoomOverCapacity(11, MAX_RIDERS)).toBe(true);
+  test('one more than MAX_RIDERS is over capacity', () => {
+    expect(isRoomOverCapacity(MAX_RIDERS + 1, MAX_RIDERS)).toBe(true);
   });
 });
 

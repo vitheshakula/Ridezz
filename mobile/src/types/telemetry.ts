@@ -53,16 +53,33 @@ export interface GeoPoint {
 // Wire packet types (carried as JSON over NearbyMeshService.sendMeshPacket / onMeshPacket)
 // ---------------------------------------------------------------------------
 
-/** Broadcast on the 3-minute duty cycle (and immediately on first connect) so every connected
- * peer's rider map stays current. */
+/**
+ * Broadcast on the 3-minute duty cycle (and immediately on first connect) so every connected
+ * peer's rider map stays current. Relayed hop-to-hop the same way a HAZARD_EVENT is -- `pingId`
+ * identifies this specific fix (one per time a rider's position is sent) so a device that already
+ * processed it can recognise a copy arriving by another path and drop it; `senderId` is whoever is
+ * relaying this particular copy (changes every hop); `visitedNodes` lists every rider id the
+ * packet has already passed through, origin (`riderId`) included.
+ */
 export interface TelemetryPingPacket {
   type: 'TELEMETRY_PING';
+  pingId: string;
   riderId: string;
   riderName: string;
   latitude: number;
   longitude: number;
   timestamp: number;
+  /** Decrements by 1 each hop; a packet with ttl 0 is not relayed further. Starts at
+   * TELEMETRY_PACKET_MAX_TTL -- sized to the app's own MAX_RIDERS-10 "reliable map" tier (see
+   * riderPresence.ts), not the full room cap: a position is only useful while fresh, so this is
+   * tuned to "covers a worst-case straight-line chain of 10 riders" (9 hops between the two end
+   * riders) rather than paying relay traffic to chase full-room reach the way hazards do. */
+  ttl: number;
+  senderId: string;
+  visitedNodes: string[];
 }
+
+export const TELEMETRY_PACKET_MAX_TTL = 9;
 
 /**
  * A hazard report as it is relayed over the mesh.
@@ -85,12 +102,15 @@ export interface HazardEventPacket {
   latitude: number;
   longitude: number;
   visitedNodes: string[];
-  /** Decrements by 1 each hop; a packet with ttl 0 is not relayed further. Starts at 5. */
+  /** Decrements by 1 each hop; a packet with ttl 0 is not relayed further. Starts at
+   * HAZARD_PACKET_MAX_TTL -- sized to cover a worst-case straight-line chain of MAX_RIDERS riders
+   * (see riderPresence.ts): the two end riders of a full room are MAX_RIDERS-1 hops apart, and a
+   * hazard, unlike a position, is worth that relay cost since it's rare and never repeats. */
   ttl: number;
   timestamp: number;
 }
 
-export const HAZARD_PACKET_MAX_TTL = 5;
+export const HAZARD_PACKET_MAX_TTL = 24;
 
 /** Broadcast by a device that just regained mesh connectivity (a 0 -> positive peer-count
  * transition), announcing what it already knows so others can flush what it's missing. */
@@ -120,11 +140,16 @@ export function isMeshPacket(value: unknown): value is MeshPacket {
   switch (p.type) {
     case 'TELEMETRY_PING':
       return (
+        typeof p.pingId === 'string' &&
         typeof p.riderId === 'string' &&
         typeof p.riderName === 'string' &&
         typeof p.latitude === 'number' &&
         typeof p.longitude === 'number' &&
-        typeof p.timestamp === 'number'
+        typeof p.timestamp === 'number' &&
+        typeof p.ttl === 'number' &&
+        typeof p.senderId === 'string' &&
+        Array.isArray(p.visitedNodes) &&
+        p.visitedNodes.every(node => typeof node === 'string')
       );
     case 'HAZARD_EVENT':
       return (
