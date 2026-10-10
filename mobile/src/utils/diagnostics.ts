@@ -14,7 +14,14 @@ export type DiagnosticEventType =
   | 'remote_participant_disconnected'
   | 'remote_location_resumed'
   /** Ride Connectivity Protocol (Phase 2) device-testing diagnostics. */
-  | 'mesh_protocol';
+  | 'mesh_protocol'
+  /** Crash / laydown detection: sensor status, every finished candidate, countdown outcome. */
+  | 'crash_sensors'
+  | 'crash_decision'
+  | 'crash_countdown'
+  | 'crash_sos'
+  /** Hard-braking warning: own alerts, GNSS confirmation, alerts heard from riders ahead. */
+  | 'braking';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

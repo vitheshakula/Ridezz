@@ -555,20 +555,14 @@ export default function RiderMap({
             </Pressable>
           ) : null}
         </View>
-      ) : onChangeDestination ? (
-        <Pressable
-          style={[styles.setDestination, { top: topInset + (statusMessage ? 60 : 8) }]}
-          accessibilityRole="button"
-          accessibilityLabel="Change destination"
-          hitSlop={6}
-          onPress={onChangeDestination}
-        >
-          <FlagIcon size={18} color={brand.primary} />
-          <Text style={styles.navActionText}>Set destination</Text>
-        </Pressable>
       ) : null}
 
       <View style={[styles.controls, { bottom: bottomInset + 12 }]}>
+        {!destination && onChangeDestination ? (
+          <MapControl label="Change destination" onPress={onChangeDestination}>
+            <FlagIcon size={22} color={brand.primary} />
+          </MapControl>
+        ) : null}
         <MapControl label="Zoom in" onPress={() => handleZoom(1)}>
           <PlusIcon size={22} color={brand.textPrimary} />
         </MapControl>
@@ -853,19 +847,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   navActionText: { ...homeType.labelMedium, color: brand.primary },
-  setDestination: {
-    position: 'absolute',
-    left: 12,
-    minHeight: 44,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    paddingHorizontal: 14,
-    borderRadius: 14,
-    backgroundColor: 'rgba(17, 25, 35, 0.94)',
-    borderWidth: 1,
-    borderColor: brand.primaryBorder,
-  },
   // Plain column flow, sized to its content (the label plus markerBox below it) -- deliberately
   // not position:'absolute' anywhere inside it; see the comment in RiderMarker's return.
   markerStack: {

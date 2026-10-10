@@ -29,6 +29,25 @@ const MAX_SENDER_ID_LENGTH = 32;
 const MAX_SENDER_NAME_LENGTH = 24;
 const HAZARD_IDS: ReadonlySet<string> = new Set(HAZARD_TYPE_IDS);
 
+export const SOS_SEVERITIES = ['SEVERE', 'HIGH', 'MODERATE', 'UNKNOWN'] as const;
+export type SosSeverity = (typeof SOS_SEVERITIES)[number];
+
+/**
+ * Optional details on an 'accident' packet raised by automatic crash detection. Additive: v1
+ * receivers that predate it rebuild packets from the known fields and simply drop it, and a packet
+ * whose `sos` block is malformed is still accepted without it.
+ */
+export interface HazardSosDetails {
+  /** Epoch ms of the detected impact. */
+  impactAt: number;
+  severity: SosSeverity;
+  /** Last known position of the rider who may be down. Absent when there was no GNSS fix. */
+  lat?: number;
+  lng?: number;
+  /** Speed before the impact, km/h. Absent without GNSS. */
+  speedKmh?: number;
+}
+
 export interface HazardPacket {
   v: 1;
   id: string;
@@ -36,6 +55,7 @@ export interface HazardPacket {
   senderId: string;
   senderName: string;
   timestamp: number;
+  sos?: HazardSosDetails;
 }
 
 export function createHazardPacket(
@@ -43,6 +63,7 @@ export function createHazardPacket(
   senderId: string,
   senderName: string,
   now: number = Date.now(),
+  sos?: HazardSosDetails,
 ): HazardPacket {
   return {
     v: HAZARD_PROTOCOL_VERSION,
@@ -52,7 +73,45 @@ export function createHazardPacket(
     // Kept short: packets travel over cellular data and short-range radio links.
     senderName: senderName.slice(0, MAX_SENDER_NAME_LENGTH),
     timestamp: now,
+    ...(sos ? { sos } : {}),
   };
+}
+
+const SOS_SEVERITY_IDS: ReadonlySet<string> = new Set(SOS_SEVERITIES);
+
+/** Returns a clean copy of a received `sos` block, or undefined if it is absent or malformed. */
+function parseSosDetails(raw: unknown): HazardSosDetails | undefined {
+  if (typeof raw !== 'object' || raw === null) {
+    return undefined;
+  }
+  const s = raw as Record<string, unknown>;
+  if (
+    typeof s.impactAt !== 'number' ||
+    !Number.isFinite(s.impactAt) ||
+    typeof s.severity !== 'string' ||
+    !SOS_SEVERITY_IDS.has(s.severity)
+  ) {
+    return undefined;
+  }
+  const details: HazardSosDetails = {
+    impactAt: s.impactAt,
+    severity: s.severity as SosSeverity,
+  };
+  if (
+    typeof s.lat === 'number' &&
+    typeof s.lng === 'number' &&
+    Number.isFinite(s.lat) &&
+    Number.isFinite(s.lng) &&
+    Math.abs(s.lat) <= 90 &&
+    Math.abs(s.lng) <= 180
+  ) {
+    details.lat = s.lat;
+    details.lng = s.lng;
+  }
+  if (typeof s.speedKmh === 'number' && Number.isFinite(s.speedKmh) && s.speedKmh >= 0 && s.speedKmh < 500) {
+    details.speedKmh = s.speedKmh;
+  }
+  return details;
 }
 
 export function serializeHazardPacket(packet: HazardPacket): string {
@@ -98,6 +157,7 @@ export function parseHazardPacket(
   ) {
     return null;
   }
+  const sos = parseSosDetails(p.sos);
   return {
     v: HAZARD_PROTOCOL_VERSION,
     id: p.id.slice(0, MAX_PACKET_ID_LENGTH),
@@ -105,5 +165,6 @@ export function parseHazardPacket(
     senderId: p.senderId.slice(0, MAX_SENDER_ID_LENGTH),
     senderName: p.senderName.slice(0, MAX_SENDER_NAME_LENGTH),
     timestamp: p.timestamp,
+    ...(sos ? { sos } : {}),
   };
 }
