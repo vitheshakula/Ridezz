@@ -12,9 +12,15 @@ export type ReliableDeliveryAttemptOutcome =
 export type ReliableDeliveryEvent =
   | { readonly kind: 'recovered'; readonly count: number; readonly corrupted: boolean }
   | { readonly kind: 'attempt'; readonly messageId: string; readonly attempt: number }
-  | { readonly kind: 'retry_scheduled'; readonly messageId: string; readonly nextAttemptAt: number }
+  | {
+      readonly kind: 'retry_scheduled';
+      readonly messageId: string;
+      readonly nextAttemptAt: number;
+      /** Why the last attempt did not settle the record (the attempt's own retry reason). */
+      readonly lastAttemptReason: string;
+    }
   | { readonly kind: 'destination_delivered'; readonly messageId: string }
-  | { readonly kind: 'retry_exhausted'; readonly messageId: string }
+  | { readonly kind: 'retry_exhausted'; readonly messageId: string; readonly lastAttemptReason: string }
   | { readonly kind: 'expired'; readonly messageId: string; readonly expiresAt: number }
   | { readonly kind: 'engine_error'; readonly reason: string };
 
@@ -115,9 +121,14 @@ export function createReliableDeliveryEngine({
             kind: 'retry_scheduled',
             messageId: record.message.id,
             nextAttemptAt: retry.nextAttemptAt,
+            lastAttemptReason: outcome.reason,
           });
         } else if (retry.state === 'exhausted') {
-          report({ kind: 'retry_exhausted', messageId: record.message.id });
+          report({
+            kind: 'retry_exhausted',
+            messageId: record.message.id,
+            lastAttemptReason: outcome.reason,
+          });
         } else if (retry.state === 'expired') {
           report({
             kind: 'expired',

@@ -23,6 +23,13 @@ import {
   isRideCloudReachable,
   setDevMenuGatewayForced,
 } from '../connectivity/debugGatewayOverride';
+import {
+  ENABLE_CONNECTIVITY_TEST_PROBE,
+  createConnectivityTestProbe,
+  isConnectivityTestProbeAvailable,
+  type ConnectivityTestProbe,
+  type ConnectivityTestProbeResult,
+} from '../connectivity/connectivityTestProbe';
 import { NEARBY_TRANSPORT_ID, nearbyTransport } from '../transports/NearbyTransport';
 import { logDiagnosticEvent } from './diagnosticsLog';
 import {
@@ -140,6 +147,62 @@ export function getAppRideConnectivityClient(): RideConnectivityClient {
 
 let appMeshSessionOwner: RideMeshSessionOwner | undefined;
 
+let appTestProbe: ConnectivityTestProbe | undefined;
+
+/**
+ * The M7-A connectivity test probe on the one application-wide client, or null unless
+ * ENABLE_CONNECTIVITY_TEST_PROBE is on in a development build. Checked before anything is created,
+ * so a disabled probe has no effect at all.
+ */
+export function getAppConnectivityTestProbe(): ConnectivityTestProbe | null {
+  if (!isConnectivityTestProbeAvailable(ENABLE_CONNECTIVITY_TEST_PROBE, __DEV__)) {
+    return null;
+  }
+  if (!appTestProbe) {
+    const client = appClientOrNull();
+    if (!client) {
+      return null;
+    }
+    appTestProbe = createConnectivityTestProbe({
+      client,
+      enabled: ENABLE_CONNECTIVITY_TEST_PROBE,
+      isDevelopmentBuild: __DEV__,
+      isCloudReachable: isRideCloudReachable,
+      log: logRideConnectivity,
+    });
+  }
+  return appTestProbe;
+}
+
+/** Sends one test probe on the active ride session; 'probe_disabled' when unavailable. */
+export function sendAppConnectivityTestProbe(): Promise<ConnectivityTestProbeResult> {
+  const probe = getAppConnectivityTestProbe();
+  return probe ? probe.send() : Promise.resolve({ status: 'probe_disabled' });
+}
+
+/** Arms the probe for protocol-mode sessions only and disarms it on stop; otherwise unchanged. */
+function withTestProbe(callbacks: RideMeshSessionCallbacks): RideMeshSessionCallbacks {
+  const probe = getAppConnectivityTestProbe();
+  if (!probe) {
+    return callbacks;
+  }
+  return {
+    rideId: callbacks.rideId,
+    riderName: callbacks.riderName,
+    onStarted: mode => {
+      if (mode === 'protocol') {
+        probe.sessionStarted(callbacks.rideId);
+      }
+      callbacks.onStarted(mode);
+    },
+    onStopping: () => {
+      probe.sessionEnded();
+      callbacks.onStopping();
+    },
+    onError: message => callbacks.onError(message),
+  };
+}
+
 function appClientOrNull(): RideConnectivityClient | null {
   try {
     return getAppRideConnectivityClient();
@@ -162,7 +225,7 @@ export function startAppRideMeshSession(callbacks: RideMeshSessionCallbacks): ()
     getLastStartError: () => lastNearbyStartError,
     log: logRideConnectivity,
   });
-  return appMeshSessionOwner.start(callbacks);
+  return appMeshSessionOwner.start(withTestProbe(callbacks));
 }
 
 /**
@@ -231,4 +294,10 @@ export function registerRideConnectivityDevMenu(): void {
         : 'TEST: cloud gateway override off',
     );
   });
+  // M7-A: only when the probe flag is on (debug builds only, as above).
+  if (getAppConnectivityTestProbe()) {
+    DevSettings.addMenuItem('Rideaze: send connectivity test probe', () => {
+      sendAppConnectivityTestProbe().catch(() => {});
+    });
+  }
 }

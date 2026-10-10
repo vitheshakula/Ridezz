@@ -83,6 +83,21 @@ interface RideConnectivityDeliveryBase {
   readonly at: number;
 }
 
+/**
+ * Sanitized outcome of the latest persisted delivery attempt, carried on retry statuses so a retry
+ * can be told apart from a lost route. `awaiting_acknowledgement` means the hop send was accepted
+ * and the record stays queued only because no verified ACK has arrived: it is not delivery.
+ */
+export type RideConnectivityAttemptOutcome =
+  | 'awaiting_acknowledgement'
+  | 'routing_unavailable'
+  | 'transport_unavailable'
+  | 'send_timeout'
+  | 'runtime_unavailable'
+  | 'local_gateway_handoff_unavailable'
+  | 'encoding_failed'
+  | 'attempt_failed';
+
 export type RideConnectivityDeliveryStatus =
   | (RideConnectivityDeliveryBase & { readonly state: 'queued' })
   | (RideConnectivityDeliveryBase & { readonly state: 'sending' })
@@ -94,6 +109,8 @@ export type RideConnectivityDeliveryStatus =
   | (RideConnectivityDeliveryBase & {
       readonly state: 'retry_scheduled';
       readonly nextAttemptAt: number;
+      /** Present for persisted (outbox) delivery only. */
+      readonly lastAttempt?: RideConnectivityAttemptOutcome;
     })
   | (RideConnectivityDeliveryBase & {
       /** Reserved for a future verified ACK correlator; M1 never emits this state. */
@@ -114,6 +131,8 @@ export type RideConnectivityDeliveryStatus =
         | 'outbox_unavailable';
       /** `unknown` means the operation timed out or threw after its actual outcome became unclear. */
       readonly outcome: 'not_sent' | 'unknown';
+      /** With `retry_exhausted`: the outcome of the final attempt. */
+      readonly lastAttempt?: RideConnectivityAttemptOutcome;
     })
   | (RideConnectivityDeliveryBase & {
       /** The message TTL elapsed without valid destination acknowledgement evidence. */
@@ -272,6 +291,42 @@ function applicationMessageFrom(
     expiresAt: message.expiresAt,
     payload: message.payload,
   });
+}
+
+const ATTEMPT_OUTCOMES: ReadonlySet<string> = new Set<RideConnectivityAttemptOutcome>([
+  'awaiting_acknowledgement',
+  'routing_unavailable',
+  'transport_unavailable',
+  'send_timeout',
+  'runtime_unavailable',
+  'local_gateway_handoff_unavailable',
+  'encoding_failed',
+  'attempt_failed',
+]);
+
+/** Engine retry reasons are free text; only the known sanitized vocabulary is ever reported. */
+function attemptOutcomeFrom(reason: string): RideConnectivityAttemptOutcome {
+  return ATTEMPT_OUTCOMES.has(reason)
+    ? (reason as RideConnectivityAttemptOutcome)
+    : 'attempt_failed';
+}
+
+/** Maps one routed send result (that left the record queued) to its sanitized attempt outcome. */
+function attemptOutcomeOf(result: RideConnectivitySendResult): RideConnectivityAttemptOutcome {
+  switch (result.status) {
+    case 'sent':
+      return 'awaiting_acknowledgement';
+    case 'not_sent':
+      return result.reason === 'encode_failed' ? 'encoding_failed' : 'routing_unavailable';
+    case 'transport_error':
+      return 'transport_unavailable';
+    case 'send_timeout':
+      return 'send_timeout';
+    case 'runtime_not_running':
+      return 'runtime_unavailable';
+    case 'local_gateway':
+      return 'local_gateway_handoff_unavailable';
+  }
 }
 
 const TERMINAL_DELIVERY_STATES: ReadonlySet<RideConnectivityDeliveryStatus['state']> = new Set([
@@ -610,9 +665,17 @@ export function createRideConnectivityClient({
             messageId: event.messageId,
             at: clock(),
             nextAttemptAt: event.nextAttemptAt,
+            lastAttempt: attemptOutcomeFrom(event.lastAttemptReason),
           });
         } else if (event.kind === 'retry_exhausted') {
-          emitFailedSend(event.messageId, 'retry_exhausted', 'not_sent');
+          emitDelivery({
+            state: 'failed',
+            messageId: event.messageId,
+            at: clock(),
+            reason: 'retry_exhausted',
+            outcome: 'not_sent',
+            lastAttempt: attemptOutcomeFrom(event.lastAttemptReason),
+          });
         } else if (event.kind === 'expired') {
           emitDelivery({
             state: 'expired',
@@ -641,6 +704,7 @@ export function createRideConnectivityClient({
           message,
           record.destinationGatewayId,
         );
+        let lastAttempt = attemptOutcomeOf(result);
         if (result.status === 'sent') {
           generation.acknowledgements.bindDestination(message.id, result.route.gatewayNodeId);
           emitDelivery({
@@ -653,6 +717,7 @@ export function createRideConnectivityClient({
           try {
             const handoff = await handoffToGateway(message);
             if (handoff.accepted) {
+              lastAttempt = 'awaiting_acknowledgement';
               emitDelivery({
                 state: 'transport_accepted',
                 messageId: message.id,
@@ -664,7 +729,8 @@ export function createRideConnectivityClient({
             // The engine will retry; raw failure details are deliberately discarded.
           }
         }
-        return { state: 'retry' as const, reason: result.status };
+        // Only a verified ACK settles a record; every other outcome stays queued for retry.
+        return { state: 'retry' as const, reason: lastAttempt };
       };
       const deliveryEngine =
         outboxReady && outbox

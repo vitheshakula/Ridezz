@@ -211,10 +211,15 @@ export function createConnectivityDiagnostics({
       }
       case 'routed': {
         const r = result.result;
+        // hop = the envelope's hopCount, i.e. relays passed: 0 = straight from the origin. On a
+        // forwarded copy it already includes this relay.
         if (r.status === 'gateway_reached') {
-          log(`gateway reached for message ${short(r.message.id)}`);
+          log(`gateway reached for message ${short(r.message.id)} (hop ${r.message.hopCount})`);
         } else if (r.status === 'sent') {
-          log(`routed ${short(r.message.id)} -> ${short(r.route.nextHopNodeId)}`);
+          log(
+            `routed ${short(r.message.id)} -> ${short(r.route.nextHopNodeId)} ` +
+              `(hop ${r.message.hopCount})`,
+          );
         } else if (r.status === 'not_sent') {
           log(`routed message not forwarded: ${r.reason}`);
         } else {
