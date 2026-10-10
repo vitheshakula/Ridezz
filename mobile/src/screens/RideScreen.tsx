@@ -61,6 +61,11 @@ import { createHazardPacket, type HazardPacket } from '../protocol/hazardProtoco
 import { useCrashDetection } from '../crash/useCrashDetection';
 import CrashAlertModal from '../components/CrashAlertModal';
 import BrakeFlasher from '../components/BrakeFlasher';
+import PackAlertCard from '../components/PackAlertCard';
+import { createConvoyCoordinator } from '../convoy/convoyCoordinator';
+import { emitPeerConvoyAlert, type PackPeer } from '../convoy/convoyEvents';
+import { mostSevere } from '../convoy/packAlerts';
+import { usePackSeparation } from '../convoy/usePackSeparation';
 import { createBrakeCoordinator } from '../braking/brakeCoordinator';
 import { emitPeerBrakingAlert } from '../braking/brakingEvents';
 import { useHardBraking, usePeerBraking } from '../braking/useHardBraking';
@@ -787,6 +792,54 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   });
   const peerBrake = usePeerBraking({ announce: brakeAnnounce });
 
+  // Convoy awareness: this rider stopping or falling away from the pack, and riders who go silent.
+  // The native detector judges it; this wires peer positions in and alerts out over the mesh.
+  const convoyCoordinator = useMemo(
+    () =>
+      createConvoyCoordinator({
+        senderId: senderIdRef.current,
+        nearbyTransport,
+        liveKitTransport: liveKitHazardTransport,
+        isOnline: () => isOnlineRef.current,
+        onPeerAlert: alert => emitPeerConvoyAlert(alert),
+      }),
+    [liveKitHazardTransport],
+  );
+  useEffect(() => convoyCoordinator.subscribe(), [convoyCoordinator]);
+  // Online: the cloud room's riders. Mesh-only: the riders the mesh sync has heard from.
+  const packPeers = useMemo<PackPeer[]>(
+    () =>
+      transport === 'mesh'
+        ? offlineRiders
+            .filter(r => r.riderId !== senderIdRef.current)
+            .map(r => ({
+              id: r.riderId,
+              name: r.riderName,
+              latitude: r.latitude,
+              longitude: r.longitude,
+              timestamp: r.timestampMs,
+            }))
+        : locations
+            .filter(l => l.participantIdentity !== localParticipant.identity)
+            .map(l => ({
+              id: l.participantIdentity,
+              name: l.participantName,
+              latitude: l.latitude,
+              longitude: l.longitude,
+              speedMps: l.speed,
+              timestamp: l.timestamp,
+            })),
+    [transport, offlineRiders, locations, localParticipant.identity],
+  );
+  const pack = usePackSeparation({
+    peers: packPeers,
+    selfId: senderIdRef.current,
+    selfName: session.riderName,
+    coordinator: convoyCoordinator,
+    announce: brakeAnnounce,
+  });
+  const featuredPackAlert = mostSevere(pack.alerts);
+
   const mapStatusMessage = useMemo(() => {
     if (locationPermissionGranted === null) {
       return 'Checking location permission...';
@@ -912,6 +965,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             }
             topInset={hudBottom}
             bottomInset={panelHeight}
+            alertPins={pack.alerts}
             selfRiderId={senderIdRef.current}
             selfLocation={
               localLocation
@@ -930,6 +984,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
             destination={currentDestination}
             topInset={hudBottom}
             bottomInset={panelHeight}
+            alertPins={pack.alerts}
             speakingIdentities={speakingIdentities}
             onRouteGeometryChange={handleRouteGeometryChange}
             onChangeDestination={
@@ -1114,6 +1169,16 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       </View>
 
       <DiagnosticsModal visible={diagnosticsVisible} onClose={() => setDiagnosticsVisible(false)} />
+
+      {featuredPackAlert && !crashCardActive ? (
+        <PackAlertCard
+          alert={featuredPackAlert}
+          moreCount={pack.alerts.length - 1}
+          top={bannerTop + (bannerAlert ? 92 : 0)}
+          now={Date.now()}
+          onDismiss={() => pack.dismiss(featuredPackAlert.key)}
+        />
+      ) : null}
 
       <BrakeFlasher visible={peerBrake !== null} />
 

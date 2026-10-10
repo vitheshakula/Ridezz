@@ -15,7 +15,7 @@ class CrashMonitor(
   private val listener: Listener,
 ) {
 
-  interface Listener : CrashDetectorListener, HardBrakingListener {
+  interface Listener : CrashDetectorListener, HardBrakingListener, PackListener {
     /** Sensor stall / GNSS availability changed. May be called from the sensor thread. */
     fun onMonitorStatus(status: MonitorStatus)
   }
@@ -32,6 +32,7 @@ class CrashMonitor(
   private var clock: EpochClock? = null
   private var core: CrashDetectorCore? = null
   private var braking: HardBrakingDetector? = null
+  private var pack: PackSeparationDetector? = null
   private var sensors: RiderSensorManager? = null
   private var gnssProvider: GnssSpeedProvider? = null
   private var stalled = false
@@ -47,6 +48,7 @@ class CrashMonitor(
     config: CrashConfig,
     brakingConfig: HardBrakingConfig = HardBrakingConfig(),
     brakingEnabled: Boolean = true,
+    packConfig: PackConfig = PackConfig(),
   ): StartInfo {
     val caps = RiderSensorManager.probe(appContext)
     if (!caps.hasAccelerometer) {
@@ -70,16 +72,22 @@ class CrashMonitor(
     detector.setGyroAvailable(caps.hasGyroscope)
     // Braking shares the same streams and thread; a phone too weak for it still runs crash detection.
     val brake = if (brakingEnabled) HardBrakingDetector(brakingConfig, listener) else null
+    // Convoy awareness shares the same streams; peer positions are pushed in by the app.
+    val packDetector = PackSeparationDetector(packConfig, listener).also { it.setGyroAvailable(caps.hasGyroscope) }
     stalled = false
 
     val sink =
       object : ImuSink {
         override fun onAccel(t: Long, x: Double, y: Double, z: Double) {
           detector.addAccel(t, x, y, z)
+          packDetector.addAccel(t, x, y, z)
           if (!simulating()) brake?.addAccel(t, x, y, z)
         }
 
-        override fun onGyro(t: Long, x: Double, y: Double, z: Double) = detector.addGyro(t, x, y, z)
+        override fun onGyro(t: Long, x: Double, y: Double, z: Double) {
+          detector.addGyro(t, x, y, z)
+          packDetector.addGyro(t, x, y, z)
+        }
 
         override fun onGravity(t: Long, x: Double, y: Double, z: Double) {
           detector.addGravity(t, x, y, z)
@@ -89,6 +97,7 @@ class CrashMonitor(
         override fun onTick(now: Long) {
           detector.tick(now)
           brake?.tick(now)
+          packDetector.tick(now)
         }
       }
 
@@ -110,6 +119,7 @@ class CrashMonitor(
         clk,
         onFix = { t, speed, lat, lon, bearing ->
           detector.addGnss(t, speed, lat, lon)
+          packDetector.addGnss(t, speed, lat, lon)
           if (!simulating()) brake?.addGnss(t, speed, bearing)
         },
         onStatus = { status ->
@@ -123,6 +133,7 @@ class CrashMonitor(
     clock = clk
     core = detector
     braking = brake
+    pack = packDetector
     sensors = manager
     gnssProvider = gnss
     return StartInfo(caps, gnssStatus)
@@ -136,6 +147,7 @@ class CrashMonitor(
     sensors = null
     core = null
     braking = null
+    pack = null
     clock = null
     gnssStatus = GnssStatus.STOPPED
     stalled = false
@@ -214,6 +226,23 @@ class CrashMonitor(
       }
     ) {
       simulatedUntil = 0
+      done(false)
+    }
+  }
+
+  /** Hands the app's latest peer positions to the convoy detector (runs on the sensor thread). */
+  fun updatePackPeers(peers: List<PeerFix>, done: (Boolean) -> Unit) {
+    val manager: RiderSensorManager?
+    val detector: PackSeparationDetector?
+    val clk: EpochClock?
+    synchronized(this) {
+      manager = sensors
+      detector = pack
+      clk = clock
+    }
+    if (manager == null || detector == null || clk == null ||
+      !manager.post { detector.updatePeers(peers, clk.now()); done(true) }
+    ) {
       done(false)
     }
   }

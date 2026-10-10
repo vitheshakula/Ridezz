@@ -17,6 +17,8 @@ import { fetchRoadRouteDetailed, formatDuration, type RoadRoute } from '../servi
 import { brand, font, homeType } from '../homeTheme';
 import { FitIcon, FlagIcon, LocateIcon, MicIcon, MinusIcon, PlusIcon } from './HomeIcons';
 import { Logo } from './Logo';
+import { renderPackAlertPins } from './PackAlertPin';
+import type { PackAlert } from '../convoy/packAlerts';
 
 export interface RideDestination {
   name: string | null;
@@ -41,6 +43,8 @@ interface RiderMapProps {
    * known route so OfflineRiderMap can keep showing it after the app falls back to mesh-only,
    * instead of just a destination pin with no path. */
   onRouteGeometryChange?: (geometry: GeoJSON.LineString | null) => void;
+  /** Convoy alerts (breakdown / separation / lost contact): a pin at each rider's last known position. */
+  alertPins?: readonly PackAlert[];
 }
 
 /** Deterministic per-rider marker palette, distinct from the local rider's blue
@@ -146,6 +150,7 @@ export default function RiderMap({
   speakingIdentities,
   onChangeDestination,
   onRouteGeometryChange,
+  alertPins,
 }: RiderMapProps) {
   const cameraRef = useRef<ElementRef<typeof Camera>>(null);
   const zoomRef = useRef(INITIAL_ZOOM);
@@ -504,6 +509,8 @@ export default function RiderMap({
             </Marker>
           );
         })}
+
+        {renderPackAlertPins(alertPins)}
 
         {destinationLngLat ? (
           <Marker id="destination" lngLat={destinationLngLat} anchor="bottom">

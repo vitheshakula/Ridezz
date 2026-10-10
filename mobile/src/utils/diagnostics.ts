@@ -21,7 +21,9 @@ export type DiagnosticEventType =
   | 'crash_countdown'
   | 'crash_sos'
   /** Hard-braking warning: own alerts, GNSS confirmation, alerts heard from riders ahead. */
-  | 'braking';
+  | 'braking'
+  /** Convoy awareness: breakdown, separation and lost-contact alerts, own and heard. */
+  | 'convoy';
 
 export interface DiagnosticEvent {
   type: DiagnosticEventType;

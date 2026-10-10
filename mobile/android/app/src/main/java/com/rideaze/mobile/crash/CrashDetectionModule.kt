@@ -6,6 +6,7 @@ import com.facebook.react.bridge.Promise
 import com.facebook.react.bridge.ReactApplicationContext
 import com.facebook.react.bridge.ReactContextBaseJavaModule
 import com.facebook.react.bridge.ReactMethod
+import com.facebook.react.bridge.ReadableArray
 import com.facebook.react.bridge.ReadableMap
 import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
@@ -40,7 +41,13 @@ import com.rideaze.mobile.RidezzIntercomService
  *                               source }   raised at IMU onset; broadcast it to the group
  *   onHardBrakingDecision     { outcome, ... }   GNSS confirmation / rejection, for tuning
  *
- * startMonitoring options also accept { hardBraking: false } to run crash detection alone.
+ *   onRiderStateChanged      { state: RIDER_STOPPED|RIDER_MOVING, ... }   this rider stopped / moving
+ *   onPackSeparationAlert     { eventType: BREAKDOWN|SEPARATION, self, lastKnownLat/Lng, ... }
+ *   onRiderLostContact        { riderId, riderName, lastKnownLat/Lng, lastSeenAt, groupSilent, ... }
+ *   onPackRecovered           { eventType, riderId }   the condition ended
+ *
+ * startMonitoring options also accept { hardBraking: false } to run crash detection alone, and
+ * { separationMeters, staleSeconds } to tune convoy detection. updatePackPeers() feeds peer positions.
  *
  * The countdown is owned by the native side and keeps running if JS is busy; if the alert fires
  * while no React instance is attached, it is held and returned by consumePendingSos().
@@ -66,7 +73,7 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   fun startMonitoring(options: ReadableMap?, promise: Promise) {
     val wasRunning = monitor.isRunning
     try {
-      val info = monitor.start(configFrom(options), HardBrakingConfig(), brakingEnabledFrom(options))
+      val info = monitor.start(configFrom(options), HardBrakingConfig(), brakingEnabledFrom(options), packConfigFrom(options))
       val caps = info.capabilities
       val map = Arguments.createMap()
       map.putDouble("accelMaxRangeG", caps.accelMaxRange / STANDARD_GRAVITY)
@@ -97,6 +104,28 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   @ReactMethod
   fun resetBrakingMount(promise: Promise) {
     monitor.resetBrakingMount { promise.resolve(it) }
+  }
+
+  /**
+   * Latest peer positions from the app: [{id, name?, latitude, longitude, speedMps?, timestamp}].
+   * Call about once a second with every known peer; a peer counts as heard when its timestamp changes.
+   */
+  @ReactMethod
+  fun updatePackPeers(peers: ReadableArray, promise: Promise) {
+    val fixes = ArrayList<PeerFix>(peers.size())
+    for (i in 0 until peers.size()) {
+      val m = peers.getMap(i) ?: continue
+      if (!m.hasKey("id") || m.isNull("id") || !m.hasKey("latitude") || !m.hasKey("longitude") || !m.hasKey("timestamp")) continue
+      fixes += PeerFix(
+        id = m.getString("id") ?: continue,
+        name = if (m.hasKey("name") && !m.isNull("name")) m.getString("name") else null,
+        latitude = m.getDouble("latitude"),
+        longitude = m.getDouble("longitude"),
+        speedMps = if (m.hasKey("speedMps") && !m.isNull("speedMps")) m.getDouble("speedMps") else null,
+        timestamp = m.getDouble("timestamp").toLong(),
+      )
+    }
+    monitor.updatePackPeers(fixes) { promise.resolve(it) }
   }
 
   @ReactMethod
@@ -293,6 +322,65 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     emit("onHardBrakingDecision", map)
   }
 
+  // --- PackListener (sensor thread) ---------------------------------------------------------
+
+  override fun onRiderStopped(at: Long, latitude: Double?, longitude: Double?) {
+    emit(
+      "onRiderStateChanged",
+      Arguments.createMap().apply {
+        putString("state", "RIDER_STOPPED")
+        putDouble("timestamp", at.toDouble())
+        latitude?.let { putDouble("latitude", it) } ?: putNull("latitude")
+        longitude?.let { putDouble("longitude", it) } ?: putNull("longitude")
+      },
+    )
+  }
+
+  override fun onRiderMoving(at: Long) {
+    emit(
+      "onRiderStateChanged",
+      Arguments.createMap().apply {
+        putString("state", "RIDER_MOVING")
+        putDouble("timestamp", at.toDouble())
+      },
+    )
+  }
+
+  override fun onPackAlert(event: PackEvent) {
+    emit("onPackSeparationAlert", packEventMap(event))
+  }
+
+  override fun onRiderLostContact(event: PackEvent) {
+    emit("onRiderLostContact", packEventMap(event))
+  }
+
+  override fun onPackRecovered(type: PackEventType, riderId: String, at: Long) {
+    emit(
+      "onPackRecovered",
+      Arguments.createMap().apply {
+        putString("eventType", type.wire)
+        putString("riderId", riderId)
+        putDouble("timestamp", at.toDouble())
+      },
+    )
+  }
+
+  private fun packEventMap(e: PackEvent): WritableMap =
+    Arguments.createMap().apply {
+      putString("eventType", e.type.wire)
+      putString("riderId", e.riderId)
+      e.riderName?.let { putString("riderName", it) } ?: putNull("riderName")
+      putBoolean("self", e.self)
+      e.latitude?.let { putDouble("lastKnownLat", it) } ?: putNull("lastKnownLat")
+      e.longitude?.let { putDouble("lastKnownLng", it) } ?: putNull("lastKnownLng")
+      e.speedMps?.let { putDouble("speedKmh", it * 3.6) } ?: putNull("speedKmh")
+      e.distanceMeters?.let { putDouble("distanceMeters", it) } ?: putNull("distanceMeters")
+      e.groupSpeedMps?.let { putDouble("groupSpeedKmh", it * 3.6) } ?: putNull("groupSpeedKmh")
+      e.lastSeenAt?.let { putDouble("lastSeenAt", it.toDouble()) } ?: putNull("lastSeenAt")
+      putBoolean("groupSilent", e.groupSilent)
+      putDouble("timestamp", e.at.toDouble())
+    }
+
   override fun onCalibration(result: CalibrationResult) {
     val promise = calibrationPromise ?: return
     calibrationPromise = null
@@ -327,6 +415,17 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   private fun brakingEnabledFrom(options: ReadableMap?): Boolean =
     options == null || !options.hasKey("hardBraking") || options.isNull("hardBraking") ||
       options.getBoolean("hardBraking")
+
+  /** Optional convoy tuning from JS: separationMeters (100..5000), staleSeconds (10..300). */
+  private fun packConfigFrom(options: ReadableMap?): PackConfig {
+    var config = PackConfig()
+    if (options == null) return config
+    fun number(key: String, min: Double, max: Double): Double? =
+      if (options.hasKey(key) && !options.isNull(key)) options.getDouble(key).takeIf { it in min..max } else null
+    number("separationMeters", 100.0, 5000.0)?.let { config = config.copy(separationMeters = it) }
+    number("staleSeconds", 10.0, 300.0)?.let { config = config.copy(staleMs = (it * 1000).toLong()) }
+    return config
+  }
 
   /** Optional tuning overrides from JS; anything absent or out of range keeps its default. */
   private fun configFrom(options: ReadableMap?): CrashConfig {

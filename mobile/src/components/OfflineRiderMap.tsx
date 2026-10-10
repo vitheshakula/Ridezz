@@ -4,6 +4,8 @@ import { Camera, GeoJSONSource, Layer, Map, Marker } from '@maplibre/maplibre-re
 import { colorForRider, type RideDestination } from './RiderMap';
 import { FitIcon, FlagIcon, LocateIcon, MinusIcon, PlusIcon } from './HomeIcons';
 import { Logo } from './Logo';
+import { renderPackAlertPins } from './PackAlertPin';
+import type { PackAlert } from '../convoy/packAlerts';
 import { haversineDistanceMeters } from '../utils/geoMath';
 import { formatDistance } from '../utils/riderLocation';
 import { OffRouteTracker, type OffRouteState } from '../utils/routeDeviation';
@@ -13,6 +15,8 @@ import type { GeoPoint, RiderNode } from '../types/telemetry';
 type LngLat = [number, number];
 
 export interface OfflineRiderMapProps {
+  /** Convoy alerts: a pin at each rider's last known position. */
+  alertPins?: readonly PackAlert[];
   /** Every rider meshSyncManager currently knows a position for -- pass its getKnownRiders(), kept
    * in the parent's own state and refreshed from the manager's onRidersChanged callback. This
    * component only renders what it's given; it doesn't own or talk to the mesh manager itself. */
@@ -97,6 +101,7 @@ function areBoundsTooTight(bounds: [number, number, number, number]): boolean {
  * component's own camera ref since the two maps are never mounted at the same time.
  */
 export default function OfflineRiderMap({
+  alertPins,
   riders,
   mapStyleUrl,
   initialCenter,
@@ -286,6 +291,8 @@ export default function OfflineRiderMap({
             </Marker>
           );
         })}
+
+        {renderPackAlertPins(alertPins)}
 
         {destinationLngLat ? (
           <Marker id="destination" lngLat={destinationLngLat} anchor="bottom">

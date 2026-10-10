@@ -136,8 +136,8 @@ export function bytesToBase64(bytes: Uint8Array): string {
 }
 
 /** Returns null for anything that is not strict, padded base64. */
-export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> | null {
-  if (typeof text !== 'string' || text.length === 0 || text.length % 4 !== 0 || text.length > 64) {
+export function base64ToBytes(text: string, maxLength = 64): Uint8Array<ArrayBuffer> | null {
+  if (typeof text !== 'string' || text.length === 0 || text.length % 4 !== 0 || text.length > maxLength) {
     return null;
   }
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(text)) {
