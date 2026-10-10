@@ -1,4 +1,8 @@
 import type { ConnectivityApplicationMessage } from './connectivityReceiver';
+import {
+  createDeliveryAcknowledgementTracker,
+  type DeliveryAcknowledgementTracker,
+} from './deliveryAcknowledgementTracker';
 import { type RideNodeIdentity } from './rideConnectivityLifecycle';
 import type {
   RideConnectivityRuntime,
@@ -23,6 +27,7 @@ import {
   type RideMessageType,
 } from './protocol/rideMessage';
 import { serializeRideMessage } from './protocol/rideMessageCodec';
+import type { DeliveryAcknowledgementVerifier } from './protocol/deliveryAcknowledgement';
 import type { TargetedTransport, Transport } from '../transports/Transport';
 
 /** Matches the name bound used by the current Android Nearby endpoint name. */
@@ -161,6 +166,15 @@ export interface RideConnectivityClientAdapter {
     readonly generateMessageId: () => string;
     readonly onApplicationMessage: (received: ConnectivityApplicationMessage) => void;
   }): RideConnectivityRuntime;
+  /** Optional backend-authorized verifier. Without it, ACKs fail closed and never confirm delivery. */
+  readonly acknowledgementVerifier?: DeliveryAcknowledgementVerifier;
+  /** Optional application/cloud boundary for a node that is itself the selected gateway. */
+  readonly handoffToGateway?: (
+    message: RideMessage<JsonValue>,
+  ) => Promise<
+    | { readonly accepted: true; readonly transportId: string }
+    | { readonly accepted: false; readonly reason: string }
+  >;
   /** Protocol wall clock. */
   readonly clock?: () => number;
 }
@@ -180,6 +194,8 @@ interface ActiveGeneration {
   readonly identity: RideNodeIdentity;
   readonly localNodeId: string;
   readonly runtime: RideConnectivityRuntime;
+  readonly acknowledgements: DeliveryAcknowledgementTracker;
+  readonly gatewayHandoffs: Set<string>;
   readonly unsubscribeTransport: readonly (() => void)[];
   /** Guards a receive already in flight while this generation is being stopped. */
   readonly receiveGate: { open: boolean };
@@ -245,6 +261,8 @@ export function createRideConnectivityClient({
   transport,
   createNodeIdentity,
   createRuntime,
+  acknowledgementVerifier,
+  handoffToGateway,
   clock = () => Date.now(),
 }: RideConnectivityClientAdapter): RideConnectivityClient {
   if (!isValidRideMessageIdentifier(transportId, 64)) {
@@ -454,12 +472,53 @@ export function createRideConnectivityClient({
       if (!isValidRideMessageIdentifier(localNodeId, RIDE_MESSAGE_MAX_ORIGIN_ID_LENGTH)) {
         throw new TypeError('The generated local node id is invalid');
       }
+      const acknowledgements = createDeliveryAcknowledgementTracker({
+        rideId: context.rideId,
+        localNodeId,
+        clock,
+      });
       runtime = createRuntime({
         rideContext: context,
         localNodeId,
         generateMessageId: identity.generateMessageId,
         onApplicationMessage: received => {
-          if (receiveGate.open) {
+          if (!receiveGate.open) {
+            return;
+          }
+          if (received.message.type === 'ack') {
+            void acknowledgements.handle(received.message, acknowledgementVerifier).then(
+              result => {
+                if (!receiveGate.open) {
+                  return;
+                }
+                if (result.accepted) {
+                  emitDelivery({
+                    state: 'destination_delivered',
+                    messageId: result.originalMessageId,
+                    acknowledgementMessageId: result.acknowledgementId,
+                    at: clock(),
+                  });
+                } else {
+                  emitError({
+                    code: 'runtime_error',
+                    operation: 'receive',
+                    reason: result.reason,
+                    recoverable: true,
+                  });
+                }
+              },
+              () => {
+                if (receiveGate.open) {
+                  emitError({
+                    code: 'runtime_error',
+                    operation: 'receive',
+                    reason: 'ack_verification_failed',
+                    recoverable: true,
+                  });
+                }
+              },
+            );
+          } else {
             notify(messageListeners, applicationMessageFrom(received), 'message');
           }
         },
@@ -470,6 +529,8 @@ export function createRideConnectivityClient({
         identity,
         localNodeId,
         runtime,
+        acknowledgements,
+        gatewayHandoffs: new Set<string>(),
         unsubscribeTransport,
         receiveGate,
       });
@@ -540,6 +601,8 @@ export function createRideConnectivityClient({
     const generation = active;
     active = null;
     generation.receiveGate.open = false;
+    generation.acknowledgements.clear();
+    generation.gatewayHandoffs.clear();
     clearDeliveryTracking();
     let stopFailure: RideConnectivityClientError | null = null;
     try {
@@ -707,12 +770,20 @@ export function createRideConnectivityClient({
     emitDelivery({ state: 'failed', messageId, at: clock(), reason, outcome });
   };
 
-  const handleSendResult = (
+  const handleSendResult = async (
     message: RideMessage<JsonValue>,
     result: RideConnectivitySendResult,
-  ): void => {
+    generation: ActiveGeneration,
+  ): Promise<void> => {
+    if (result.status !== 'sent' && result.status !== 'local_gateway') {
+      generation.acknowledgements.reject(message.id);
+    }
     switch (result.status) {
       case 'sent':
+        generation.acknowledgements.bindDestination(
+          message.id,
+          result.route.gatewayNodeId,
+        );
         emitDelivery({
           state: 'transport_accepted',
           messageId: message.id,
@@ -749,6 +820,37 @@ export function createRideConnectivityClient({
         );
         return;
       case 'local_gateway':
+        if (!handoffToGateway || generation.gatewayHandoffs.has(message.id)) {
+          generation.acknowledgements.reject(message.id);
+          emitError({
+            code: 'runtime_error',
+            operation: 'send',
+            reason: handoffToGateway
+              ? 'duplicate_gateway_handoff'
+              : 'local_gateway_handoff_unavailable',
+            recoverable: true,
+            messageId: message.id,
+          });
+          emitFailedSend(message.id, 'local_gateway_handoff_unavailable', 'not_sent');
+          return;
+        }
+        generation.gatewayHandoffs.add(message.id);
+        try {
+          const handoff = await handoffToGateway(message);
+          if (handoff.accepted) {
+            emitDelivery({
+              state: 'transport_accepted',
+              messageId: message.id,
+              at: clock(),
+              transportId: handoff.transportId,
+            });
+            scheduleExpiry(message);
+            return;
+          }
+        } catch {
+          // Sanitized below.
+        }
+        generation.acknowledgements.reject(message.id);
         emitError({
           code: 'runtime_error',
           operation: 'send',
@@ -783,6 +885,12 @@ export function createRideConnectivityClient({
       );
     }
     const message = validateAndCreateMessage(input, generation);
+    generation.acknowledgements.track({
+      rideId: message.rideId,
+      originalMessageId: message.id,
+      originalOriginId: message.originId,
+      expiresAt: message.expiresAt,
+    });
     emitDelivery({ state: 'queued', messageId: message.id, at: clock() });
     emitDelivery({ state: 'sending', messageId: message.id, at: clock() });
     try {
@@ -790,8 +898,9 @@ export function createRideConnectivityClient({
         message,
         input.destination?.gatewayNodeId,
       );
-      handleSendResult(message, result);
+      await handleSendResult(message, result, generation);
     } catch {
+      generation.acknowledgements.reject(message.id);
       emitError({
         code: 'runtime_error',
         operation: 'send',

@@ -24,6 +24,7 @@ import {
   type ConnectivityApplicationMessage,
   type ConnectivityReceiveResult,
 } from './connectivityReceiver';
+import { createAckReturnRouter, type AckReturnResult } from './ackReturnRouter';
 import type { CycleOutcome, CycleScheduler } from './cycleScheduler';
 import { createDirectLinkIdentityMap } from './directLinkIdentityMap';
 import {
@@ -47,6 +48,7 @@ import { createPeerTable } from './peerTable';
 import { createRideMessageIngress } from './rideMessageIngress';
 import { createRoutedForwarder, type RoutedSendResult } from './routedForwarder';
 import type { RideMessage } from './protocol/rideMessage';
+import type { JsonValue } from './protocol/jsonValue';
 import { createSeenMessageCache } from './protocol/seenMessageCache';
 import type { TargetedTransport } from '../transports/Transport';
 
@@ -98,6 +100,8 @@ export interface RideConnectivityRuntime {
     message: RideMessage<unknown>,
     gatewayNodeId?: string,
   ): Promise<RideConnectivitySendResult>;
+  /** Returns a signed ACK along the recorded reverse path. No route is fabricated. */
+  sendAcknowledgement(message: RideMessage<JsonValue>): Promise<AckReturnResult>;
   /** Read-only diagnostic: the route an originated message would take right now. */
   getGatewayRoute(gatewayNodeId?: string): GatewayForwardingDecision;
 }
@@ -142,6 +146,11 @@ export function createRideConnectivityRuntime({
     monotonicClock,
     wallClock,
   });
+  const ackReturnRouter = createAckReturnRouter({
+    localNodeId,
+    sendTo: (endpointId, payload) => transport.sendTo(endpointId, payload),
+    wallClock,
+  });
   const receiver = createConnectivityReceiver({
     transportId,
     ingress,
@@ -149,6 +158,7 @@ export function createRideConnectivityRuntime({
     linkIdentities,
     gatewayState,
     forwarder,
+    ackReturnRouter,
     controlTransport: transport,
     monotonicClock,
     wallClock,
@@ -210,6 +220,7 @@ export function createRideConnectivityRuntime({
       unsubscribe = null;
       heartbeatScheduler.stop();
       advertisementScheduler.stop();
+      ackReturnRouter.clear();
     },
 
     get running(): boolean {
@@ -230,6 +241,13 @@ export function createRideConnectivityRuntime({
         return { status: 'local_gateway' };
       }
       return forwarder.sendOriginated(message, gatewayNodeId);
+    },
+
+    async sendAcknowledgement(message): Promise<AckReturnResult> {
+      if (state !== 'running') {
+        return { status: 'not_forwarded', reason: 'unknown_return_route' };
+      }
+      return ackReturnRouter.route(message);
     },
 
     getGatewayRoute(gatewayNodeId): GatewayForwardingDecision {

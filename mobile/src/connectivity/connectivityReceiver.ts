@@ -26,6 +26,7 @@
  */
 
 import { OPERATIONAL_SEND_TIMEOUT_MS, describeError, sendWithTimeout } from './boundedSend';
+import type { AckReturnResult, AckReturnRouter } from './ackReturnRouter';
 import type { DirectLinkIdentityMap } from './directLinkIdentityMap';
 import {
   handleGatewayAdvertisement,
@@ -59,6 +60,7 @@ export type ConnectivityReceiveResult =
       relay: AdvertisementRelayResult;
     }
   | { stage: 'routed'; result: RoutedForwardResult }
+  | { stage: 'ack'; result: AckReturnResult }
   | { stage: 'unrouted' };
 
 /** An accepted application message that is intended for this node. Intermediate routed messages
@@ -76,6 +78,7 @@ export interface ConnectivityReceiverOptions {
   linkIdentities: DirectLinkIdentityMap;
   gatewayState: GatewayState;
   forwarder: RoutedForwarder;
+  ackReturnRouter?: AckReturnRouter;
   /** Broadcast on the same local transport, used only for control-plane flood relay. */
   controlTransport: { broadcast(payload: string): Promise<void> };
   /** Local monotonic clock (presence/gateway freshness). Ingress keeps its own wall clock. */
@@ -107,6 +110,7 @@ export function createConnectivityReceiver({
   linkIdentities,
   gatewayState,
   forwarder,
+  ackReturnRouter,
   controlTransport,
   monotonicClock,
   wallClock,
@@ -191,7 +195,15 @@ export function createConnectivityReceiver({
       const relay = await relayAdvertisement(message, result);
       return { stage: 'gateway_advertisement', result, relay };
     }
+    if (message.type === 'ack' && message.gatewayRouting === undefined && ackReturnRouter) {
+      const result = await ackReturnRouter.route(message);
+      if (result.status === 'origin_reached') {
+        deliverApplicationMessage(message, 'local');
+      }
+      return { stage: 'ack', result };
+    }
     if (message.gatewayRouting !== undefined) {
+      ackReturnRouter?.remember(message, source);
       const result = await forwarder.forwardAccepted(accepted);
       if (result.status === 'gateway_reached') {
         deliverApplicationMessage(message, 'gateway');

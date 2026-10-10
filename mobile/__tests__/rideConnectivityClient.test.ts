@@ -8,6 +8,7 @@ import {
   type RideConnectivityPeerStatus,
 } from '../src/connectivity/rideConnectivityClient';
 import type { ConnectivityApplicationMessage } from '../src/connectivity/connectivityReceiver';
+import { DELIVERY_ACK_VERSION } from '../src/connectivity/protocol/deliveryAcknowledgement';
 import { createRideMessage, type RideMessage } from '../src/connectivity/protocol/rideMessage';
 import type {
   RideConnectivityRuntime,
@@ -23,7 +24,7 @@ const acceptedResult = (): RideConnectivitySendResult =>
   ({
     status: 'sent',
     message: {},
-    route: {},
+    route: { gatewayNodeId: 'gateway-1' },
     endpointId: 'endpoint-B',
   }) as RideConnectivitySendResult;
 
@@ -37,7 +38,7 @@ const validInput = (overrides: Partial<RideConnectivityMessageInput> = {}) => ({
   ...overrides,
 });
 
-function harness() {
+function harness(adapterOverrides: Partial<RideConnectivityClientAdapter> = {}) {
   let messageCounter = 0;
   let nodeCounter = 0;
   let now = NOW;
@@ -107,11 +108,15 @@ function harness() {
         sendToGateway: jest.fn((_message: RideMessage<unknown>, _gatewayNodeId?: string) =>
           Promise.resolve(sendResults.shift() ?? acceptedResult()),
         ),
+        sendAcknowledgement: jest.fn(() =>
+          Promise.resolve({ status: 'not_forwarded' as const, reason: 'unknown_return_route' as const }),
+        ),
         getGatewayRoute: jest.fn(() => ({ ok: false as const, reason: 'no_route' as const })),
       };
       runtimes.push(runtime);
       return runtime;
     }),
+    ...adapterOverrides,
   };
   const client = createRideConnectivityClient(adapter);
 
@@ -409,6 +414,110 @@ describe('RideConnectivityClient message submission and delivery status', () => 
     expect(errors).toContainEqual(
       expect.objectContaining({ code: 'runtime_error', reason: 'runtime_send_failed' }),
     );
+    await h.client.stop();
+  });
+
+  test('reports destination delivery only after a correlated authenticated ACK', async () => {
+    const verify = jest.fn(async () => true);
+    const h = harness({ acknowledgementVerifier: { verify } });
+    const statuses: RideConnectivityDeliveryStatus[] = [];
+    h.client.onDeliveryStatus(status => statuses.push(status));
+    await h.client.start(CONTEXT);
+    const { messageId } = await h.client.sendMessage(validInput());
+
+    h.emitApplication({
+      delivery: 'local',
+      message: createRideMessage({
+        id: 'ack-message-1',
+        rideId: RIDE,
+        originId: 'gateway-1',
+        type: 'ack',
+        priority: 'critical',
+        payload: {
+          v: DELIVERY_ACK_VERSION,
+          originalMessageId: messageId,
+          originalOriginId: 'node-1',
+          destinationNodeId: 'gateway-1',
+          acknowledgedAt: NOW,
+          keyId: 'member-key-1',
+          nonce: 'ack-nonce-1',
+          signature: 'verified-signature',
+        },
+        ttlMs: 30_000,
+        maxHops: 4,
+        now: NOW,
+      }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(verify).toHaveBeenCalledTimes(1);
+    expect(statuses.at(-1)).toMatchObject({
+      state: 'destination_delivered',
+      messageId,
+      acknowledgementMessageId: 'ack-message-1',
+    });
+    await h.client.stop();
+  });
+
+  test('keeps forged ACKs from advancing delivery state', async () => {
+    const h = harness({ acknowledgementVerifier: { verify: jest.fn(async () => false) } });
+    const statuses: RideConnectivityDeliveryStatus[] = [];
+    const errors: RideConnectivityErrorEvent[] = [];
+    h.client.onDeliveryStatus(status => statuses.push(status));
+    h.client.onError(error => errors.push(error));
+    await h.client.start(CONTEXT);
+    const { messageId } = await h.client.sendMessage(validInput());
+
+    const forged = createRideMessage({
+      id: 'forged-ack',
+      rideId: RIDE,
+      originId: 'gateway-1',
+      type: 'ack',
+      priority: 'critical',
+      payload: {
+        v: DELIVERY_ACK_VERSION,
+        originalMessageId: messageId,
+        originalOriginId: 'node-1',
+        destinationNodeId: 'gateway-1',
+        acknowledgedAt: NOW,
+        keyId: 'attacker-key',
+        nonce: 'attacker-nonce',
+        signature: 'forged',
+      },
+      ttlMs: 30_000,
+      maxHops: 4,
+      now: NOW,
+    });
+    h.emitApplication({ delivery: 'gateway', message: forged });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(statuses.some(status => status.state === 'destination_delivered')).toBe(false);
+    expect(errors).toContainEqual(expect.objectContaining({ reason: 'unauthenticated_ack' }));
+    await h.client.stop();
+  });
+
+  test('reports local gateway handoff acceptance without claiming destination delivery', async () => {
+    const handoffToGateway = jest.fn(async () => ({
+      accepted: true as const,
+      transportId: 'application_gateway',
+    }));
+    const h = harness({ handoffToGateway });
+    h.sendResults.push({ status: 'local_gateway' });
+    const statuses: RideConnectivityDeliveryStatus[] = [];
+    h.client.onDeliveryStatus(status => statuses.push(status));
+    await h.client.start(CONTEXT);
+
+    await h.client.sendMessage(validInput());
+
+    expect(handoffToGateway).toHaveBeenCalledTimes(1);
+    expect(statuses.map(status => status.state)).toEqual([
+      'queued',
+      'sending',
+      'transport_accepted',
+    ]);
+    expect(statuses.some(status => status.state === 'destination_delivered')).toBe(false);
     await h.client.stop();
   });
 });
