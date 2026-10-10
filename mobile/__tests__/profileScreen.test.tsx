@@ -54,6 +54,9 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  ReactTestRenderer.act(() => {
+    renderer.unmount();
+  });
   jest.useRealTimers();
 });
 
