@@ -2,7 +2,7 @@
  * Small, React-free helpers that let a screen own the Ride Connectivity runtime safely:
  *
  *   createRideNodeIdentity        one secure node id per ride session, stable across retries
- *   createMonotonicClock          performance.now(), or fail closed (never Date.now)
+ *   createMonotonicClock          floor(performance.now()), or fail closed (never Date.now)
  *   createRideConnectivityController  at most one running runtime per transport session;
  *                                 safe against retries, late async completion and repeat calls
  *   createConnectivityDiagnostics concise, deduplicated diagnostic lines (no payloads)
@@ -33,8 +33,14 @@ export function createRideNodeIdentity(generateId: () => string): RideNodeIdenti
 }
 
 /**
- * A monotonic clock from performance.now (React Native's native steady clock). Throws when it is
- * unavailable: protocol freshness must never silently fall back to the wall clock.
+ * A monotonic clock from performance.now (React Native's native steady clock), in whole
+ * milliseconds. Throws when it is unavailable: protocol freshness must never silently fall back to
+ * the wall clock.
+ *
+ * performance.now has sub-millisecond precision on device (e.g. 19290243.959202), while the peer
+ * table, link map and gateway state accept only safe-integer timestamps; unfloored, every
+ * heartbeat and advertisement was rejected as 'invalid'. Flooring a monotonic source keeps it
+ * nondecreasing.
  */
 export function createMonotonicClock(
   runtime: { performance?: unknown } = globalThis as { performance?: unknown },
@@ -44,7 +50,7 @@ export function createMonotonicClock(
     throw new TypeError('performance.now is unavailable: no monotonic clock for the protocol');
   }
   const now = perf.now as () => number;
-  return () => now.call(perf);
+  return () => Math.floor(now.call(perf));
 }
 
 export interface RideConnectivityController {
