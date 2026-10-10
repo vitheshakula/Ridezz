@@ -59,7 +59,7 @@ import {
 } from '../services/SpeechHazardService';
 import { createHazardPacket, type HazardPacket } from '../protocol/hazardProtocol';
 import { useCrashDetection } from '../crash/useCrashDetection';
-import CrashCountdown from '../components/CrashCountdown';
+import CrashAlertModal from '../components/CrashAlertModal';
 import BrakeFlasher from '../components/BrakeFlasher';
 import { createBrakeCoordinator } from '../braking/brakeCoordinator';
 import { emitPeerBrakingAlert } from '../braking/brakingEvents';
@@ -920,6 +920,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const hudBottom = insets.top + 8 + hudHeight;
   const bannerTop = hudBottom + 8;
+  // The crash card takes the hazard banner slot while it is up.
+  const crashCardActive = crash.state.phase === 'countdown' || crash.state.phase === 'sos';
 
   return (
     <View style={styles.container}>
@@ -975,7 +977,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
       {destinationNotice ? <PresenceToast message={destinationNotice} /> : null}
-      {bannerAlert ? (
+      {bannerAlert && !crashCardActive ? (
         <HazardAlertBanner
           packet={bannerAlert.packet}
           kind={bannerAlert.kind}
@@ -1143,8 +1145,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
       <BrakeFlasher visible={peerBrake !== null} />
 
-      <CrashCountdown
+      <CrashAlertModal
         state={crash.state}
+        top={bannerTop}
         onCancel={crash.cancel}
         onSendNow={crash.sendNow}
         onAcknowledge={crash.acknowledge}

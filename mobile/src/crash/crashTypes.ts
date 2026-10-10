@@ -14,6 +14,8 @@ export interface CrashState {
   severity?: CrashSeverity;
   /** Epoch ms (this device's clock) at which the countdown ends. Set during 'countdown'. */
   countdownEndsAt?: number;
+  /** Full length of the countdown that just started (ms); scales the progress ring. */
+  countdownMs?: number;
   /** 'user' | 'riding_resumed'. Set during 'cancelled'. */
   cancelReason?: string;
 }

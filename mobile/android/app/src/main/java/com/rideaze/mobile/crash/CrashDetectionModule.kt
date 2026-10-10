@@ -343,7 +343,7 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     number("tiltDeg", 30.0, 90.0)?.let { config = config.copy(tiltDeg = it) }
     number("countdownSeconds", 10.0, 60.0)?.let {
       val ms = (it * 1000).toLong()
-      config = config.copy(countdownMsHigh = ms, countdownMsMedium = (ms * 3) / 2)
+      config = config.copy(countdownMsHigh = ms, countdownMsMedium = ms)
     }
     if (options.hasKey("enableLowSpeedLaydown") && !options.isNull("enableLowSpeedLaydown")) {
       config = config.copy(enableLowSpeedLaydown = options.getBoolean("enableLowSpeedLaydown"))

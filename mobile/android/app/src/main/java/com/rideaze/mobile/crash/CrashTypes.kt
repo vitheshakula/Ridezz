@@ -45,8 +45,8 @@ data class CrashConfig(
   /** Acceleration below this (g) for [freeFallMs] just before the impact = the phone was falling. */
   val freeFallG: Double = 0.3,
   val freeFallMs: Long = 80,
-  val countdownMsHigh: Long = 20_000,
-  val countdownMsMedium: Long = 30_000,
+  val countdownMsHigh: Long = 40_000,
+  val countdownMsMedium: Long = 40_000,
   /** After a cancel / acknowledged alert, no new crash is declared for this long (ms). */
   val cooldownMs: Long = 60_000,
   /** A fix at or above this speed (m/s) during the countdown means the rider is riding on. */

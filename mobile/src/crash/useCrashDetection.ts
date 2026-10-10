@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { DevSettings, Vibration } from 'react-native';
+import { DevSettings } from 'react-native';
 import {
   crashNative,
   isCrashDetectionAvailable,
@@ -106,6 +106,7 @@ export function useCrashDetection({
           confidence: candidate.confidence,
           severity: candidate.severity,
           countdownEndsAt: countdownEndsAtRef.current,
+          countdownMs: candidate.countdownMs,
         });
         logDiagnosticEvent(
           'crash_countdown',
@@ -180,13 +181,12 @@ export function useCrashDetection({
     };
   }, [enabled]);
 
-  // Alert the rider while a countdown runs: repeating vibration plus a spoken reminder. The wording
-  // avoids the app's hazard words ("crash", "accident", "help") so nothing hears itself.
+  // Spoken reminders while a countdown runs (the escalating vibration lives in CrashAlertModal).
+  // The wording avoids the app's hazard words ("crash", "accident", "help") so nothing hears itself.
   useEffect(() => {
     if (state.phase !== 'countdown') {
       return;
     }
-    Vibration.vibrate([0, 600, 400], true);
     const speak = () => {
       const seconds = Math.max(0, Math.round((countdownEndsAtRef.current - Date.now()) / 1000));
       Promise.resolve(
@@ -197,10 +197,7 @@ export function useCrashDetection({
     };
     speak();
     const reminder = setInterval(speak, REMINDER_MS);
-    return () => {
-      clearInterval(reminder);
-      Vibration.cancel();
-    };
+    return () => clearInterval(reminder);
   }, [state.phase]);
 
   const simulate = useCallback(() => {

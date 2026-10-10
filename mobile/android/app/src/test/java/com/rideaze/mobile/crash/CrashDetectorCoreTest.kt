@@ -209,7 +209,7 @@ class CrashDetectorCoreTest {
   @Test
   fun detectsHighSpeedCrashThenSendsSosAfterCountdown() {
     val (core, rec) = detector()
-    run(core, crashProfile(), t0, t0 + 45_000)
+    run(core, crashProfile(), t0, t0 + 70_000)
 
     val ev = rec.confirmed.single()
     assertEquals(CrashPath.CRASH, ev.path)
@@ -223,9 +223,9 @@ class CrashDetectorCoreTest {
     val countdown = rec.states.first { it.phase == CrashPhase.COUNTDOWN }
     assertEquals(CrashConfidence.HIGH, countdown.confidence)
     assertEquals("SEVERE", countdown.severity)
-    assertEquals(20_000L, countdown.countdownMs)
+    assertEquals(40_000L, countdown.countdownMs)
     // Confirmed ~5-6 s after the impact (4 s of rest after the tumble settles).
-    val started = countdown.countdownEndsAt!! - 20_000
+    val started = countdown.countdownEndsAt!! - 40_000
     assertTrue(started - (t0 + 10_000) in 4_500..8_000)
 
     val sos = rec.sos.single()
@@ -241,7 +241,7 @@ class CrashDetectorCoreTest {
   @Test
   fun lessViolentCrashIsHighNotSevere() {
     val (core, rec) = detector()
-    run(core, crashProfile(peakG = 4.5), t0, t0 + 45_000)
+    run(core, crashProfile(peakG = 4.5), t0, t0 + 70_000)
     assertEquals("HIGH", rec.sos.single().severity)
   }
 
@@ -265,14 +265,14 @@ class CrashDetectorCoreTest {
   @Test
   fun fallsBackToLongerMediumConfidencePathWithoutGnss() {
     val (core, rec) = detector()
-    run(core, crashProfile(speedBefore = null), t0, t0 + 80_000)
+    run(core, crashProfile(speedBefore = null), t0, t0 + 100_000)
     val ev = rec.confirmed.single()
     assertEquals(CrashPath.CRASH_NO_GNSS, ev.path)
     assertEquals(CrashConfidence.MEDIUM, ev.confidence)
     assertNull(ev.preSpeedMps)
     val countdown = rec.states.first { it.phase == CrashPhase.COUNTDOWN }
-    assertEquals(30_000L, countdown.countdownMs)
-    assertTrue(countdown.countdownEndsAt!! - t0 > 10_000 + 10_000 + 30_000)
+    assertEquals(40_000L, countdown.countdownMs)
+    assertTrue(countdown.countdownEndsAt!! - t0 > 10_000 + 10_000 + 40_000)
     val sos = rec.sos.single()
     assertEquals("MODERATE", sos.severity)
     assertNull(sos.speedBeforeImpactMps)
@@ -404,9 +404,9 @@ class CrashDetectorCoreTest {
     assertEquals(CrashPhase.COUNTDOWN, core.getState().phase)
     assertEquals(CrashPath.MANUAL, rec.states[0].evidence?.path)
     assertEquals("UNKNOWN", rec.states[0].severity)
-    core.tick(t0 + 29_000)
+    core.tick(t0 + 39_000)
     assertTrue(rec.sos.isEmpty())
-    core.tick(t0 + 30_000)
+    core.tick(t0 + 40_000)
     assertEquals(1, rec.sos.size)
   }
 
@@ -414,10 +414,10 @@ class CrashDetectorCoreTest {
   fun eachAlertGetsItsOwnId() {
     val (core, rec) = detector()
     core.simulate(t0)
-    core.tick(t0 + 30_000)
-    core.acknowledge(t0 + 31_000)
+    core.tick(t0 + 40_000)
+    core.acknowledge(t0 + 41_000)
     core.simulate(t0 + 100_000)
-    core.tick(t0 + 130_000)
+    core.tick(t0 + 140_000)
     assertEquals(2, rec.sos.map { it.sosId }.toSet().size)
   }
 
