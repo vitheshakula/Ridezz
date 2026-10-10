@@ -36,6 +36,7 @@ import {
   getGatewayRouteCandidates,
   selectGatewayForwardingRoute,
   type GatewayForwardingDecision,
+  type GatewayRouteCandidate,
 } from './gatewayRouting';
 import { createGatewayState } from './gatewayState';
 import {
@@ -46,13 +47,31 @@ import {
 } from './heartbeatEmitter';
 import { createPeerTable } from './peerTable';
 import { createRideMessageIngress } from './rideMessageIngress';
-import { createRoutedForwarder, type RoutedSendResult } from './routedForwarder';
+import {
+  createRoutedForwarder,
+  type RoutedForwardResult,
+  type RoutedSendResult,
+} from './routedForwarder';
 import type { RideMessage } from './protocol/rideMessage';
 import type { JsonValue } from './protocol/jsonValue';
 import { createSeenMessageCache } from './protocol/seenMessageCache';
 import type { TargetedTransport } from '../transports/Transport';
 
 export type RideConnectivityEvent =
+  | { kind: 'message_accepted'; message: RideMessage<JsonValue> }
+  | {
+      kind: 'ingress_rejected_detail';
+      reason: 'wrong_ride' | 'local_origin' | 'duplicate';
+      messageId: string;
+      messageType: RideMessage<JsonValue>['type'];
+    }
+  | {
+      kind: 'routed_attempt';
+      direction: 'originated' | 'forwarded';
+      message: RideMessage<unknown>;
+      route: GatewayRouteCandidate;
+    }
+  | { kind: 'routed_result'; message: RideMessage<JsonValue>; result: RoutedForwardResult }
   | { kind: 'receive'; result: ConnectivityReceiveResult }
   | { kind: 'heartbeat_cycle'; outcome: CycleOutcome<HeartbeatCycleResult> }
   | { kind: 'gateway_advertisement_cycle'; outcome: CycleOutcome<GatewayAdvertisementCycleResult> };
@@ -132,6 +151,17 @@ export function createRideConnectivityRuntime({
     localNodeId,
     seenMessages: createSeenMessageCache(),
     clock: wallClock,
+    onRejectedMessage: (reason, message) => {
+      // Routed duplicates may be admitted later by the receiver's bounded retry tracker.
+      if (reason !== 'duplicate') {
+        report({
+          kind: 'ingress_rejected_detail',
+          reason,
+          messageId: message.id,
+          messageType: message.type,
+        });
+      }
+    },
   });
   const peerTable = createPeerTable({ localNodeId });
   const linkIdentities = createDirectLinkIdentityMap({ localNodeId });
@@ -145,6 +175,8 @@ export function createRideConnectivityRuntime({
     linkIdentities,
     monotonicClock,
     wallClock,
+    onAttempt: (direction, message, route) =>
+      report({ kind: 'routed_attempt', direction, message, route }),
   });
   const ackReturnRouter = createAckReturnRouter({
     localNodeId,
@@ -163,6 +195,15 @@ export function createRideConnectivityRuntime({
     monotonicClock,
     wallClock,
     onApplicationMessage,
+    onAcceptedMessage: message => report({ kind: 'message_accepted', message }),
+    onRoutedResult: (message, result) => report({ kind: 'routed_result', message, result }),
+    onSuppressedDuplicate: message =>
+      report({
+        kind: 'ingress_rejected_detail',
+        reason: 'duplicate',
+        messageId: message.id,
+        messageType: message.type,
+      }),
   });
 
   // Heartbeats go over this one local transport only; LiveKit never participates.

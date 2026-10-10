@@ -56,6 +56,11 @@ export interface RideMessageIngressOptions {
   seenMessages: SeenMessageCache;
   /** Read once per packet; the same instant is used for parsing and for the dedup claim. */
   clock: () => number;
+  /** Sanitized observability after canonical parsing. Exceptions are isolated. */
+  onRejectedMessage?: (
+    reason: Exclude<RideMessageIngressRejection, 'invalid'>,
+    message: RideMessage<JsonValue>,
+  ) => void;
 }
 
 export interface RideMessageIngress {
@@ -86,6 +91,7 @@ export function createRideMessageIngress({
   localNodeId,
   seenMessages,
   clock,
+  onRejectedMessage,
 }: RideMessageIngressOptions): RideMessageIngress {
   if (!isValidRideMessageIdentifier(rideId, RIDE_MESSAGE_MAX_RIDE_ID_LENGTH)) {
     throw new TypeError('Ingress rideId must be a valid RideMessage rideId');
@@ -105,9 +111,19 @@ export function createRideMessageIngress({
         return { accepted: false, reason: 'invalid', source };
       }
       if (message.rideId !== rideId) {
+        try {
+          onRejectedMessage?.('wrong_ride', message);
+        } catch {
+          // Observability must never alter ingress acceptance.
+        }
         return { accepted: false, reason: 'wrong_ride', source };
       }
       if (message.originId === localNodeId) {
+        try {
+          onRejectedMessage?.('local_origin', message);
+        } catch {
+          // Observability must never alter ingress acceptance.
+        }
         return { accepted: false, reason: 'local_origin', source };
       }
 
@@ -115,6 +131,11 @@ export function createRideMessageIngress({
         case 'accepted':
           return { accepted: true, message, source };
         case 'duplicate':
+          try {
+            onRejectedMessage?.('duplicate', message);
+          } catch {
+            // Observability must never alter ingress acceptance.
+          }
           return { accepted: false, reason: 'duplicate', source };
         default:
           // 'expired' / 'invalid' are unreachable after a successful parse at the same `now`

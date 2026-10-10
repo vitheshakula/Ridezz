@@ -6,9 +6,9 @@
  * never touches hazards, crash, braking, mesh sync or LiveKit, and never claims delivery: only a
  * verified ACK (none exist yet) can produce `destination_delivered`.
  *
- * Gating: the probe runs only when ENABLE_CONNECTIVITY_TEST_PROBE is true AND the build is a
- * development build (__DEV__). A release APK can never run it, even with the flag accidentally on.
- * Local enabling procedure: docs/architecture/connectivity-test-probe-m7.md.
+ * Gating: the probe runs only when ENABLE_CONNECTIVITY_TEST_PROBE is true in a development build,
+ * or when the isolated native field-test build flag is supplied by app composition. A production
+ * release can never run it, even with the source flag accidentally on.
  */
 
 import type {
@@ -26,6 +26,8 @@ export const PROBE_TTL_MS = 60_000;
 export const PROBE_MAX_HOPS = 4;
 export const PROBE_MIN_INTERVAL_MS = 5_000;
 export const PROBE_MAX_PER_SESSION = 10;
+/** Manual-only field build allowance: enough for five samples at several physical distances. */
+export const PROBE_FIELD_TEST_MAX_PER_SESSION = 50;
 /** Marks a ride_state payload as a probe. Carries no rider, location or account data. */
 export const PROBE_PAYLOAD_MARKER = 'rideaze-connectivity-probe-v1';
 
@@ -46,7 +48,7 @@ export interface ConnectivityTestProbePayload {
 }
 
 export interface ConnectivityTestProbe {
-  /** True only for an enabled flag in a development build. */
+  /** True only for an enabled development flag or the isolated field-test build. */
   readonly available: boolean;
   /** The ride's protocol session is up (RideMeshSession reached 'protocol' mode). */
   sessionStarted(rideId: string): void;
@@ -60,18 +62,43 @@ export interface ConnectivityTestProbeOptions {
   readonly client: Pick<RideConnectivityClient, 'sendMessage' | 'onDeliveryStatus' | 'onMessage'>;
   readonly enabled: boolean;
   readonly isDevelopmentBuild: boolean;
+  /** Native compile-time boundary for the self-contained, JS-bundled field-test variant. */
+  readonly isFieldTestBuild?: boolean;
   /** Local time for rate limiting only; message ids and timestamps come from the client. */
   readonly clock?: () => number;
+  /** Manual submission cap; ordinary development builds retain PROBE_MAX_PER_SESSION. */
+  readonly maxPerSession?: number;
   /** Whether this node currently acts as a (test) cloud gateway; used to label receipts. */
   readonly isCloudReachable?: () => boolean;
   readonly log: (line: string) => void;
+  /** Sanitized structured evidence sink. It must never throw into the probe. */
+  readonly record?: (event: ConnectivityTestProbeEvidence) => void;
 }
+
+export type ConnectivityTestProbeEvidence = Readonly<{
+  kind:
+    | 'probe_submitted'
+    | 'probe_submission_failed'
+    | 'probe_delivery_status'
+    | 'probe_application_received';
+  messageId?: string;
+  seq: number;
+  eventAtMs: number;
+  state?: RideConnectivityDeliveryStatus['state'];
+  transportId?: string;
+  nextAttemptAtMs?: number;
+  lastAttempt?: string;
+  reason?: string;
+  outcome?: string;
+  originNodeId?: string;
+}>;
 
 export function isConnectivityTestProbeAvailable(
   enabled: boolean,
   isDevelopmentBuild: boolean,
+  isFieldTestBuild = false,
 ): boolean {
-  return enabled === true && isDevelopmentBuild === true;
+  return (enabled === true && isDevelopmentBuild === true) || isFieldTestBuild === true;
 }
 
 export function isConnectivityTestProbePayload(
@@ -86,7 +113,7 @@ export function isConnectivityTestProbePayload(
     payload.probe === PROBE_PAYLOAD_MARKER &&
     Number.isSafeInteger(payload.seq) &&
     (payload.seq as number) >= 1 &&
-    (payload.seq as number) <= PROBE_MAX_PER_SESSION
+    (payload.seq as number) <= PROBE_FIELD_TEST_MAX_PER_SESSION
   );
 }
 
@@ -122,15 +149,30 @@ export function createConnectivityTestProbe({
   client,
   enabled,
   isDevelopmentBuild,
+  isFieldTestBuild = false,
   clock = () => Date.now(),
+  maxPerSession = PROBE_MAX_PER_SESSION,
   isCloudReachable = () => false,
   log,
+  record,
 }: ConnectivityTestProbeOptions): ConnectivityTestProbe {
-  const available = isConnectivityTestProbeAvailable(enabled, isDevelopmentBuild);
+  if (
+    !Number.isSafeInteger(maxPerSession) ||
+    maxPerSession < 1 ||
+    maxPerSession > PROBE_FIELD_TEST_MAX_PER_SESSION
+  ) {
+    throw new RangeError('Connectivity test probe session limit is invalid');
+  }
+  const available = isConnectivityTestProbeAvailable(
+    enabled,
+    isDevelopmentBuild,
+    isFieldTestBuild,
+  );
 
   let session: {
     readonly rideId: string;
     readonly tracked: Set<string>;
+    readonly sequenceByMessageId: Map<string, number>;
     readonly unsubscribe: readonly (() => void)[];
     /** Statuses seen while a submission is in flight, before its id is known. */
     pendingStatuses: RideConnectivityDeliveryStatus[] | null;
@@ -146,11 +188,33 @@ export function createConnectivityTestProbe({
     }
   };
 
-  const report = (status: RideConnectivityDeliveryStatus): void => {
+  const safeRecord = (event: ConnectivityTestProbeEvidence): void => {
+    try {
+      record?.(event);
+    } catch {
+      // Evidence must never affect the probe or protocol.
+    }
+  };
+
+  const report = (status: RideConnectivityDeliveryStatus, seq: number): void => {
     const line = describeProbeDeliveryStatus(status);
     if (line) {
       safeLog(line);
     }
+    safeRecord({
+      kind: 'probe_delivery_status',
+      messageId: status.messageId,
+      seq,
+      eventAtMs: status.at,
+      state: status.state,
+      ...('transportId' in status && { transportId: status.transportId }),
+      ...('nextAttemptAt' in status && { nextAttemptAtMs: status.nextAttemptAt }),
+      ...('lastAttempt' in status && status.lastAttempt !== undefined && {
+        lastAttempt: status.lastAttempt,
+      }),
+      ...('reason' in status && { reason: status.reason }),
+      ...('outcome' in status && { outcome: status.outcome }),
+    });
   };
 
   const receiptLabel = (): string => {
@@ -190,6 +254,7 @@ export function createConnectivityTestProbe({
       const current = {
         rideId,
         tracked: new Set<string>(),
+        sequenceByMessageId: new Map<string, number>(),
         unsubscribe: [] as (() => void)[],
         pendingStatuses: null as RideConnectivityDeliveryStatus[] | null,
         submitted: 0,
@@ -202,7 +267,10 @@ export function createConnectivityTestProbe({
             return;
           }
           if (current.tracked.has(status.messageId)) {
-            report(status);
+            const seq = current.sequenceByMessageId.get(status.messageId);
+            if (seq !== undefined) {
+              report(status, seq);
+            }
           } else if (
             current.pendingStatuses &&
             current.pendingStatuses.length < MAX_BUFFERED_STATUSES
@@ -222,6 +290,13 @@ export function createConnectivityTestProbe({
             `probe ${short(message.id)} | ${receiptLabel()} | from ${short(message.originId)} ` +
               `seq=${message.payload.seq}`,
           );
+          safeRecord({
+            kind: 'probe_application_received',
+            messageId: message.id,
+            seq: message.payload.seq,
+            eventAtMs: clock(),
+            originNodeId: message.originId,
+          });
         }),
       );
       safeLog('test probe armed for this ride (debug build)');
@@ -240,8 +315,8 @@ export function createConnectivityTestProbe({
         safeLog('probe not sent: no active protocol session');
         return { status: 'session_inactive' };
       }
-      if (current.submitted >= PROBE_MAX_PER_SESSION) {
-        safeLog(`probe not sent: session limit (${PROBE_MAX_PER_SESSION}) reached`);
+      if (current.submitted >= maxPerSession) {
+        safeLog(`probe not sent: session limit (${maxPerSession}) reached`);
         return { status: 'session_limit_reached' };
       }
       const now = clock();
@@ -277,10 +352,12 @@ export function createConnectivityTestProbe({
           return { status: 'submission_failed', seq, reason: 'session_ended' };
         }
         current.tracked.add(messageId);
+        current.sequenceByMessageId.set(messageId, seq);
         safeLog(`probe #${seq} submitted | id=${short(messageId)}`);
+        safeRecord({ kind: 'probe_submitted', messageId, seq, eventAtMs: clock() });
         for (const status of buffered) {
           if (status.messageId === messageId) {
-            report(status);
+            report(status, seq);
           }
         }
         return { status: 'submitted', seq, messageId };
@@ -290,12 +367,13 @@ export function createConnectivityTestProbe({
         const code = (error as { code?: unknown } | null)?.code;
         const reason = typeof code === 'string' ? code : 'unexpected_error';
         safeLog(`probe #${seq} submission_failed | ${reason}`);
+        safeRecord({ kind: 'probe_submission_failed', seq, eventAtMs: clock(), reason });
         // A message created but not queued (e.g. outbox full) still reports queued/failed for its
         // own id. Client operations are serialized and only the probe submits messages, so the
         // buffer holds this submission's statuses alone.
         for (const status of buffered) {
           if (session === current && (status.state === 'queued' || status.state === 'failed')) {
-            report(status);
+            report(status, seq);
           }
         }
         return { status: 'submission_failed', seq, reason };

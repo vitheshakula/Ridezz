@@ -2,6 +2,11 @@ package com.rideaze.mobile
 
 import android.Manifest
 import android.bluetooth.BluetoothAdapter
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Handler
@@ -63,6 +68,12 @@ import org.json.JSONObject
  * radio range is whatever Bluetooth/BLE/Wi-Fi give the phones -- typically tens of metres outdoors,
  * less with phones in pockets/helmets. Requires Google Play Services, Bluetooth on, and the runtime
  * permissions granted by the JS caller (see requiredPermissions()).
+ *
+ * Debug builds only (M8 multi-hop testing): a [DebugLinkFilter] deny-list of advertised rider ids,
+ * empty by default and reset whenever the session stops, forces a controlled topology on phones
+ * that would otherwise all connect directly. Set per phone with
+ * `adb shell am broadcast -a com.rideaze.mobile.DEBUG_MESH_DENY --es riderIds "<id>,<id>"` (empty or
+ * missing clears it). The receiver is never registered in a non-debuggable build.
  */
 class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
@@ -71,9 +82,10 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     private const val TAG = "NearbyMesh"
     private const val SERVICE_ID = "com.ridezz.mobile.mesh"
     private const val RETRY_INTERVAL_MS = 8_000L
+    private const val DEBUG_MESH_DENY_ACTION = "com.rideaze.mobile.DEBUG_MESH_DENY"
   }
 
-  private class Peer(val name: String)
+  private class Peer(val name: String, val riderId: String = "")
 
   private val handler = Handler(Looper.getMainLooper())
 
@@ -93,6 +105,12 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   /** Endpoints with a connection attempt in flight. */
   private val connecting = ConcurrentHashMap.newKeySet<String>()
 
+  private val debuggable =
+    (reactContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
+  /** M8 debug-only topology filter; refuses any configuration in a non-debuggable build. */
+  private val linkFilter = DebugLinkFilter(debuggable)
+  private var debugReceiver: BroadcastReceiver? = null
+
   private val retryTick =
     object : Runnable {
       override fun run() {
@@ -103,6 +121,47 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     }
 
   override fun getName(): String = "NearbyMeshModule"
+
+  override fun initialize() {
+    super.initialize()
+    if (!debuggable) return
+    val receiver =
+      object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+          applyDebugLinkFilter(intent?.getStringExtra("riderIds").orEmpty())
+        }
+      }
+    debugReceiver = receiver
+    ContextCompat.registerReceiver(
+      reactContext,
+      receiver,
+      IntentFilter(DEBUG_MESH_DENY_ACTION),
+      ContextCompat.RECEIVER_EXPORTED,
+    )
+  }
+
+  /** Debug builds only: replaces the deny-list and drops any link it now denies. Main thread. */
+  private fun applyDebugLinkFilter(riderIdsCsv: String) {
+    if (!linkFilter.configure(riderIdsCsv.split(','))) {
+      Log.d(TAG, "debug link filter: refused (not a debuggable build)")
+      return
+    }
+    Log.d(TAG, "debug link filter: denied rider ids = ${linkFilter.snapshot().sorted()}")
+    val nearby = client ?: return
+    val toDrop = linkFilter.deniedEndpoints(connected.mapValues { it.value.riderId }) +
+      linkFilter.deniedEndpoints(pending.mapValues { it.value.riderId })
+    for (endpointId in toDrop) {
+      Log.d(TAG, "debug link filter: disconnecting $endpointId (rider ${riderIdOf(endpointId)})")
+      nearby.disconnectFromEndpoint(endpointId)
+      connected.remove(endpointId)
+      pending.remove(endpointId)
+      connecting.remove(endpointId)
+    }
+    if (toDrop.isNotEmpty()) emitStatus()
+  }
+
+  private fun riderIdOf(endpointId: String): String =
+    connected[endpointId]?.riderId ?: pending[endpointId]?.riderId ?: discovered[endpointId] ?: "?"
 
   @ReactMethod
   fun startMeshSession(roomCode: String, riderName: String, promise: Promise) {
@@ -237,7 +296,11 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
         val parsed = parseEndpointName(info.endpointName) ?: return
         if (parsed.first != room) return
-        Log.d(TAG, "found $endpointId (${parsed.third}, id=${parsed.second})")
+        Log.d(
+          TAG,
+          "found $endpointId (${parsed.third}, id=${parsed.second})" +
+            if (linkFilter.allows(parsed.second)) "" else " [debug link filter: denied]",
+        )
         discovered[endpointId] = parsed.second
         connectToDiscovered()
       }
@@ -255,6 +318,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     for ((endpointId, remoteId) in discovered) {
       if (
         riderId >= remoteId ||
+        !linkFilter.allows(remoteId) ||
         connected.containsKey(endpointId) ||
         pending.containsKey(endpointId) ||
         !connecting.add(endpointId)
@@ -281,8 +345,14 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
           connecting.remove(endpointId)
           return
         }
+        if (!linkFilter.allows(parsed.second)) {
+          Log.d(TAG, "debug link filter: rejecting $endpointId (rider ${parsed.second})")
+          client?.rejectConnection(endpointId)
+          connecting.remove(endpointId)
+          return
+        }
         // Pending until onConnectionResult reports STATUS_OK; not a peer or send target yet.
-        pending[endpointId] = Peer(parsed.third)
+        pending[endpointId] = Peer(parsed.third, parsed.second)
         client
           ?.acceptConnection(endpointId, payloadCallback)
           ?.addOnFailureListener {
@@ -375,6 +445,10 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     pending.clear()
     discovered.clear()
     connecting.clear()
+    // Rider ids are per session, so a debug deny-list never outlives the session it was set for.
+    if (linkFilter.reset()) {
+      Log.d(TAG, "debug link filter: reset (session stopped)")
+    }
     if (nearby != null) {
       Log.d(TAG, "stop")
       nearby.stopAdvertising()
@@ -388,6 +462,8 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   }
 
   override fun invalidate() {
+    debugReceiver?.let { runCatching { reactContext.unregisterReceiver(it) } }
+    debugReceiver = null
     stopInternal()
     super.invalidate()
   }
@@ -406,4 +482,44 @@ class NearbyMeshPackage : ReactPackage {
 
   override fun createViewManagers(reactContext: ReactApplicationContext): List<ViewManager<*, *>> =
     emptyList()
+}
+
+/**
+ * M8 debug-only Nearby link filter: a deny-list of advertised per-session rider ids (the middle
+ * field of "ROOM|riderId|name"). Pure logic so it can be unit-tested without Android.
+ *
+ * Empty by default, which allows every connection exactly as before. In a non-debuggable build
+ * [configure] refuses and the list stays empty, so nothing can be denied. Ids are restricted to the
+ * native rider-id alphabet (hex and '-', at most 36 chars); anything else is ignored, never logged.
+ */
+internal class DebugLinkFilter(private val debuggable: Boolean) {
+  private val denied = ConcurrentHashMap.newKeySet<String>()
+
+  /** Replaces the deny-list. Returns false, and leaves it empty, in a non-debuggable build. */
+  fun configure(riderIds: Collection<String>): Boolean {
+    denied.clear()
+    if (!debuggable) return false
+    riderIds.map { it.trim() }.filter { RIDER_ID.matches(it) }.forEach { denied.add(it) }
+    return true
+  }
+
+  /** Whether a link to [riderId] may be dialled or accepted. Unknown or blank ids are allowed. */
+  fun allows(riderId: String?): Boolean = riderId.isNullOrEmpty() || riderId !in denied
+
+  /** Endpoints (endpointId -> riderId) that the current list denies. */
+  fun deniedEndpoints(riderIdsByEndpoint: Map<String, String>): List<String> =
+    riderIdsByEndpoint.filterValues { !allows(it) }.keys.sorted()
+
+  /** Clears the list. Returns true if anything was denied before. */
+  fun reset(): Boolean {
+    val wasActive = denied.isNotEmpty()
+    denied.clear()
+    return wasActive
+  }
+
+  fun snapshot(): Set<String> = denied.toSet()
+
+  private companion object {
+    val RIDER_ID = Regex("^[0-9A-Fa-f-]{1,36}$")
+  }
 }

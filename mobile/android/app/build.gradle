@@ -22,7 +22,12 @@ react {
     //   The list of variants to that are debuggable. For those we're going to
     //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
     //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
-    // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
+    // fieldTest is deliberately absent: it is native-debuggable but must bundle JS for offline use.
+    debuggableVariants = [
+        "devDevelopmentDebug",
+        "stagingDevelopmentDebug",
+        "prodDevelopmentDebug",
+    ]
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
@@ -85,7 +90,46 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        buildConfigField "boolean", "FIELD_TEST_TOOLS", "false"
     }
+
+    flavorDimensions += ["env", "mode"]
+
+    productFlavors {
+        dev {
+            dimension "env"
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            buildConfigField "String", "API_URL", "\"https://dev-api.rideaze.com/api\""
+            buildConfigField "String", "ENV_NAME", "\"dev\""
+        }
+        staging {
+            dimension "env"
+            applicationIdSuffix ".staging"
+            versionNameSuffix "-staging"
+            buildConfigField "String", "API_URL", "\"https://staging-api.rideaze.com/api\""
+            buildConfigField "String", "ENV_NAME", "\"staging\""
+        }
+        prod {
+            dimension "env"
+            buildConfigField "String", "API_URL", "\"https://api.rideaze.com/api\""
+            buildConfigField "String", "ENV_NAME", "\"prod\""
+        }
+
+        development {
+            dimension "mode"
+            applicationIdSuffix ".development"
+            versionNameSuffix "-development"
+            buildConfigField "boolean", "IS_DEVELOPMENT", "true"
+            matchingFallbacks = ["debug"]
+        }
+        production {
+            dimension "mode"
+            buildConfigField "boolean", "IS_DEVELOPMENT", "false"
+            matchingFallbacks = ["release"]
+        }
+    }
+
     signingConfigs {
         debug {
             storeFile file('debug.keystore')
@@ -97,6 +141,15 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            matchingFallbacks = ["debug"]
+        }
+        fieldTest {
+            initWith debug
+            signingConfig signingConfigs.debug
+            debuggable true
+            matchingFallbacks = ["debug"]
+            versionNameSuffix "-fieldtest"
+            buildConfigField "boolean", "FIELD_TEST_TOOLS", "true"
         }
         release {
             // Caution! In production, you need to generate your own keystore file.
@@ -104,6 +157,7 @@ android {
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
+            matchingFallbacks = ["release"]
         }
     }
 }

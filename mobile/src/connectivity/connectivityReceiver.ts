@@ -38,8 +38,12 @@ import type { PeerTable } from './peerTable';
 import { decideRelay, type RelayRejection } from './relayPolicy';
 import type { RideMessage } from './protocol/rideMessage';
 import type { JsonValue } from './protocol/jsonValue';
-import { serializeRideMessage } from './protocol/rideMessageCodec';
-import type { RideMessageIngress, RideMessageIngressRejection } from './rideMessageIngress';
+import { parseRideMessage, serializeRideMessage } from './protocol/rideMessageCodec';
+import type {
+  RideMessageIngress,
+  RideMessageIngressRejection,
+  RideMessageIngressResult,
+} from './rideMessageIngress';
 import type { RoutedForwarder, RoutedForwardResult } from './routedForwarder';
 import type { TargetedTransport, TransportEndpointSource } from '../transports/Transport';
 
@@ -87,6 +91,12 @@ export interface ConnectivityReceiverOptions {
   wallClock: () => number;
   /** Optional application hand-off. Exceptions are isolated from the receive pipeline. */
   onApplicationMessage?: (received: ConnectivityApplicationMessage) => void;
+  /** Called synchronously after canonical validation/dedup and before handling or forwarding. */
+  onAcceptedMessage?: (message: RideMessage<JsonValue>) => void;
+  /** Called when handling of one accepted routed message settles. */
+  onRoutedResult?: (message: RideMessage<JsonValue>, result: RoutedForwardResult) => void;
+  /** Called only when a duplicate is actually suppressed. */
+  onSuppressedDuplicate?: (message: RideMessage<JsonValue>) => void;
   /** Bound on one relay broadcast; defaults to OPERATIONAL_SEND_TIMEOUT_MS. */
   relayTimeoutMs?: number;
 }
@@ -115,6 +125,9 @@ export function createConnectivityReceiver({
   monotonicClock,
   wallClock,
   onApplicationMessage,
+  onAcceptedMessage,
+  onRoutedResult,
+  onSuppressedDuplicate,
   relayTimeoutMs = OPERATIONAL_SEND_TIMEOUT_MS,
 }: ConnectivityReceiverOptions): ConnectivityReceiver {
   if (!Number.isSafeInteger(relayTimeoutMs) || relayTimeoutMs <= 0) {
@@ -130,6 +143,27 @@ export function createConnectivityReceiver({
     } catch {
       // Application observers must never interrupt forwarding or the receive subscription.
     }
+  };
+
+  type AcceptedIngress = Extract<RideMessageIngressResult, { accepted: true }>;
+
+  const forwardRouted = async (
+    accepted: AcceptedIngress,
+  ): Promise<ConnectivityReceiveResult> => {
+    const { message, source } = accepted;
+    if (source.peerId !== undefined) {
+      ackReturnRouter?.remember(message, { endpointId: source.peerId });
+    }
+    const result = await forwarder.forwardAccepted(accepted);
+    try {
+      onRoutedResult?.(message, result);
+    } catch {
+      // Observability must never interrupt application delivery.
+    }
+    if (result.status === 'gateway_reached') {
+      deliverApplicationMessage(message, 'gateway');
+    }
+    return { stage: 'routed', result };
   };
 
   /** Flood relay of an accepted advertisement: same id, hopCount + 1, per relay policy. */
@@ -175,9 +209,25 @@ export function createConnectivityReceiver({
   ): Promise<ConnectivityReceiveResult> => {
     const accepted = ingress.ingest(payload, { transportId, peerId: source.endpointId });
     if (!accepted.accepted) {
+      // Ingress rejection results intentionally expose no packet contents. Re-parse only inside
+      // this receiver so observability can correlate the exact canonical packet.
+      const duplicateMessage =
+        accepted.reason === 'duplicate' ? parseRideMessage(payload, wallClock()) : null;
+      if (duplicateMessage) {
+        try {
+          onSuppressedDuplicate?.(duplicateMessage);
+        } catch {
+          // Observability must never change duplicate suppression.
+        }
+      }
       return { stage: 'ingress_rejected', reason: accepted.reason };
     }
     const { message } = accepted;
+    try {
+      onAcceptedMessage?.(message);
+    } catch {
+      // Observability must never interrupt protocol handling or forwarding.
+    }
     if (message.type === 'heartbeat') {
       return {
         stage: 'heartbeat',
@@ -203,12 +253,7 @@ export function createConnectivityReceiver({
       return { stage: 'ack', result };
     }
     if (message.gatewayRouting !== undefined) {
-      ackReturnRouter?.remember(message, source);
-      const result = await forwarder.forwardAccepted(accepted);
-      if (result.status === 'gateway_reached') {
-        deliverApplicationMessage(message, 'gateway');
-      }
-      return { stage: 'routed', result };
+      return forwardRouted(accepted);
     }
     deliverApplicationMessage(message, 'local');
     return { stage: 'unrouted' };

@@ -141,6 +141,14 @@ export function createConnectivityDiagnostics({
   };
 
   return event => {
+    if (
+      event.kind === 'message_accepted' ||
+      event.kind === 'ingress_rejected_detail' ||
+      event.kind === 'routed_attempt' ||
+      event.kind === 'routed_result'
+    ) {
+      return;
+    }
     if (event.kind === 'heartbeat_cycle' || event.kind === 'gateway_advertisement_cycle') {
       let summary: string;
       if (!event.outcome.ok) {

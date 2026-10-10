@@ -87,6 +87,12 @@ export interface RoutedForwarderOptions {
   wallClock: () => number;
   sendTimeoutMs?: number;
   maxRouteAttempts?: number;
+  /** Observability immediately before each targeted send; exceptions are isolated. */
+  onAttempt?: (
+    direction: 'originated' | 'forwarded',
+    message: RideMessage<unknown>,
+    route: GatewayRouteCandidate,
+  ) => void;
 }
 
 export interface RoutedForwarder {
@@ -107,6 +113,7 @@ export function createRoutedForwarder({
   wallClock,
   sendTimeoutMs = ROUTED_SEND_TIMEOUT_MS,
   maxRouteAttempts = ROUTED_DEFAULT_MAX_ROUTE_ATTEMPTS,
+  onAttempt,
 }: RoutedForwarderOptions): RoutedForwarder {
   if (!Number.isSafeInteger(sendTimeoutMs) || sendTimeoutMs <= 0) {
     throw new RangeError('Routed forwarder sendTimeoutMs must be a positive integer');
@@ -124,10 +131,16 @@ export function createRoutedForwarder({
 
   /** One targeted send of `message` along `route`, or a fail-closed result. */
   const transmit = async (
+    direction: 'originated' | 'forwarded',
     message: RideMessage<unknown>,
     route: GatewayRouteCandidate,
     now: number,
   ): Promise<RoutedSendResult> => {
+    try {
+      onAttempt?.(direction, message, route);
+    } catch {
+      // Observability must never interrupt routing.
+    }
     if (route.transportId !== transportId) {
       return { status: 'not_sent', reason: 'unsupported_transport', route };
     }
@@ -166,7 +179,7 @@ export function createRoutedForwarder({
         if (!decision.ok) {
           return lastFailure ?? { status: 'not_sent', reason: decision.reason };
         }
-        const result = await transmit(decision.message, decision.route, now);
+        const result = await transmit('originated', decision.message, decision.route, now);
         if (
           result.status === 'sent' ||
           result.status === 'send_timeout' ||
@@ -204,7 +217,7 @@ export function createRoutedForwarder({
         if (decision.outcome === 'failed') {
           return lastFailure ?? { status: 'not_sent', reason: decision.reason };
         }
-        const result = await transmit(decision.message, decision.route, now);
+        const result = await transmit('forwarded', decision.message, decision.route, now);
         if (
           result.status === 'sent' ||
           result.status === 'send_timeout' ||

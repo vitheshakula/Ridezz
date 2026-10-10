@@ -25,11 +25,19 @@ import {
 } from '../connectivity/debugGatewayOverride';
 import {
   ENABLE_CONNECTIVITY_TEST_PROBE,
+  PROBE_FIELD_TEST_MAX_PER_SESSION,
   createConnectivityTestProbe,
   isConnectivityTestProbeAvailable,
   type ConnectivityTestProbe,
   type ConnectivityTestProbeResult,
 } from '../connectivity/connectivityTestProbe';
+import {
+  clearConnectivityFieldTestEvidence,
+  createConnectivityFieldTestObserver,
+  isConnectivityFieldTestBuild,
+  printConnectivityFieldTestEvidence,
+  recordConnectivityFieldTestEvidence,
+} from '../connectivity/connectivityFieldTestEvidence';
 import { NEARBY_TRANSPORT_ID, nearbyTransport } from '../transports/NearbyTransport';
 import { logDiagnosticEvent } from './diagnosticsLog';
 import {
@@ -56,7 +64,7 @@ export function logRideConnectivity(line: string): void {
     return;
   }
   logDiagnosticEvent('mesh_protocol', line);
-  if (__DEV__) {
+  if (__DEV__ || isConnectivityFieldTestBuild()) {
     console.log(`[RideConnectivity] ${line}`);
   }
 }
@@ -112,6 +120,15 @@ function createAppRideConnectivityClient(): RideConnectivityClient {
       onApplicationMessage,
     }) => {
       let runtime: RideConnectivityRuntime | undefined;
+      const fieldTestObserver = createConnectivityFieldTestObserver({
+        getRoute: () =>
+          runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
+      });
+      const diagnostics = createConnectivityDiagnostics({
+        log: logRideConnectivity,
+        getRoute: () =>
+          runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
+      });
       runtime = createRideConnectivityRuntime({
         rideId: rideContext.rideId,
         localNodeId,
@@ -122,11 +139,15 @@ function createAppRideConnectivityClient(): RideConnectivityClient {
         monotonicClock: createMonotonicClock(),
         isCloudReachable: isRideCloudReachable,
         onApplicationMessage,
-        onEvent: createConnectivityDiagnostics({
-          log: logRideConnectivity,
-          getRoute: () =>
-            runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
-        }),
+        onEvent: event => {
+          diagnostics(event);
+          fieldTestObserver(event);
+        },
+      });
+      recordConnectivityFieldTestEvidence({
+        kind: 'session_started',
+        localNodeId,
+        transportId: NEARBY_TRANSPORT_ID,
       });
       logRideConnectivity(
         `public client runtime created as node ${localNodeId.slice(0, 8)}` +
@@ -155,7 +176,14 @@ let appTestProbe: ConnectivityTestProbe | undefined;
  * so a disabled probe has no effect at all.
  */
 export function getAppConnectivityTestProbe(): ConnectivityTestProbe | null {
-  if (!isConnectivityTestProbeAvailable(ENABLE_CONNECTIVITY_TEST_PROBE, __DEV__)) {
+  const isFieldTestBuild = isConnectivityFieldTestBuild();
+  if (
+    !isConnectivityTestProbeAvailable(
+      ENABLE_CONNECTIVITY_TEST_PROBE,
+      __DEV__,
+      isFieldTestBuild,
+    )
+  ) {
     return null;
   }
   if (!appTestProbe) {
@@ -167,8 +195,11 @@ export function getAppConnectivityTestProbe(): ConnectivityTestProbe | null {
       client,
       enabled: ENABLE_CONNECTIVITY_TEST_PROBE,
       isDevelopmentBuild: __DEV__,
+      isFieldTestBuild,
+      maxPerSession: isFieldTestBuild ? PROBE_FIELD_TEST_MAX_PER_SESSION : undefined,
       isCloudReachable: isRideCloudReachable,
       log: logRideConnectivity,
+      record: recordConnectivityFieldTestEvidence,
     });
   }
   return appTestProbe;
@@ -282,12 +313,17 @@ let devMenuRegistered = false;
 
 /** Debug builds only: adds a dev-menu item that makes THIS phone a test cloud gateway. */
 export function registerRideConnectivityDevMenu(): void {
-  if (!__DEV__ || devMenuRegistered) {
+  const fieldTestBuild = isConnectivityFieldTestBuild();
+  if ((!__DEV__ && !fieldTestBuild) || devMenuRegistered) {
     return;
   }
   devMenuRegistered = true;
   DevSettings.addMenuItem('Rideaze: toggle test cloud gateway', () => {
     setDevMenuGatewayForced(!isDevMenuGatewayForced());
+    recordConnectivityFieldTestEvidence({
+      kind: 'gateway_override_changed',
+      enabled: isDevMenuGatewayForced(),
+    });
     logRideConnectivity(
       isDevMenuGatewayForced()
         ? 'TEST: this phone now advertises as cloud gateway'
@@ -298,6 +334,14 @@ export function registerRideConnectivityDevMenu(): void {
   if (getAppConnectivityTestProbe()) {
     DevSettings.addMenuItem('Rideaze: send connectivity test probe', () => {
       sendAppConnectivityTestProbe().catch(() => {});
+    });
+  }
+  if (fieldTestBuild) {
+    DevSettings.addMenuItem('Rideaze: print offline field evidence', () => {
+      printConnectivityFieldTestEvidence().catch(() => {});
+    });
+    DevSettings.addMenuItem('Rideaze: clear offline field evidence', () => {
+      clearConnectivityFieldTestEvidence().catch(() => {});
     });
   }
 }

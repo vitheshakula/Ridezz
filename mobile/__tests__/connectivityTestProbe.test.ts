@@ -1,6 +1,7 @@
 import { DeviceEventEmitter, DevSettings, NativeModules, Platform } from 'react-native';
 import {
   ENABLE_CONNECTIVITY_TEST_PROBE,
+  PROBE_FIELD_TEST_MAX_PER_SESSION,
   PROBE_MAX_HOPS,
   PROBE_MAX_PER_SESSION,
   PROBE_MIN_INTERVAL_MS,
@@ -120,11 +121,12 @@ describe('gating', () => {
     expect(isRideCloudReachable()).toBe(false);
   });
 
-  test('available only for an enabled flag in a development build', () => {
+  test('available only for an enabled development flag or the isolated field-test build', () => {
     expect(isConnectivityTestProbeAvailable(false, true)).toBe(false);
     expect(isConnectivityTestProbeAvailable(true, false)).toBe(false);
     expect(isConnectivityTestProbeAvailable(false, false)).toBe(false);
     expect(isConnectivityTestProbeAvailable(true, true)).toBe(true);
+    expect(isConnectivityTestProbeAvailable(false, false, true)).toBe(true);
   });
 
   test('a disabled probe sends nothing and subscribes to nothing', async () => {
@@ -142,6 +144,20 @@ describe('gating', () => {
     await expect(h.probe.send()).resolves.toEqual({ status: 'probe_disabled' });
     expect(h.client.sendMessage).not.toHaveBeenCalled();
     expect(h.listenerCount()).toBe(0);
+  });
+
+  test('field-test allowance is explicit, bounded and still manually triggered', () => {
+    const h = probeHarness({
+      enabled: false,
+      isDevelopmentBuild: false,
+      isFieldTestBuild: true,
+      maxPerSession: PROBE_FIELD_TEST_MAX_PER_SESSION,
+    });
+    expect(h.probe.available).toBe(true);
+    expect(PROBE_FIELD_TEST_MAX_PER_SESSION).toBe(50);
+    expect(() =>
+      probeHarness({ maxPerSession: PROBE_FIELD_TEST_MAX_PER_SESSION + 1 }),
+    ).toThrow(RangeError);
   });
 });
 
@@ -691,6 +707,28 @@ describe('app wiring (real client and runtime, mocked native modules)', () => {
     });
     expect(app.menuItems).toEqual([]);
     expect(app.createClient).not.toHaveBeenCalled();
+  });
+
+  test('self-contained field-test build keeps controls with dev-mode JS off', () => {
+    (NativeModules as Record<string, unknown>).RideazeFieldTestEvidence = {
+      enabled: true,
+      append: jest.fn(async () => undefined),
+      read: jest.fn(async () => []),
+      clear: jest.fn(async () => undefined),
+      printToLogcat: jest.fn(async () => 0),
+    };
+    try {
+      const app = load({ probeEnabled: false, dev: false, register: true });
+      expect(app.service.getAppConnectivityTestProbe()).not.toBeNull();
+      expect(app.menuItems.map(([title]) => title)).toEqual([
+        'Rideaze: toggle test cloud gateway',
+        'Rideaze: send connectivity test probe',
+        'Rideaze: print offline field evidence',
+        'Rideaze: clear offline field evidence',
+      ]);
+    } finally {
+      delete (NativeModules as Record<string, unknown>).RideazeFieldTestEvidence;
+    }
   });
 
   test('enabled debug build: the menu item uses the one app client', async () => {
