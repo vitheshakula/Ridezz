@@ -538,6 +538,10 @@ const ttsModule: RidezzTtsNative | undefined = NativeModules.RidezzTtsModule;
 /** The sentence read aloud for a received hazard: "Alex reported Pothole." for most, and the fixed
  * wording in CUSTOM_ANNOUNCEMENTS for low fuel, slow down, a stopped vehicle and a sharp turn. */
 export function buildHazardAnnouncement(packet: HazardPacket): string {
+  // An automatic crash alert (from the sensors, not a spoken report) says so plainly.
+  if (packet.hazard === 'accident' && packet.sos) {
+    return `${packet.senderName} may have crashed.`;
+  }
   return CUSTOM_ANNOUNCEMENTS[packet.hazard] ?? `${packet.senderName} reported ${HAZARD_LABELS[packet.hazard]}.`;
 }
 
