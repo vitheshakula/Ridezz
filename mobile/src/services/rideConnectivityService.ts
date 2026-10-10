@@ -25,11 +25,20 @@ import {
 } from '../connectivity/debugGatewayOverride';
 import { NEARBY_TRANSPORT_ID, nearbyTransport } from '../transports/NearbyTransport';
 import { logDiagnosticEvent } from './diagnosticsLog';
+import {
+  createRideMeshSessionOwner,
+  type NearbyStartError,
+  type RideMeshSessionCallbacks,
+  type RideMeshSessionOwner,
+} from './rideMeshSession';
 
 /**
  * App-side composition of the Ride Connectivity Protocol (Phase 2) on Nearby. Additive: Phase 1
- * hazards keep using their own Nearby paths untouched. The screen keeps owning
- * nearbyTransport.start/stop; this only creates the runtime that rides on that session.
+ * hazards and mesh sync keep their own Nearby receive paths and wire formats untouched.
+ *
+ * Nearby lifecycle ownership: startAppRideMeshSession is the only way the app starts or stops
+ * Nearby. It drives the one application-wide RideConnectivityClient, which starts Nearby and the
+ * runtime on it, and falls back to a Phase 1-only Nearby session if the protocol cannot initialize.
  */
 
 /** Diagnostics are for device testing; set false to silence them. */
@@ -50,16 +59,42 @@ export function createAppRideNodeIdentity(): RideNodeIdentity {
   return createRideNodeIdentity(createRuntimeRideMessageIdGenerator());
 }
 
+let lastNearbyStartError: NearbyStartError | null = null;
+
+function describeNearbyStartError(error: unknown): NearbyStartError {
+  const { code, message } = (error ?? {}) as { code?: unknown; message?: unknown };
+  return Object.freeze({
+    ...(typeof code === 'string' && { code }),
+    ...(typeof message === 'string' && { message }),
+  });
+}
+
 /**
- * Public application-facing connectivity client. This client owns the Nearby session lifecycle;
- * only one owner may use the concrete Nearby transport at a time. RideScreen continues using the
- * legacy composition below until its application-service integration is migrated separately.
+ * nearbyTransport as the client sees it: identical, except it remembers the native start
+ * rejection (e.g. "Bluetooth is off...") that the client deliberately sanitizes away, so the ride
+ * screen can still show it. Nothing else reads it.
  */
-export function createAppRideConnectivityClient(): RideConnectivityClient {
+const clientNearbyTransport: typeof nearbyTransport = {
+  ...nearbyTransport,
+  start(session) {
+    lastNearbyStartError = null;
+    return nearbyTransport.start(session).catch((error: unknown) => {
+      lastNearbyStartError = describeNearbyStartError(error);
+      throw error;
+    });
+  },
+};
+
+/**
+ * Public application-facing connectivity client. It owns the Nearby session lifecycle, and only one
+ * owner may use the concrete Nearby transport at a time: create it only through
+ * getAppRideConnectivityClient (its encrypted outbox is a single stored record, too).
+ */
+function createAppRideConnectivityClient(): RideConnectivityClient {
   const outbox = createPersistentOutbox({ store: createSecureOutboxStore() });
   return createRideConnectivityClient({
     transportId: NEARBY_TRANSPORT_ID,
-    transport: nearbyTransport,
+    transport: clientNearbyTransport,
     createNodeIdentity: createAppRideNodeIdentity,
     outbox,
     onDiagnostic: event => logRideConnectivity(JSON.stringify(event)),
@@ -95,7 +130,46 @@ export function createAppRideConnectivityClient(): RideConnectivityClient {
   });
 }
 
+let appClient: RideConnectivityClient | undefined;
+
+/** The one application-wide connectivity client, created on first use. */
+export function getAppRideConnectivityClient(): RideConnectivityClient {
+  appClient ??= createAppRideConnectivityClient();
+  return appClient;
+}
+
+let appMeshSessionOwner: RideMeshSessionOwner | undefined;
+
+function appClientOrNull(): RideConnectivityClient | null {
+  try {
+    return getAppRideConnectivityClient();
+  } catch (error) {
+    logRideConnectivity(
+      `connectivity client unavailable: ${error instanceof Error ? error.message : 'unexpected error'}`,
+    );
+    return null;
+  }
+}
+
 /**
+ * Starts the ride's Nearby session (the single lifecycle owner, see rideMeshSession) and returns
+ * its idempotent dispose. Call once per mounted ride session.
+ */
+export function startAppRideMeshSession(callbacks: RideMeshSessionCallbacks): () => void {
+  appMeshSessionOwner ??= createRideMeshSessionOwner({
+    client: appClientOrNull(),
+    fallbackTransport: nearbyTransport,
+    getLastStartError: () => lastNearbyStartError,
+    log: logRideConnectivity,
+  });
+  return appMeshSessionOwner.start(callbacks);
+}
+
+/**
+ * @deprecated Legacy composition, no longer used by the app: startAppRideMeshSession owns Nearby
+ * and the runtime now. It must never run while that session is live (it would add a second
+ * runtime on the same Nearby session).
+ *
  * A controller for one Nearby session of one ride. Call transportStarted() after
  * nearbyTransport.start() resolves and dispose() before nearbyTransport.stop(). Any failure to
  * create the runtime (no secure randomness, no monotonic clock) leaves the protocol off and is

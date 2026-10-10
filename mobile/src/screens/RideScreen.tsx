@@ -89,16 +89,13 @@ import { DestinationSuggestions } from '../components/DestinationSuggestions';
 import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
 import { createDestinationBroadcaster } from '../services/destinationBroadcast';
 import {
-  createAppRideNodeIdentity,
-  createNearbyRideConnectivity,
   registerRideConnectivityDevMenu,
+  startAppRideMeshSession,
 } from '../services/rideConnectivityService';
-import type { RideNodeIdentity } from '../connectivity/rideConnectivityLifecycle';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
 const MESH_FALLBACK_DELAY_MS = 3000;
-const MESH_RETRY_MS = 10_000;
 /** How far the other riders' voices are turned down while a hazard is being read aloud. Not
  * fully silent -- a rider mid-sentence stays faintly audible under the announcement rather than
  * abruptly vanishing and reappearing. */
@@ -479,9 +476,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     null,
   );
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
-  // Ride Connectivity Protocol (Phase 2): one secure node identity per mounted ride, created on
-  // first use and reused across Nearby retries and rider-name changes; never persisted.
-  const rideNodeIdentityRef = useRef<RideNodeIdentity | null>(null);
   // True while this phone's own speaker is reading an alert (plus a short tail), so the always-on
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
@@ -626,50 +620,28 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       setMeshError('Bluetooth / nearby-devices permission denied');
       return;
     }
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    // Phase 2 protocol on this Nearby session: started after Nearby starts, stopped before Nearby
-    // stops. At most one runtime per effect run; a late start after cleanup is ignored.
-    const connectivity = createNearbyRideConnectivity({
-      roomCode: session.roomCode,
-      getNodeIdentity: () => (rideNodeIdentityRef.current ??= createAppRideNodeIdentity()),
+    // The single Nearby owner (see rideMeshSession): the app connectivity client starts Nearby and
+    // the Phase 2 runtime on it, retries a failed start, and falls back to a Phase 1-only session
+    // if the protocol cannot initialize. Mesh sync starts once Nearby is up and stops before it.
+    const disposeMesh = startAppRideMeshSession({
+      rideId: session.roomCode,
+      riderName: session.riderName,
+      onStarted: () => {
+        setMeshError(null);
+        meshSyncManager.start();
+      },
+      onStopping: () => meshSyncManager.stop(),
+      onError: setMeshError,
     });
-
-    const startMesh = () => {
-      nearbyTransport
-        .start({ roomCode: session.roomCode, riderName: session.riderName })
-        .then(() => {
-          if (!cancelled) {
-            setMeshError(null);
-            meshSyncManager.start();
-            connectivity.transportStarted();
-          }
-        })
-        .catch((e: { code?: string; message?: string }) => {
-          if (cancelled) {
-            return;
-          }
-          setMeshError(e?.message ?? 'unavailable');
-          // e.g. Wi-Fi switched on later. Unsupported hardware won't ever recover.
-          if (e?.code !== 'mesh_unsupported') {
-            timer = setTimeout(startMesh, MESH_RETRY_MS);
-          }
-        });
-    };
-    startMesh();
     const unsubscribeStatus = nearbyTransport.onStatus(setMeshStatus);
     const unsubscribeMeshPacket = nearbyMeshService.onMeshPacket(packet =>
       meshSyncManager.handlePacket(packet),
     );
 
     return () => {
-      cancelled = true;
-      clearTimeout(timer);
       unsubscribeStatus();
       unsubscribeMeshPacket();
-      meshSyncManager.stop();
-      connectivity.dispose();
-      nearbyTransport.stop().catch(() => {});
+      disposeMesh();
     };
   }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
 
