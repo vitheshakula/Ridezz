@@ -61,6 +61,16 @@ export function compareGatewayRoutes(a: GatewayRouteCandidate, b: GatewayRouteCa
   );
 }
 
+/** Stable key used only for node-local attempt exclusion; it is never serialized. */
+export function gatewayRouteKey(route: GatewayRouteCandidate): string {
+  return JSON.stringify([
+    route.gatewayNodeId,
+    route.nextHopNodeId,
+    route.transportId,
+    route.hopCount,
+  ]);
+}
+
 /**
  * All currently usable routes, optionally for one gateway, sorted by preference. Reads only:
  * neither state structure is pruned or otherwise mutated.
@@ -163,6 +173,8 @@ export interface GatewayForwardingContext {
    * (or, when omitted, the nearest-gateway metric) it was computed for; every forwarder of a packet
    * must use the same choice. */
   gatewayNodeId?: string;
+  /** Routes already attempted for this one bounded operation. */
+  excludedRouteKeys?: ReadonlySet<string>;
   /**
    * Absent when this node originates the packet. Present when forwarding a packet received from
    * another node; both fields are then required, and either being unknown fails closed.
@@ -207,12 +219,15 @@ export type GatewayForwardingDecision =
  */
 export function selectGatewayForwardingRoute(
   candidates: readonly GatewayRouteCandidate[],
-  { gatewayNodeId, received }: GatewayForwardingContext = {},
+  { gatewayNodeId, received, excludedRouteKeys }: GatewayForwardingContext = {},
 ): GatewayForwardingDecision {
-  const toGateway =
+  const scoped =
     gatewayNodeId === undefined
       ? candidates
       : candidates.filter(c => c.gatewayNodeId === gatewayNodeId);
+  const toGateway = excludedRouteKeys
+    ? scoped.filter(candidate => !excludedRouteKeys.has(gatewayRouteKey(candidate)))
+    : scoped;
   if (toGateway.length === 0) {
     return { ok: false, reason: 'no_route' };
   }

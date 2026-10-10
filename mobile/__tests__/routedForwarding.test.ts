@@ -272,7 +272,7 @@ describe('fail-closed cases', () => {
     expect(a.transport.sendTo).not.toHaveBeenCalled();
   });
 
-  test('a route on another transport is unsupported; Nearby is not re-selected', async () => {
+  test('an unsupported route is excluded and a fresh Nearby alternative is selected', async () => {
     const a = makeNode('rider-a');
     a.links.observe('future-ble', 'AA:BB', 'rider-b', MONO);
     a.gateways.observe(GW, 'future-ble', 1, MONO, 'rider-b');
@@ -280,11 +280,11 @@ describe('fail-closed cases', () => {
     a.gateways.observe(GW, NEARBY, 2, MONO, 'rider-d'); // a worse Nearby route exists
 
     expect(await a.forwarder.sendOriginated(application('rider-a'))).toMatchObject({
-      status: 'not_sent',
-      reason: 'unsupported_transport',
-      route: { transportId: 'future-ble' },
+      status: 'sent',
+      endpointId: 'endpoint-D',
+      route: { transportId: NEARBY, nextHopNodeId: 'rider-d' },
     });
-    expect(a.transport.sendTo).not.toHaveBeenCalled();
+    expect(a.transport.sendTo).toHaveBeenCalledTimes(1);
   });
 
   test('ingress rejections stop processing (malformed/dup/ride/origin)', async () => {
@@ -410,6 +410,25 @@ describe('fail-closed cases', () => {
 });
 
 describe('send failures', () => {
+  test('a definitive first-route failure retries once through a different fresh route', async () => {
+    const a = makeNode('rider-a');
+    a.links.observe(NEARBY, 'endpoint-B', 'rider-b', MONO);
+    a.links.observe(NEARBY, 'endpoint-D', 'rider-d', MONO);
+    a.gateways.observe(GW, NEARBY, 1, MONO, 'rider-b');
+    a.gateways.observe(GW, NEARBY, 2, MONO, 'rider-d');
+    a.transport.sendTo.mockRejectedValueOnce(new Error('first route disappeared'));
+
+    await expect(a.forwarder.sendOriginated(application('rider-a'))).resolves.toMatchObject({
+      status: 'sent',
+      endpointId: 'endpoint-D',
+      route: { nextHopNodeId: 'rider-d' },
+    });
+    expect(a.transport.sendTo.mock.calls.map(([endpointId]) => endpointId)).toEqual([
+      'endpoint-B',
+      'endpoint-D',
+    ]);
+  });
+
   test('a rejected send is reported with retry context; nothing else tried', async () => {
     const { a } = await abc();
     a.transport.sendTo.mockImplementationOnce(() =>
@@ -433,6 +452,8 @@ describe('send failures', () => {
 
   test('a hung targeted send times out as "unknown"; a late rejection is absorbed', async () => {
     const { a } = await abc();
+    a.links.observe(NEARBY, 'endpoint-D', 'rider-d', MONO);
+    a.gateways.observe(GW, NEARBY, 2, MONO, 'rider-d');
     let rejectLate: (e: Error) => void = () => {};
     a.transport.sendTo.mockImplementationOnce(
       () => new Promise<void>((_resolve, reject) => (rejectLate = reject)),

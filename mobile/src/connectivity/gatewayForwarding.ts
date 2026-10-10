@@ -77,6 +77,7 @@ export function originateGatewayRouted<TPayload, TType extends RideMessageType>(
   message: RideMessage<TPayload, TType>,
   context: GatewayRouteContext,
   gatewayNodeId?: string,
+  excludedRouteKeys?: ReadonlySet<string>,
 ): GatewayOriginDecision<TPayload, TType> {
   if (!isGatewayRoutableMessageType(message.type)) {
     return { ok: false, reason: 'not_routable_type' };
@@ -89,7 +90,7 @@ export function originateGatewayRouted<TPayload, TType extends RideMessageType>(
   }
   const decision = selectGatewayForwardingRoute(
     getGatewayRouteCandidates(context, gatewayNodeId),
-    { gatewayNodeId },
+    { gatewayNodeId, excludedRouteKeys },
   );
   if (!decision.ok) {
     return { ok: false, reason: decision.reason };
@@ -121,6 +122,7 @@ export function decideGatewayForward<TPayload, TType extends RideMessageType>(
   context: GatewayRouteContext,
   previousHopNodeId: string | undefined,
   wallNow: number,
+  excludedRouteKeys?: ReadonlySet<string>,
 ): GatewayForwardDecision<TPayload, TType> {
   const routing = message.gatewayRouting;
   if (routing === undefined) {
@@ -140,6 +142,7 @@ export function decideGatewayForward<TPayload, TType extends RideMessageType>(
   const decision = selectGatewayForwardingRoute(getGatewayRouteCandidates(context, target), {
     gatewayNodeId: target,
     received: { fromNodeId: previousHopNodeId, distanceBound: routing.forwarderDistance },
+    excludedRouteKeys,
   });
   if (!decision.ok) {
     return { outcome: 'failed', reason: decision.reason };

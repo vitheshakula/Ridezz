@@ -20,6 +20,7 @@ import {
 import {
   resolvePreviousHop,
   resolveTargetEndpoint,
+  gatewayRouteKey,
   type GatewayRouteCandidate,
   type GatewayRouteContext,
 } from './gatewayRouting';
@@ -33,6 +34,7 @@ import type { TargetedTransport } from '../transports/Transport';
 
 /** Local operational bound on one sendTo(); expiry means "result unknown", not "not delivered". */
 export const ROUTED_SEND_TIMEOUT_MS = OPERATIONAL_SEND_TIMEOUT_MS;
+export const ROUTED_DEFAULT_MAX_ROUTE_ATTEMPTS = 3;
 
 type AcceptedIngress = Extract<RideMessageIngressResult, { accepted: true }>;
 type OriginRejection = Extract<
@@ -84,6 +86,7 @@ export interface RoutedForwarderOptions {
   /** Protocol wall clock (message expiry). */
   wallClock: () => number;
   sendTimeoutMs?: number;
+  maxRouteAttempts?: number;
 }
 
 export interface RoutedForwarder {
@@ -103,9 +106,13 @@ export function createRoutedForwarder({
   monotonicClock,
   wallClock,
   sendTimeoutMs = ROUTED_SEND_TIMEOUT_MS,
+  maxRouteAttempts = ROUTED_DEFAULT_MAX_ROUTE_ATTEMPTS,
 }: RoutedForwarderOptions): RoutedForwarder {
   if (!Number.isSafeInteger(sendTimeoutMs) || sendTimeoutMs <= 0) {
     throw new RangeError('Routed forwarder sendTimeoutMs must be a positive integer');
+  }
+  if (!Number.isSafeInteger(maxRouteAttempts) || maxRouteAttempts <= 0) {
+    throw new RangeError('Routed forwarder maxRouteAttempts must be a positive integer');
   }
 
   const context = (now: number): GatewayRouteContext => ({
@@ -151,26 +158,68 @@ export function createRoutedForwarder({
 
   return {
     async sendOriginated(message, gatewayNodeId): Promise<RoutedSendResult> {
-      const now = monotonicClock();
-      const decision = originateGatewayRouted(message, context(now), gatewayNodeId);
-      if (!decision.ok) {
-        return { status: 'not_sent', reason: decision.reason };
+      const excluded = new Set<string>();
+      let lastFailure: RoutedSendResult | undefined;
+      for (let attempt = 0; attempt < maxRouteAttempts; attempt++) {
+        const now = monotonicClock();
+        const decision = originateGatewayRouted(message, context(now), gatewayNodeId, excluded);
+        if (!decision.ok) {
+          return lastFailure ?? { status: 'not_sent', reason: decision.reason };
+        }
+        const result = await transmit(decision.message, decision.route, now);
+        if (
+          result.status === 'sent' ||
+          result.status === 'send_timeout' ||
+          (result.status === 'not_sent' && result.reason === 'encode_failed')
+        ) {
+          return result;
+        }
+        lastFailure = result;
+        if ('route' in result && result.route) {
+          excluded.add(gatewayRouteKey(result.route));
+        } else {
+          return result;
+        }
       }
-      return transmit(decision.message, decision.route, now);
+      return lastFailure ?? { status: 'not_sent', reason: 'no_route' };
     },
 
     async forwardAccepted({ message, source }): Promise<RoutedForwardResult> {
-      const now = monotonicClock();
-      // Direct previous hop from verified link identity, never message.originId.
-      const previousHop = resolvePreviousHop(source, linkIdentities, now);
-      const decision = decideGatewayForward(message, context(now), previousHop, wallClock());
-      if (decision.outcome === 'gateway_reached') {
-        return { status: 'gateway_reached', message, targetGatewayId: decision.targetGatewayId };
+      const excluded = new Set<string>();
+      let lastFailure: RoutedSendResult | undefined;
+      for (let attempt = 0; attempt < maxRouteAttempts; attempt++) {
+        const now = monotonicClock();
+        // Direct previous hop from verified link identity, never message.originId.
+        const previousHop = resolvePreviousHop(source, linkIdentities, now);
+        const decision = decideGatewayForward(
+          message,
+          context(now),
+          previousHop,
+          wallClock(),
+          excluded,
+        );
+        if (decision.outcome === 'gateway_reached') {
+          return { status: 'gateway_reached', message, targetGatewayId: decision.targetGatewayId };
+        }
+        if (decision.outcome === 'failed') {
+          return lastFailure ?? { status: 'not_sent', reason: decision.reason };
+        }
+        const result = await transmit(decision.message, decision.route, now);
+        if (
+          result.status === 'sent' ||
+          result.status === 'send_timeout' ||
+          (result.status === 'not_sent' && result.reason === 'encode_failed')
+        ) {
+          return result;
+        }
+        lastFailure = result;
+        if ('route' in result && result.route) {
+          excluded.add(gatewayRouteKey(result.route));
+        } else {
+          return result;
+        }
       }
-      if (decision.outcome === 'failed') {
-        return { status: 'not_sent', reason: decision.reason };
-      }
-      return transmit(decision.message, decision.route, now);
+      return lastFailure ?? { status: 'not_sent', reason: 'no_route' };
     },
   };
 }
