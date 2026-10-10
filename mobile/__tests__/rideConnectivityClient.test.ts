@@ -15,10 +15,21 @@ import type {
   RideConnectivitySendResult,
 } from '../src/connectivity/rideConnectivityRuntime';
 import type { TransportStatus } from '../src/transports/Transport';
+import { createPersistentOutbox, type PersistentOutboxStore } from '../src/connectivity/persistentOutbox';
 
 const NOW = 1_700_000_000_000;
 const RIDE = 'RIDE1';
 const CONTEXT = Object.freeze({ rideId: RIDE, riderName: 'Alex' });
+
+function memoryOutboxStore(): PersistentOutboxStore {
+  let value: string | null = null;
+  return {
+    load: async () => value,
+    save: async serialized => {
+      value = serialized;
+    },
+  };
+}
 
 const acceptedResult = (): RideConnectivitySendResult =>
   ({
@@ -610,5 +621,81 @@ describe('RideConnectivityClient subscriptions and peer status', () => {
         reason: 'transport_start_failed',
       }),
     ]);
+  });
+});
+
+describe('RideConnectivityClient reliable outbox composition', () => {
+  test('persists a valid submission and retries it after a definitive route failure', async () => {
+    jest.useFakeTimers();
+    try {
+      const outbox = createPersistentOutbox({ store: memoryOutboxStore(), random: () => 0 });
+      const h = harness({ outbox });
+      const statuses: RideConnectivityDeliveryStatus[] = [];
+      h.client.onDeliveryStatus(status => statuses.push(status));
+      h.sendResults.push({ status: 'not_sent', reason: 'no_route' }, acceptedResult());
+      await h.client.start(CONTEXT);
+      const submission = await h.client.sendMessage(validInput());
+      await jest.advanceTimersByTimeAsync(0);
+      expect(outbox.size).toBe(1);
+      expect(h.runtimes[0].sendToGateway).toHaveBeenCalledTimes(1);
+      expect(statuses).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            state: 'retry_scheduled',
+            messageId: submission.messageId,
+            nextAttemptAt: NOW + 1_000,
+          }),
+        ]),
+      );
+
+      h.setNow(NOW + 1_000);
+      await jest.advanceTimersByTimeAsync(1_000);
+      expect(h.runtimes[0].sendToGateway).toHaveBeenCalledTimes(2);
+      expect(h.runtimes[0].sendToGateway.mock.calls[1][0]).toMatchObject({
+        id: submission.messageId,
+      });
+      await h.client.stop();
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('removes a durable record only after a verified correlated ACK', async () => {
+    const outbox = createPersistentOutbox({ store: memoryOutboxStore(), random: () => 0 });
+    const h = harness({ outbox, acknowledgementVerifier: { verify: async () => true } });
+    await h.client.start(CONTEXT);
+    const { messageId } = await h.client.sendMessage(validInput());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(outbox.size).toBe(1);
+
+    h.emitApplication({
+      delivery: 'local',
+      message: createRideMessage({
+        id: 'durable-ack',
+        rideId: RIDE,
+        originId: 'gateway-1',
+        type: 'ack',
+        priority: 'critical',
+        payload: {
+          v: DELIVERY_ACK_VERSION,
+          originalMessageId: messageId,
+          originalOriginId: 'node-1',
+          destinationNodeId: 'gateway-1',
+          acknowledgedAt: NOW,
+          keyId: 'key-1',
+          nonce: 'nonce-durable-ack',
+          signature: 'valid',
+        },
+        ttlMs: 30_000,
+        maxHops: 4,
+        now: NOW,
+      }),
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(outbox.size).toBe(0);
+    await h.client.stop();
   });
 });

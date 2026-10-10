@@ -145,7 +145,8 @@ describe('DeliveryAcknowledgementTracker', () => {
 
   test('builds a deterministic signature input without mutable routing fields', () => {
     const ack = acknowledgement();
-    const { signature: _signature, ...unsigned } = ack.payload;
+    const { signature, ...unsigned } = ack.payload;
+    expect(signature).toBe('valid-signature');
     const first = deliveryAcknowledgementSigningInput(unsigned, ack.rideId);
     const second = deliveryAcknowledgementSigningInput(unsigned, ack.rideId);
     expect(first).toBe(second);

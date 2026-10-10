@@ -15,7 +15,7 @@ export type ReliableDeliveryEvent =
   | { readonly kind: 'retry_scheduled'; readonly messageId: string; readonly nextAttemptAt: number }
   | { readonly kind: 'destination_delivered'; readonly messageId: string }
   | { readonly kind: 'retry_exhausted'; readonly messageId: string }
-  | { readonly kind: 'expired'; readonly messageId: string }
+  | { readonly kind: 'expired'; readonly messageId: string; readonly expiresAt: number }
   | { readonly kind: 'engine_error'; readonly reason: string };
 
 export interface ReliableDeliveryEngine {
@@ -35,11 +35,15 @@ export function createReliableDeliveryEngine({
   attempt,
   clock = () => Date.now(),
   onEvent,
+  initializeOutbox = true,
+  rideId,
 }: {
   readonly outbox: PersistentOutbox;
   readonly attempt: (record: PersistentOutboxRecord) => Promise<ReliableDeliveryAttemptOutcome>;
   readonly clock?: () => number;
   readonly onEvent?: (event: ReliableDeliveryEvent) => void;
+  readonly initializeOutbox?: boolean;
+  readonly rideId?: string;
 }): ReliableDeliveryEngine {
   let state: 'idle' | 'running' | 'stopped' = 'idle';
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -66,7 +70,7 @@ export function createReliableDeliveryEngine({
     if (state !== 'running') {
       return;
     }
-    const next = outbox.nextAttemptAt();
+    const next = outbox.nextAttemptAt(rideId);
     if (next === undefined) {
       return;
     }
@@ -85,10 +89,10 @@ export function createReliableDeliveryEngine({
     clearTimer();
     try {
       const now = clock();
-      for (const messageId of await outbox.expire(now)) {
-        report({ kind: 'expired', messageId });
+      for (const expired of await outbox.expire(now)) {
+        report({ kind: 'expired', ...expired });
       }
-      for (const record of outbox.due(now)) {
+      for (const record of outbox.due(now, rideId)) {
         if (state !== 'running') {
           break;
         }
@@ -115,7 +119,11 @@ export function createReliableDeliveryEngine({
         } else if (retry.state === 'exhausted') {
           report({ kind: 'retry_exhausted', messageId: record.message.id });
         } else if (retry.state === 'expired') {
-          report({ kind: 'expired', messageId: record.message.id });
+          report({
+            kind: 'expired',
+            messageId: record.message.id,
+            expiresAt: record.message.expiresAt,
+          });
         }
       }
     } catch {
@@ -124,9 +132,11 @@ export function createReliableDeliveryEngine({
       pumping = false;
       if (pumpAgain) {
         pumpAgain = false;
-        void pump();
+        pump().catch(() => report({ kind: 'engine_error', reason: 'pump_failed' }));
       } else {
-        schedule(() => void pump());
+        schedule(() => {
+          pump().catch(() => report({ kind: 'engine_error', reason: 'pump_failed' }));
+        });
       }
     }
   };
@@ -139,7 +149,9 @@ export function createReliableDeliveryEngine({
       if (state === 'stopped') {
         throw new Error('A stopped reliable delivery engine cannot be restarted');
       }
-      const recovered = await outbox.initialize(clock());
+      const recovered = initializeOutbox
+        ? await outbox.initialize(clock())
+        : { recovered: outbox.size, corrupted: false };
       state = 'running';
       report({ kind: 'recovered', count: recovered.recovered, corrupted: recovered.corrupted });
       await pump();
@@ -156,7 +168,7 @@ export function createReliableDeliveryEngine({
       }
       const result = await outbox.enqueue(message, destinationGatewayId, clock());
       if (result.accepted) {
-        void pump();
+        pump().catch(() => report({ kind: 'engine_error', reason: 'pump_failed' }));
       }
       return result;
     },
@@ -166,13 +178,15 @@ export function createReliableDeliveryEngine({
         return false;
       }
       const removed = await outbox.acknowledge(messageId);
-      schedule(() => void pump());
+      schedule(() => {
+        pump().catch(() => report({ kind: 'engine_error', reason: 'pump_failed' }));
+      });
       return removed;
     },
 
     connectivityAvailable(): void {
       if (state === 'running') {
-        void pump();
+        pump().catch(() => report({ kind: 'engine_error', reason: 'pump_failed' }));
       }
     },
 

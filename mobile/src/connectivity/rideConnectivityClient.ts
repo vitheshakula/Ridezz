@@ -29,6 +29,12 @@ import {
 import { serializeRideMessage } from './protocol/rideMessageCodec';
 import type { DeliveryAcknowledgementVerifier } from './protocol/deliveryAcknowledgement';
 import type { TargetedTransport, Transport } from '../transports/Transport';
+import type { PersistentOutbox, PersistentOutboxRecord } from './persistentOutbox';
+import {
+  createReliableDeliveryEngine,
+  type ReliableDeliveryEngine,
+  type ReliableDeliveryEvent,
+} from './reliableDeliveryEngine';
 
 /** Matches the name bound used by the current Android Nearby endpoint name. */
 export const RIDE_CONNECTIVITY_MAX_RIDER_NAME_LENGTH = 24;
@@ -86,6 +92,10 @@ export type RideConnectivityDeliveryStatus =
       readonly transportId: string;
     })
   | (RideConnectivityDeliveryBase & {
+      readonly state: 'retry_scheduled';
+      readonly nextAttemptAt: number;
+    })
+  | (RideConnectivityDeliveryBase & {
       /** Reserved for a future verified ACK correlator; M1 never emits this state. */
       readonly state: 'destination_delivered';
       readonly acknowledgementMessageId: string;
@@ -98,7 +108,10 @@ export type RideConnectivityDeliveryStatus =
         | 'send_timeout'
         | 'runtime_unavailable'
         | 'local_gateway_handoff_unavailable'
-        | 'encoding_failed';
+        | 'encoding_failed'
+        | 'queue_full'
+        | 'retry_exhausted'
+        | 'outbox_unavailable';
       /** `unknown` means the operation timed out or threw after its actual outcome became unclear. */
       readonly outcome: 'not_sent' | 'unknown';
     })
@@ -142,6 +155,14 @@ export type RideConnectivityDeliveryStatusListener = (
 ) => void;
 export type RideConnectivityErrorListener = (error: RideConnectivityErrorEvent) => void;
 
+export interface RideConnectivityDiagnosticEvent {
+  readonly category: 'peer' | 'delivery' | 'error';
+  readonly event: string;
+  /** Random protocol ID prefix only; payloads and transport endpoint IDs are never included. */
+  readonly messageIdPrefix?: string;
+  readonly peerCount?: number;
+}
+
 export interface RideConnectivityClient {
   /** Starts one ride. Same-ride calls are idempotent; a different active ride is rejected. */
   start(rideContext: RideConnectivityRideContext): Promise<void>;
@@ -175,6 +196,9 @@ export interface RideConnectivityClientAdapter {
     | { readonly accepted: true; readonly transportId: string }
     | { readonly accepted: false; readonly reason: string }
   >;
+  /** Encrypted durable queue. When omitted, the client retains M1 in-memory behavior. */
+  readonly outbox?: PersistentOutbox;
+  readonly onDiagnostic?: (event: RideConnectivityDiagnosticEvent) => void;
   /** Protocol wall clock. */
   readonly clock?: () => number;
 }
@@ -196,6 +220,7 @@ interface ActiveGeneration {
   readonly runtime: RideConnectivityRuntime;
   readonly acknowledgements: DeliveryAcknowledgementTracker;
   readonly gatewayHandoffs: Set<string>;
+  readonly deliveryEngine: ReliableDeliveryEngine | null;
   readonly unsubscribeTransport: readonly (() => void)[];
   /** Guards a receive already in flight while this generation is being stopped. */
   readonly receiveGate: { open: boolean };
@@ -263,6 +288,8 @@ export function createRideConnectivityClient({
   createRuntime,
   acknowledgementVerifier,
   handoffToGateway,
+  outbox,
+  onDiagnostic,
   clock = () => Date.now(),
 }: RideConnectivityClientAdapter): RideConnectivityClient {
   if (!isValidRideMessageIdentifier(transportId, 64)) {
@@ -284,6 +311,14 @@ export function createRideConnectivityClient({
     directPeerCount: 0,
   });
 
+  const reportDiagnostic = (event: RideConnectivityDiagnosticEvent): void => {
+    try {
+      onDiagnostic?.(Object.freeze({ ...event }));
+    } catch {
+      // Diagnostics must never affect protocol behavior.
+    }
+  };
+
   const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
     const result = operationTail.then(operation, operation);
     operationTail = result.then(
@@ -295,6 +330,11 @@ export function createRideConnectivityClient({
 
   const emitError = (event: RideConnectivityErrorEvent): void => {
     const safeEvent = Object.freeze({ ...event });
+    reportDiagnostic({
+      category: 'error',
+      event: `${event.operation}:${event.reason}`,
+      ...(event.messageId && { messageIdPrefix: event.messageId.slice(0, 8) }),
+    });
     for (const listener of [...errorListeners]) {
       try {
         listener(safeEvent);
@@ -339,6 +379,11 @@ export function createRideConnectivityClient({
       return;
     }
     peerStatus = normalized;
+    reportDiagnostic({
+      category: 'peer',
+      event: normalized.state,
+      peerCount: normalized.directPeerCount,
+    });
     notify(peerListeners, peerStatus, 'peer_status');
   };
 
@@ -348,6 +393,11 @@ export function createRideConnectivityClient({
       return;
     }
     deliveryStates.set(status.messageId, status.state);
+    reportDiagnostic({
+      category: 'delivery',
+      event: status.state,
+      messageIdPrefix: status.messageId.slice(0, 8),
+    });
     if (TERMINAL_DELIVERY_STATES.has(status.state)) {
       const timer = expiryTimers.get(status.messageId);
       if (timer !== undefined) {
@@ -380,6 +430,7 @@ export function createRideConnectivityClient({
         at: clock(),
         expiresAt: message.expiresAt,
       });
+      active?.deliveryEngine?.acknowledge(message.id).catch(() => undefined);
     };
     const delay = message.expiresAt - clock();
     if (delay <= 0) {
@@ -425,6 +476,7 @@ export function createRideConnectivityClient({
     const unsubscribeTransport: (() => void)[] = [];
     const receiveGate = { open: true };
     let runtime: RideConnectivityRuntime | null = null;
+      let outboxReady = false;
     let transportStarted = false;
     try {
       unsubscribeTransport.push(
@@ -435,6 +487,9 @@ export function createRideConnectivityClient({
             transportAvailable: status.error ? status.active : true,
             directPeerCount: peerCount,
           });
+          if (status.active) {
+            active?.deliveryEngine?.connectivityAvailable();
+          }
           if (status.error && !status.active) {
             emitError({
               code: 'transport_unavailable',
@@ -451,6 +506,9 @@ export function createRideConnectivityClient({
             return;
           }
           updatePeerStatus({ ...peerStatus, directPeerCount: count });
+          if (count > 0) {
+            active?.deliveryEngine?.connectivityAvailable();
+          }
         }),
       );
 
@@ -467,8 +525,22 @@ export function createRideConnectivityClient({
         );
       }
 
+      if (outbox) {
+        try {
+          await outbox.initialize(clock());
+          outboxReady = true;
+        } catch {
+          emitError({
+            code: 'runtime_error',
+            operation: 'start',
+            reason: 'persistent_outbox_unavailable',
+            recoverable: true,
+          });
+        }
+      }
       const identity = createNodeIdentity();
-      const localNodeId = identity.nodeIdFor(context.rideId);
+      const recoveredNodeId = outboxReady ? outbox?.originIdForRide(context.rideId) : undefined;
+      const localNodeId = recoveredNodeId ?? identity.nodeIdFor(context.rideId);
       if (!isValidRideMessageIdentifier(localNodeId, RIDE_MESSAGE_MAX_ORIGIN_ID_LENGTH)) {
         throw new TypeError('The generated local node id is invalid');
       }
@@ -486,12 +558,13 @@ export function createRideConnectivityClient({
             return;
           }
           if (received.message.type === 'ack') {
-            void acknowledgements.handle(received.message, acknowledgementVerifier).then(
+            acknowledgements.handle(received.message, acknowledgementVerifier).then(
               result => {
                 if (!receiveGate.open) {
                   return;
                 }
                 if (result.accepted) {
+                  active?.deliveryEngine?.acknowledge(result.originalMessageId).catch(() => undefined);
                   emitDelivery({
                     state: 'destination_delivered',
                     messageId: result.originalMessageId,
@@ -524,21 +597,106 @@ export function createRideConnectivityClient({
         },
       });
       runtime.start();
-      active = Object.freeze({
+      let generation: ActiveGeneration;
+      const reportReliableDelivery = (event: ReliableDeliveryEvent): void => {
+        if (!receiveGate.open) {
+          return;
+        }
+        if (event.kind === 'attempt') {
+          emitDelivery({ state: 'sending', messageId: event.messageId, at: clock() });
+        } else if (event.kind === 'retry_scheduled') {
+          emitDelivery({
+            state: 'retry_scheduled',
+            messageId: event.messageId,
+            at: clock(),
+            nextAttemptAt: event.nextAttemptAt,
+          });
+        } else if (event.kind === 'retry_exhausted') {
+          emitFailedSend(event.messageId, 'retry_exhausted', 'not_sent');
+        } else if (event.kind === 'expired') {
+          emitDelivery({
+            state: 'expired',
+            messageId: event.messageId,
+            at: clock(),
+            expiresAt: event.expiresAt,
+          });
+        } else if (event.kind === 'engine_error') {
+          emitError({
+            code: 'runtime_error',
+            operation: 'send',
+            reason: event.reason,
+            recoverable: true,
+          });
+        }
+      };
+      const attemptPersisted = async (record: PersistentOutboxRecord) => {
+        const message = record.message as RideMessage<JsonValue>;
+        generation.acknowledgements.track({
+          rideId: message.rideId,
+          originalMessageId: message.id,
+          originalOriginId: message.originId,
+          expiresAt: message.expiresAt,
+        });
+        const result = await generation.runtime.sendToGateway(
+          message,
+          record.destinationGatewayId,
+        );
+        if (result.status === 'sent') {
+          generation.acknowledgements.bindDestination(message.id, result.route.gatewayNodeId);
+          emitDelivery({
+            state: 'transport_accepted',
+            messageId: message.id,
+            at: clock(),
+            transportId,
+          });
+        } else if (result.status === 'local_gateway' && handoffToGateway) {
+          try {
+            const handoff = await handoffToGateway(message);
+            if (handoff.accepted) {
+              emitDelivery({
+                state: 'transport_accepted',
+                messageId: message.id,
+                at: clock(),
+                transportId: handoff.transportId,
+              });
+            }
+          } catch {
+            // The engine will retry; raw failure details are deliberately discarded.
+          }
+        }
+        return { state: 'retry' as const, reason: result.status };
+      };
+      const deliveryEngine =
+        outboxReady && outbox
+          ? createReliableDeliveryEngine({
+              outbox,
+              attempt: attemptPersisted,
+              clock,
+              onEvent: reportReliableDelivery,
+              initializeOutbox: false,
+              rideId: context.rideId,
+            })
+          : null;
+      generation = Object.freeze({
         context,
         identity,
         localNodeId,
         runtime,
         acknowledgements,
         gatewayHandoffs: new Set<string>(),
+        deliveryEngine,
         unsubscribeTransport,
         receiveGate,
       });
+      active = generation;
       updatePeerStatus({
         state: 'active',
         transportAvailable: true,
         directPeerCount: peerStatus.directPeerCount,
       });
+      if (deliveryEngine) {
+        await deliveryEngine.start();
+      }
     } catch (error) {
       receiveGate.open = false;
       try {
@@ -601,6 +759,7 @@ export function createRideConnectivityClient({
     const generation = active;
     active = null;
     generation.receiveGate.open = false;
+    generation.deliveryEngine?.stop();
     generation.acknowledgements.clear();
     generation.gatewayHandoffs.clear();
     clearDeliveryTracking();
@@ -892,6 +1051,24 @@ export function createRideConnectivityClient({
       expiresAt: message.expiresAt,
     });
     emitDelivery({ state: 'queued', messageId: message.id, at: clock() });
+    if (generation.deliveryEngine) {
+      const queued = await generation.deliveryEngine.submit(
+        message,
+        input.destination?.gatewayNodeId,
+      );
+      if (!queued.accepted) {
+        generation.acknowledgements.reject(message.id);
+        const reason = queued.reason === 'queue_full' ? 'queue_full' : 'outbox_unavailable';
+        emitFailedSend(message.id, reason, 'not_sent');
+        throw new RideConnectivityClientError(
+          'runtime_error',
+          queued.reason === 'queue_full'
+            ? 'The connectivity outbox is full'
+            : 'The message could not be queued',
+        );
+      }
+      return Object.freeze({ messageId: message.id });
+    }
     emitDelivery({ state: 'sending', messageId: message.id, at: clock() });
     try {
       const result = await generation.runtime.sendToGateway(

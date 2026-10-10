@@ -16,6 +16,8 @@ import {
   createRideConnectivityClient,
   type RideConnectivityClient,
 } from '../connectivity/rideConnectivityClient';
+import { createPersistentOutbox } from '../connectivity/persistentOutbox';
+import { createSecureOutboxStore } from '../connectivity/secureOutboxStore';
 import {
   isDevMenuGatewayForced,
   isRideCloudReachable,
@@ -54,10 +56,13 @@ export function createAppRideNodeIdentity(): RideNodeIdentity {
  * legacy composition below until its application-service integration is migrated separately.
  */
 export function createAppRideConnectivityClient(): RideConnectivityClient {
+  const outbox = createPersistentOutbox({ store: createSecureOutboxStore() });
   return createRideConnectivityClient({
     transportId: NEARBY_TRANSPORT_ID,
     transport: nearbyTransport,
     createNodeIdentity: createAppRideNodeIdentity,
+    outbox,
+    onDiagnostic: event => logRideConnectivity(JSON.stringify(event)),
     createRuntime: ({
       rideContext,
       localNodeId,

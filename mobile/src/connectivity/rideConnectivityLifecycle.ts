@@ -222,6 +222,19 @@ export function createConnectivityDiagnostics({
         }
         return;
       }
+      case 'ack': {
+        const r = result.result;
+        if (r.status === 'origin_reached') {
+          log(`ack reached origin ${short(r.acknowledgement.id)}`);
+        } else if (r.status === 'forwarded') {
+          log(`ack forwarded ${short(r.acknowledgement.id)}`);
+        } else if (r.status === 'not_forwarded') {
+          log(`ack not forwarded: ${r.reason}`);
+        } else {
+          log(`ack return ${r.status}`);
+        }
+        return;
+      }
       default:
         return;
     }

@@ -124,7 +124,9 @@ describe('PersistentOutbox', () => {
     await outbox.enqueue(message('acknowledged'), undefined, NOW);
     await outbox.enqueue(message('expires', 'normal', 10), undefined, NOW);
     expect(await outbox.acknowledge('acknowledged')).toBe(true);
-    await expect(outbox.expire(NOW + 10)).resolves.toEqual(['expires']);
+    await expect(outbox.expire(NOW + 10)).resolves.toEqual([
+      { messageId: 'expires', expiresAt: NOW + 10 },
+    ]);
     expect(outbox.size).toBe(0);
   });
 

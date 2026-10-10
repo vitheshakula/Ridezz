@@ -125,7 +125,11 @@ describe('ReliableDeliveryEngine', () => {
     });
     await engine.start();
     expect(attempt).not.toHaveBeenCalled();
-    expect(events).toContainEqual({ kind: 'expired', messageId: 'expires' });
+    expect(events).toContainEqual({
+      kind: 'expired',
+      messageId: 'expires',
+      expiresAt: NOW + 30_000,
+    });
     engine.stop();
   });
 });

@@ -45,12 +45,13 @@ export interface PersistentOutbox {
     destinationGatewayId: string | undefined,
     now: number,
   ): Promise<OutboxEnqueueResult>;
-  due(now: number): readonly PersistentOutboxRecord[];
-  nextAttemptAt(): number | undefined;
+  due(now: number, rideId?: string): readonly PersistentOutboxRecord[];
+  nextAttemptAt(rideId?: string): number | undefined;
+  originIdForRide(rideId: string): string | undefined;
   recordAttempt(messageId: string, now: number): Promise<OutboxAttemptResult>;
   acknowledge(messageId: string): Promise<boolean>;
   remove(messageId: string): Promise<boolean>;
-  expire(now: number): Promise<readonly string[]>;
+  expire(now: number): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]>;
   readonly size: number;
 }
 
@@ -195,12 +196,17 @@ export function createPersistentOutbox({
       return { accepted: true };
     },
 
-    due(now): readonly PersistentOutboxRecord[] {
+    due(now, rideId): readonly PersistentOutboxRecord[] {
       requireInitialized();
       const due: PersistentOutboxRecord[] = [];
       for (const record of records.values()) {
         const decoded = decode(record);
-        if (decoded && !isRideMessageExpired(decoded.message, now) && record.nextAttemptAt <= now) {
+        if (
+          decoded &&
+          (rideId === undefined || decoded.message.rideId === rideId) &&
+          !isRideMessageExpired(decoded.message, now) &&
+          record.nextAttemptAt <= now
+        ) {
           due.push(decoded);
         }
       }
@@ -213,13 +219,27 @@ export function createPersistentOutbox({
       return Object.freeze(due);
     },
 
-    nextAttemptAt(): number | undefined {
+    nextAttemptAt(rideId): number | undefined {
       requireInitialized();
       let next: number | undefined;
       for (const record of records.values()) {
+        if (rideId !== undefined && decode(record)?.message.rideId !== rideId) {
+          continue;
+        }
         next = next === undefined ? record.nextAttemptAt : Math.min(next, record.nextAttemptAt);
       }
       return next;
+    },
+
+    originIdForRide(rideId): string | undefined {
+      requireInitialized();
+      for (const record of records.values()) {
+        const decoded = decode(record);
+        if (decoded?.message.rideId === rideId) {
+          return decoded.message.originId;
+        }
+      }
+      return undefined;
     },
 
     async recordAttempt(messageId, now): Promise<OutboxAttemptResult> {
@@ -261,14 +281,14 @@ export function createPersistentOutbox({
       return removed;
     },
 
-    async expire(now): Promise<readonly string[]> {
+    async expire(now): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]> {
       requireInitialized();
-      const expired: string[] = [];
+      const expired: { messageId: string; expiresAt: number }[] = [];
       for (const [messageId, record] of records) {
         const decoded = decode(record);
         if (!decoded || isRideMessageExpired(decoded.message, now)) {
           records.delete(messageId);
-          expired.push(messageId);
+          expired.push({ messageId, expiresAt: decoded?.message.expiresAt ?? now });
         }
       }
       if (expired.length > 0) {
