@@ -542,6 +542,12 @@ export function buildHazardAnnouncement(packet: HazardPacket): string {
   if (packet.hazard === 'accident' && packet.sos) {
     return `${packet.senderName} may have crashed.`;
   }
+  // A dictated voice note (see JarvisVoiceService) reads back exactly what was said -- 'info' has
+  // no HAZARD_RULES entry (it's never raised from ambient speech), so HAZARD_LABELS has nothing
+  // to fall back to below.
+  if (packet.hazard === 'info') {
+    return `${packet.senderName} says: ${packet.message ?? ''}`;
+  }
   return CUSTOM_ANNOUNCEMENTS[packet.hazard] ?? `${packet.senderName} reported ${HAZARD_LABELS[packet.hazard]}.`;
 }
 

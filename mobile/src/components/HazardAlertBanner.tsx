@@ -6,6 +6,9 @@ import { CRITICAL_HAZARDS, HazardGlyph } from './HazardIcons';
 
 /** How long a hazard banner stays up before it dismisses itself. */
 export const HAZARD_BANNER_MS = 5000;
+/** Longer for a dictated voice note (see JarvisVoiceService) -- there's real sentence-length text
+ * to actually read, not a one-word label. */
+export const VOICE_NOTE_BANNER_MS = 10000;
 
 export type HazardBannerKind = 'sent' | 'received';
 
@@ -19,16 +22,23 @@ interface HazardAlertBannerProps {
 }
 
 export default function HazardAlertBanner({ packet, kind, top, onDismiss }: HazardAlertBannerProps) {
-  useEffect(() => {
-    const timer = setTimeout(onDismiss, HAZARD_BANNER_MS);
-    return () => clearTimeout(timer);
-  }, [packet.id, onDismiss]);
+  // 'info' is a dictated voice note (see JarvisVoiceService): no fixed HAZARD_LABELS entry (it's
+  // never raised from ambient speech), so the banner shows the actual words instead.
+  const isVoiceNote = packet.hazard === 'info';
 
-  const label = HAZARD_LABELS[packet.hazard];
+  useEffect(() => {
+    const timer = setTimeout(onDismiss, isVoiceNote ? VOICE_NOTE_BANNER_MS : HAZARD_BANNER_MS);
+    return () => clearTimeout(timer);
+  }, [packet.id, isVoiceNote, onDismiss]);
+
+  const label = isVoiceNote ? packet.message || 'Voice note' : HAZARD_LABELS[packet.hazard];
   const isSent = kind === 'sent';
-  // Received alerts: red for critical categories, amber for cautions. Sent: green confirmation.
+  // Received alerts: red for critical categories, amber for cautions (including voice notes).
+  // Sent: green confirmation.
   const tone = isSent ? brand.success : CRITICAL_HAZARDS.has(packet.hazard) ? brand.danger : brand.warning;
-  const heading = isSent ? 'HAZARD SENT' : CRITICAL_HAZARDS.has(packet.hazard) ? 'CRITICAL HAZARD' : 'ROAD HAZARD';
+  const heading = isVoiceNote
+    ? isSent ? 'MESSAGE SENT' : 'VOICE NOTE'
+    : isSent ? 'HAZARD SENT' : CRITICAL_HAZARDS.has(packet.hazard) ? 'CRITICAL HAZARD' : 'ROAD HAZARD';
 
   return (
     <Pressable
@@ -45,7 +55,7 @@ export default function HazardAlertBanner({ packet, kind, top, onDismiss }: Haza
       </View>
       <View style={styles.text}>
         <Text style={[styles.heading, { color: tone }]}>{heading}</Text>
-        <Text style={styles.label} numberOfLines={1}>
+        <Text style={styles.label} numberOfLines={isVoiceNote ? 2 : 1}>
           {label}
         </Text>
         <Text style={styles.by} numberOfLines={1}>

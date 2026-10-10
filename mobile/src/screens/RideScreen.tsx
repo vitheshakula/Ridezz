@@ -66,6 +66,7 @@ import { emitPeerBrakingAlert } from '../braking/brakingEvents';
 import { useHardBraking, usePeerBraking } from '../braking/useHardBraking';
 import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
+import { startJarvisVoice } from '../services/JarvisVoiceService';
 import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
 import { nearbyTransport } from '../transports/NearbyTransport';
 import { createLiveKitHazardTransport } from '../transports/LiveKitHazardTransport';
@@ -675,6 +676,33 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         onError: setVoiceError,
       }),
     [session.riderName],
+  );
+
+  // "Jarvis": wake word ("send message") -> dictated message -> dispatched to the group over the
+  // mesh. Rides on the same always-on speech recognizer as hazard detection above; doesn't start
+  // or stop the microphone itself.
+  useEffect(
+    () =>
+      startJarvisVoice({
+        // Dispatched through the same hazard pipeline as a spoken hazard or crash alert -- it
+        // already handles both the mesh and the cloud room in one call, and the receiving end
+        // already reads an incoming hazard aloud and banners it (see hazardCoordinator's
+        // onIncomingAccepted above), so a voice note gets both for free.
+        onMessage: message =>
+          hazardCoordinatorRef.current.submitLocal(
+            createHazardPacket('info', senderIdRef.current, session.riderName, Date.now(), undefined, message),
+          ),
+        announce: text => {
+          echoGuardRef.current.begin();
+          duckRemoteAudio(room, true);
+          return speakText(text).finally(() => {
+            duckRemoteAudio(room, false);
+            echoGuardRef.current.end();
+          });
+        },
+        isEchoLikely: () => echoGuardRef.current.isEchoLikely(),
+      }),
+    [room, session.riderName],
   );
 
   const dismissHazard = useCallback(() => setBannerAlert(null), []);

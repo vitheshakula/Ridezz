@@ -165,6 +165,20 @@ export function isMeshPacket(value: unknown): value is MeshPacket {
         typeof p.ttl === 'number' &&
         typeof p.timestamp === 'number'
       );
+    case 'VOICE_INFO':
+      return (
+        typeof p.packetId === 'string' &&
+        typeof p.originRiderId === 'string' &&
+        typeof p.riderName === 'string' &&
+        typeof p.senderId === 'string' &&
+        typeof p.message === 'string' &&
+        (p.latitude === null || typeof p.latitude === 'number') &&
+        (p.longitude === null || typeof p.longitude === 'number') &&
+        Array.isArray(p.visitedNodes) &&
+        p.visitedNodes.every(node => typeof node === 'string') &&
+        typeof p.ttl === 'number' &&
+        typeof p.timestamp === 'number'
+      );
     case 'SYNC_REQUEST':
       return typeof p.riderId === 'string' && typeof p.lastKnownHazardTimestamp === 'number';
     case 'SYNC_RESPONSE':

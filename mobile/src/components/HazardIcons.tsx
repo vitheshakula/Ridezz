@@ -93,6 +93,13 @@ const GLYPHS: Record<HazardType, React.ReactNode> = {
       <Path d="M12.5 15.5L16 19l3.5-3.5" />
     </>
   ),
+  // A dictated voice note (see JarvisVoiceService): a speech bubble with text lines.
+  info: (
+    <>
+      <Path d="M4 5h16v11H9l-4 4V5z" />
+      <Path d="M8 9h8M8 12.5h5" />
+    </>
+  ),
 };
 
 export function HazardGlyph({ type, size = 24, color }: HazardGlyphProps) {

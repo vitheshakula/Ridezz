@@ -15,6 +15,18 @@ describe('hazard icons', () => {
     }
   });
 
+  it("draws something for 'info' (a dictated voice note) too, despite it having no HAZARD_RULES entry", () => {
+    let renderer!: ReactTestRenderer.ReactTestRenderer;
+    ReactTestRenderer.act(() => {
+      renderer = ReactTestRenderer.create(<HazardGlyph type="info" color="#fff" />);
+    });
+    expect(JSON.stringify(renderer.toJSON()).length).toBeGreaterThan(40);
+  });
+
+  it('keeps a voice note as a caution (amber), not critical', () => {
+    expect(CRITICAL_HAZARDS.has('info')).toBe(false);
+  });
+
   it('marks a stopped vehicle as critical (red) and a sharp turn as a caution (amber)', () => {
     expect(CRITICAL_HAZARDS.has(HAZARD_TYPES.VEHICLE_STOPPED)).toBe(true);
     expect(CRITICAL_HAZARDS.has(HAZARD_TYPES.SHARP_TURN)).toBe(false);

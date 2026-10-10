@@ -99,6 +99,11 @@ describe('buildHazardAnnouncement', () => {
       expect(buildHazardAnnouncement(packet)).toBe(`Alex reported ${rule.label}.`);
     }
   });
+
+  it('reads a dictated voice note back verbatim, not the generic "reported" wording', () => {
+    const packet = createHazardPacket('info', 'abc', 'Alex', NOW, undefined, 'Taking a fuel break');
+    expect(buildHazardAnnouncement(packet)).toBe('Alex says: Taking a fuel break');
+  });
 });
 
 describe('speakHazardAudio', () => {
