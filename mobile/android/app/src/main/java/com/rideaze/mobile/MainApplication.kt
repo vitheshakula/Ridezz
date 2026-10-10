@@ -22,6 +22,7 @@ class MainApplication : Application(), ReactApplication {
           add(VoiceHazardPackage())
           add(NearbyMeshPackage())
           add(RidezzTtsPackage())
+          add(RideazeSecureOutboxPackage())
         },
     )
   }
