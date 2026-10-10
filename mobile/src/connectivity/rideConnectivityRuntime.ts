@@ -21,6 +21,7 @@
 
 import {
   createConnectivityReceiver,
+  type ConnectivityApplicationMessage,
   type ConnectivityReceiveResult,
 } from './connectivityReceiver';
 import type { CycleOutcome, CycleScheduler } from './cycleScheduler';
@@ -82,6 +83,8 @@ export interface RideConnectivityRuntimeOptions {
   isCloudReachable: () => boolean;
   /** Observability: every receive result and scheduler cycle outcome. Must not throw. */
   onEvent?: (event: RideConnectivityEvent) => void;
+  /** Accepted application messages for this node. Intermediate routed messages are excluded. */
+  onApplicationMessage?: (received: ConnectivityApplicationMessage) => void;
 }
 
 export interface RideConnectivityRuntime {
@@ -109,6 +112,7 @@ export function createRideConnectivityRuntime({
   monotonicClock,
   isCloudReachable,
   onEvent,
+  onApplicationMessage,
 }: RideConnectivityRuntimeOptions): RideConnectivityRuntime {
   const report = (event: RideConnectivityEvent) => {
     try {
@@ -148,6 +152,7 @@ export function createRideConnectivityRuntime({
     controlTransport: transport,
     monotonicClock,
     wallClock,
+    onApplicationMessage,
   });
 
   // Heartbeats go over this one local transport only; LiveKit never participates.

@@ -4,6 +4,7 @@ import {
 } from '../src/connectivity/rideConnectivityRuntime';
 import { createRideMessageIdGenerator } from '../src/connectivity/protocol/rideMessageId';
 import { createRideMessage, type RideMessage } from '../src/connectivity/protocol/rideMessage';
+import { serializeRideMessage } from '../src/connectivity/protocol/rideMessageCodec';
 import { HEARTBEAT_INTERVAL_MS } from '../src/connectivity/protocol/heartbeat';
 import {
   GATEWAY_ADVERTISEMENT_INTERVAL_MS,
@@ -55,6 +56,7 @@ function createNetwork() {
   function makeNode(id: string, options: { reachable?: boolean; rideId?: string } = {}) {
     let reachable = options.reachable ?? false;
     const events: RideConnectivityEvent[] = [];
+    const applicationMessages: RideMessage<unknown>[] = [];
     const unsubscribes: jest.Mock[] = [];
     const transport = {
       broadcast: jest.fn((payload: string) => {
@@ -98,12 +100,16 @@ function createNetwork() {
           received++;
         }
       },
+      onApplicationMessage: receivedMessage => {
+        applicationMessages.push(receivedMessage.message);
+      },
     });
     const node = {
       id,
       runtime,
       transport,
       events,
+      applicationMessages,
       unsubscribes,
       generateMessageId,
       setReachable: (value: boolean) => (reachable = value),
@@ -338,6 +344,41 @@ describe('A ↔ B heartbeats through the runtimes', () => {
     expect(a.transport.broadcast).toHaveBeenCalledTimes(1);
     expect(b.transport.broadcast).toHaveBeenCalledTimes(1);
   });
+
+  test('accepted local application messages are delivered once; expired copies are rejected', async () => {
+    const net = createNetwork();
+    const a = net.makeNode('rider-a');
+    const b = net.makeNode('rider-b');
+    net.connect('rider-a', 'rider-b');
+    start(a, b);
+    await net.settle();
+
+    const app = application('rider-a');
+    const expired = createRideMessage({
+      id: `expired-${++counter}`,
+      rideId: RIDE,
+      originId: 'rider-a',
+      type: 'sos',
+      priority: 'critical',
+      payload: { reason: 'test' },
+      ttlMs: 1_000,
+      maxHops: 1,
+      now: WALL - 2_000,
+    });
+    await a.transport.broadcast(serializeRideMessage(app));
+    await a.transport.broadcast(serializeRideMessage(app));
+    await a.transport.broadcast(serializeRideMessage(expired));
+    await net.settle();
+
+    expect(b.applicationMessages.map(message => message.id)).toEqual([app.id]);
+    expect(b.receives()).toEqual(
+      expect.arrayContaining([
+        { stage: 'unrouted' },
+        { stage: 'ingress_rejected', reason: 'duplicate' },
+        { stage: 'ingress_rejected', reason: 'invalid' },
+      ]),
+    );
+  });
 });
 
 describe('A ↔ B ↔ C: gateway discovery and routed delivery through the runtimes', () => {
@@ -428,6 +469,8 @@ describe('A ↔ B ↔ C: gateway discovery and routed delivery through the runti
     expect(atC).toMatchObject([
       { result: { status: 'gateway_reached', targetGatewayId: GW, message: { id: app.id } } },
     ]);
+    expect(b.applicationMessages).toEqual([]);
+    expect(c.applicationMessages).toMatchObject([{ id: app.id }]);
 
     expect(a.transport.sendTo).toHaveBeenCalledTimes(1);
     expect(b.transport.sendTo).toHaveBeenCalledTimes(1);

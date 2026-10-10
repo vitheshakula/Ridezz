@@ -36,6 +36,7 @@ import { handleHeartbeat, type HeartbeatHandlingResult } from './heartbeatHandle
 import type { PeerTable } from './peerTable';
 import { decideRelay, type RelayRejection } from './relayPolicy';
 import type { RideMessage } from './protocol/rideMessage';
+import type { JsonValue } from './protocol/jsonValue';
 import { serializeRideMessage } from './protocol/rideMessageCodec';
 import type { RideMessageIngress, RideMessageIngressRejection } from './rideMessageIngress';
 import type { RoutedForwarder, RoutedForwardResult } from './routedForwarder';
@@ -60,6 +61,13 @@ export type ConnectivityReceiveResult =
   | { stage: 'routed'; result: RoutedForwardResult }
   | { stage: 'unrouted' };
 
+/** An accepted application message that is intended for this node. Intermediate routed messages
+ * are never reported here. `originId` is a protocol node id, not an authenticated user identity. */
+export interface ConnectivityApplicationMessage {
+  readonly message: RideMessage<JsonValue>;
+  readonly delivery: 'local' | 'gateway';
+}
+
 export interface ConnectivityReceiverOptions {
   /** The transport this receiver serves, e.g. NEARBY_TRANSPORT_ID. */
   transportId: string;
@@ -74,6 +82,8 @@ export interface ConnectivityReceiverOptions {
   monotonicClock: () => number;
   /** Protocol wall clock, for relay expiry checks. */
   wallClock: () => number;
+  /** Optional application hand-off. Exceptions are isolated from the receive pipeline. */
+  onApplicationMessage?: (received: ConnectivityApplicationMessage) => void;
   /** Bound on one relay broadcast; defaults to OPERATIONAL_SEND_TIMEOUT_MS. */
   relayTimeoutMs?: number;
 }
@@ -100,11 +110,23 @@ export function createConnectivityReceiver({
   controlTransport,
   monotonicClock,
   wallClock,
+  onApplicationMessage,
   relayTimeoutMs = OPERATIONAL_SEND_TIMEOUT_MS,
 }: ConnectivityReceiverOptions): ConnectivityReceiver {
   if (!Number.isSafeInteger(relayTimeoutMs) || relayTimeoutMs <= 0) {
     throw new RangeError('Connectivity receiver relayTimeoutMs must be a positive integer');
   }
+
+  const deliverApplicationMessage = (
+    message: RideMessage<JsonValue>,
+    delivery: ConnectivityApplicationMessage['delivery'],
+  ): void => {
+    try {
+      onApplicationMessage?.({ message, delivery });
+    } catch {
+      // Application observers must never interrupt forwarding or the receive subscription.
+    }
+  };
 
   /** Flood relay of an accepted advertisement: same id, hopCount + 1, per relay policy. */
   const relayAdvertisement = async (
@@ -170,8 +192,13 @@ export function createConnectivityReceiver({
       return { stage: 'gateway_advertisement', result, relay };
     }
     if (message.gatewayRouting !== undefined) {
-      return { stage: 'routed', result: await forwarder.forwardAccepted(accepted) };
+      const result = await forwarder.forwardAccepted(accepted);
+      if (result.status === 'gateway_reached') {
+        deliverApplicationMessage(message, 'gateway');
+      }
+      return { stage: 'routed', result };
     }
+    deliverApplicationMessage(message, 'local');
     return { stage: 'unrouted' };
   };
 

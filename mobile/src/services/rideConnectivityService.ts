@@ -13,6 +13,10 @@ import {
   type RideConnectivityRuntime,
 } from '../connectivity/rideConnectivityRuntime';
 import {
+  createRideConnectivityClient,
+  type RideConnectivityClient,
+} from '../connectivity/rideConnectivityClient';
+import {
   isDevMenuGatewayForced,
   isRideCloudReachable,
   setDevMenuGatewayForced,
@@ -42,6 +46,48 @@ export function logRideConnectivity(line: string): void {
 /** One secure identity per ride session. Throws if secure randomness is unavailable. */
 export function createAppRideNodeIdentity(): RideNodeIdentity {
   return createRideNodeIdentity(createRuntimeRideMessageIdGenerator());
+}
+
+/**
+ * Public application-facing connectivity client. This client owns the Nearby session lifecycle;
+ * only one owner may use the concrete Nearby transport at a time. RideScreen continues using the
+ * legacy composition below until its application-service integration is migrated separately.
+ */
+export function createAppRideConnectivityClient(): RideConnectivityClient {
+  return createRideConnectivityClient({
+    transportId: NEARBY_TRANSPORT_ID,
+    transport: nearbyTransport,
+    createNodeIdentity: createAppRideNodeIdentity,
+    createRuntime: ({
+      rideContext,
+      localNodeId,
+      generateMessageId,
+      onApplicationMessage,
+    }) => {
+      let runtime: RideConnectivityRuntime | undefined;
+      runtime = createRideConnectivityRuntime({
+        rideId: rideContext.rideId,
+        localNodeId,
+        transportId: NEARBY_TRANSPORT_ID,
+        transport: nearbyTransport,
+        generateMessageId,
+        wallClock: () => Date.now(),
+        monotonicClock: createMonotonicClock(),
+        isCloudReachable: isRideCloudReachable,
+        onApplicationMessage,
+        onEvent: createConnectivityDiagnostics({
+          log: logRideConnectivity,
+          getRoute: () =>
+            runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
+        }),
+      });
+      logRideConnectivity(
+        `public client runtime created as node ${localNodeId.slice(0, 8)}` +
+          (isRideCloudReachable() ? ' (TEST cloud gateway)' : ''),
+      );
+      return runtime;
+    },
+  });
 }
 
 /**
