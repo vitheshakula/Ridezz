@@ -44,6 +44,10 @@ import type {
   RideMessageIngressRejection,
   RideMessageIngressResult,
 } from './rideMessageIngress';
+import {
+  createRelayRetryTracker,
+  type RelayRetryTracker,
+} from './relayRetryTracker';
 import type { RoutedForwarder, RoutedForwardResult } from './routedForwarder';
 import type { TargetedTransport, TransportEndpointSource } from '../transports/Transport';
 
@@ -95,8 +99,10 @@ export interface ConnectivityReceiverOptions {
   onAcceptedMessage?: (message: RideMessage<JsonValue>) => void;
   /** Called when handling of one accepted routed message settles. */
   onRoutedResult?: (message: RideMessage<JsonValue>, result: RoutedForwardResult) => void;
-  /** Called only when a duplicate is actually suppressed. */
+  /** Called only when a duplicate is actually suppressed, not when a relay retry is admitted. */
   onSuppressedDuplicate?: (message: RideMessage<JsonValue>) => void;
+  /** Optional deterministic/session-owned retry tracker. A bounded tracker is created by default. */
+  relayRetryTracker?: RelayRetryTracker;
   /** Bound on one relay broadcast; defaults to OPERATIONAL_SEND_TIMEOUT_MS. */
   relayTimeoutMs?: number;
 }
@@ -128,6 +134,7 @@ export function createConnectivityReceiver({
   onAcceptedMessage,
   onRoutedResult,
   onSuppressedDuplicate,
+  relayRetryTracker = createRelayRetryTracker(),
   relayTimeoutMs = OPERATIONAL_SEND_TIMEOUT_MS,
 }: ConnectivityReceiverOptions): ConnectivityReceiver {
   if (!Number.isSafeInteger(relayTimeoutMs) || relayTimeoutMs <= 0) {
@@ -147,6 +154,25 @@ export function createConnectivityReceiver({
 
   type AcceptedIngress = Extract<RideMessageIngressResult, { accepted: true }>;
 
+  /** Only outcomes that prove no hop accepted the packet may reopen duplicate admission. */
+  const isDefinitiveRetryableFailure = (result: RoutedForwardResult): boolean => {
+    if (result.status === 'transport_error') {
+      return true;
+    }
+    if (result.status !== 'not_sent') {
+      // Includes send_timeout: its outcome is ambiguous and must never enable an automatic retry.
+      return false;
+    }
+    return (
+      result.reason === 'no_route' ||
+      result.reason === 'unknown_previous_hop' ||
+      result.reason === 'previous_hop_only' ||
+      result.reason === 'no_progress' ||
+      result.reason === 'no_endpoint' ||
+      result.reason === 'unsupported_transport'
+    );
+  };
+
   const forwardRouted = async (
     accepted: AcceptedIngress,
   ): Promise<ConnectivityReceiveResult> => {
@@ -154,7 +180,19 @@ export function createConnectivityReceiver({
     if (source.peerId !== undefined) {
       ackReturnRouter?.remember(message, { endpointId: source.peerId });
     }
-    const result = await forwarder.forwardAccepted(accepted);
+    let result: RoutedForwardResult;
+    try {
+      result = await forwarder.forwardAccepted(accepted);
+    } catch (error) {
+      // An unexpected throw has an unknown outcome. Fail closed rather than reopening admission.
+      relayRetryTracker.clear(message.id);
+      throw error;
+    }
+    if (isDefinitiveRetryableFailure(result)) {
+      relayRetryTracker.recordDefinitiveFailure(message, wallClock());
+    } else {
+      relayRetryTracker.clear(message.id);
+    }
     try {
       onRoutedResult?.(message, result);
     } catch {
@@ -210,9 +248,19 @@ export function createConnectivityReceiver({
     const accepted = ingress.ingest(payload, { transportId, peerId: source.endpointId });
     if (!accepted.accepted) {
       // Ingress rejection results intentionally expose no packet contents. Re-parse only inside
-      // this receiver so observability can correlate the exact canonical packet.
+      // this receiver so bounded retry admission can compare the exact canonical packet.
       const duplicateMessage =
         accepted.reason === 'duplicate' ? parseRideMessage(payload, wallClock()) : null;
+      if (
+        duplicateMessage?.gatewayRouting !== undefined &&
+        relayRetryTracker.beginRetry(duplicateMessage, wallClock())
+      ) {
+        return forwardRouted({
+          accepted: true,
+          message: duplicateMessage,
+          source: { transportId, peerId: source.endpointId },
+        });
+      }
       if (duplicateMessage) {
         try {
           onSuppressedDuplicate?.(duplicateMessage);

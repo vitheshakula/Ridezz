@@ -98,6 +98,7 @@ import {
   registerRideConnectivityDevMenu,
   startAppRideMeshSession,
 } from '../services/rideConnectivityService';
+import { createRideSafetyConnectivity } from '../services/rideSafetyConnectivity';
 
 /** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
  * cellular blips so the pill doesn't flicker. */
@@ -486,6 +487,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
   const onLocalMeshHazardRef = useRef<(packet: HazardPacket) => void>(() => {});
+  const safetyConnectivity = useMemo(
+    () => createRideSafetyConnectivity({ rideId: session.roomCode }),
+    [session.roomCode],
+  );
   const hazardCoordinator = useMemo(
     () =>
       createHazardCoordinator({
@@ -497,6 +502,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           onLocalMeshHazardRef.current(packet);
           // Silent, visual-only confirmation: the rider already knows what they just said.
           setBannerAlert({ packet, kind: 'sent' });
+          // Additive gateway copy. Accident packets are excluded inside the adapter because the
+          // crash path submits one richer 'sos' message immediately after Phase 1 dispatch.
+          safetyConnectivity.submitVoiceHazard(packet);
         },
         onIncomingAccepted: (packet, _ingress, shouldAnnounce) => {
           setBannerAlert({ packet, kind: 'received' });
@@ -521,7 +529,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${result}`);
         },
       }),
-    [liveKitHazardTransport, room],
+    [liveKitHazardTransport, room, safetyConnectivity],
   );
   const hazardCoordinatorRef = useRef(hazardCoordinator);
   hazardCoordinatorRef.current = hazardCoordinator;
@@ -734,6 +742,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           ...(sos.speedBeforeImpactKmh !== null ? { speedKmh: sos.speedBeforeImpactKmh } : {}),
         }),
       );
+
+      // Parallel best-effort gateway copy. This never delays or replaces Phase 1 dispatch.
+      safetyConnectivity.submitCrashSos(sos);
     },
     announce: text => {
       echoGuardRef.current.begin();
@@ -782,6 +793,8 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
           headingDeg: event.headingDeg,
         })
         .catch(() => {});
+
+      safetyConnectivity.submitHardBraking(event);
     },
     announce: brakeAnnounce,
   });
