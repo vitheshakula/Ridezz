@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { PermissionsAndroid, Platform } from 'react-native';
 import Geolocation from '@react-native-community/geolocation';
 import {
@@ -10,6 +10,7 @@ import {
   type Room,
 } from 'livekit-client';
 import {
+  LOCATION_REQUEST_TOPIC,
   LOCATION_TOPIC,
   decodeLocationPayload,
   encodeLocationPayload,
@@ -38,6 +39,15 @@ const WATCH_OPTIONS = {
  * packets nor replays them to riders who join later -- without this, a rider who stays put is
  * invisible to anyone who joined after their one broadcast, and ages to "offline" for everyone. */
 const REBROADCAST_INTERVAL_MS = 5000;
+
+/** How often a genuinely fresh GPS fix is forced via getCurrentPosition, independent of
+ * watchPosition. REBROADCAST_INTERVAL_MS above only re-sends whatever fix watchPosition last
+ * delivered -- if watchPosition itself has silently stalled (confirmed on one OEM: delivery
+ * dropped as "too close" to the provider's last cached location, see WATCH_OPTIONS), that cached
+ * fix never changes and every rebroadcast keeps resending the same stale packet, so a rider who
+ * reconnects after an outage can stay invisible to everyone else indefinitely. This timer doesn't
+ * depend on watchPosition at all, so it keeps the rider visible even if the watch is stuck. */
+const ACTIVE_REFRESH_INTERVAL_MS = 15000;
 
 let hasConfiguredGeolocation = false;
 function ensureGeolocationConfigured() {
@@ -97,28 +107,43 @@ export function useRiderLocations(
   const latestFixRef = useRef<
     { lat: number; lng: number; accuracy: number; speed?: number; heading?: number; timestamp: number } | null
   >(null);
+
+  // Shared by the reconnect handler, the LOCATION_REQUEST_TOPIC responder, and the initial-identity
+  // effect below -- all three just want "(re-)send whatever fix we already have, right now",
+  // never a fresh GPS read of their own. Reads the refs fresh on every call rather than closing
+  // over a render's values, so it stays correct no matter which render's closure an effect captured.
+  // useCallback'd on [room] alone (refs don't need to be deps) so effects depending on it don't
+  // re-run every render.
+  const publishCurrentFix = useCallback((): void => {
+    const fix = latestFixRef.current;
+    const identity = room.localParticipant?.identity || identityRef.current;
+    if (!fix || !identity) {
+      console.log(`[RideLoc] publishCurrentFix skipped: hasFix=${!!fix} identity=${identity || '(none)'}`);
+      return;
+    }
+    const payload = { ...fix, timestamp: Date.now() };
+    setState(prev =>
+      upsertRiderLocation(prev, { identity, name: nameRef.current, payload: { v: 1, ...payload } }),
+    );
+    room.localParticipant
+      .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
+      .then(() => console.log(`[RideLoc] publishCurrentFix sent for ${identity}`))
+      .catch(err => console.warn(`[RideLoc] publishCurrentFix FAILED for ${identity}:`, err));
+  }, [room]);
+
   useEffect(() => {
     identityRef.current = localIdentity;
     nameRef.current = localName;
     if (localIdentity && latestFixRef.current) {
-      const payload = latestFixRef.current;
-      setState(prev =>
-        upsertRiderLocation(prev, {
-          identity: localIdentity,
-          name: localName,
-          payload: { v: 1, ...payload },
-        }),
-      );
-      room.localParticipant
-        .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
-        .catch(() => {});
+      publishCurrentFix();
     }
-  }, [localIdentity, localName, room]);
+  }, [localIdentity, localName, room, publishCurrentFix]);
 
   useEffect(() => {
     let cancelled = false;
     let watchId: number | null = null;
     let rebroadcastTimer: ReturnType<typeof setInterval> | null = null;
+    let activeRefreshTimer: ReturnType<typeof setInterval> | null = null;
     let hadErrorSinceLastFix = false;
     // Read from the room itself: the identity passed in from the screen can stay empty on some
     // devices (confirmed on the host phone), which silently stopped that rider ever being sent.
@@ -265,6 +290,25 @@ export function useRiderLocations(
           .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
           .catch(() => {});
       }, REBROADCAST_INTERVAL_MS);
+
+      // Independent of watchPosition -- see ACTIVE_REFRESH_INTERVAL_MS. A failure here is
+      // best-effort only: watchPosition is still the primary source, and this is purely a
+      // safety net against it having silently stalled.
+      activeRefreshTimer = setInterval(() => {
+        if (cancelled) {
+          return;
+        }
+        Geolocation.getCurrentPosition(
+          handleFix,
+          (err: { code?: number; message?: string }) => {
+            logDiagnosticEvent(
+              'location_error',
+              `Active refresh failed: code ${err?.code ?? '?'} - ${err?.message ?? 'unknown error'}`,
+            );
+          },
+          { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
+        );
+      }, ACTIVE_REFRESH_INTERVAL_MS);
     }
 
     start();
@@ -276,21 +320,22 @@ export function useRiderLocations(
     // who comes back online can sit at their stale pre-outage position (shown "stale"/"offline")
     // for up to 5 seconds even though their phone has had a connection the whole time.
     const handleConnectionStateChanged = (newState: ConnectionState) => {
-      if (newState !== ConnectionState.Connected) {
+      if (newState !== ConnectionState.Connected || cancelled) {
         return;
       }
-      const fix = latestFixRef.current;
-      const identity = currentIdentity();
-      if (cancelled || !fix || !identity) {
-        return;
-      }
-      const payload = { ...fix, timestamp: Date.now() };
-      setState(prev =>
-        upsertRiderLocation(prev, { identity, name: nameRef.current, payload: { v: 1, ...payload } }),
+      console.log(
+        `[RideLoc] ConnectionStateChanged -> Connected (identity=${room.localParticipant?.identity || identityRef.current})`,
       );
+      publishCurrentFix();
+      // Confirmed on-device: after a long outage, LiveKit does a full rejoin (new participant
+      // SID) rather than a lightweight reconnect -- this device's whole room view is rebuilt from
+      // scratch, and no other rider has a reason to single it out for an extra broadcast. Without
+      // this, every other rider stays stuck at their pre-outage position (shown stale/OFFLINE)
+      // until their own next organic REBROADCAST_INTERVAL_MS tick -- see LOCATION_REQUEST_TOPIC.
       room.localParticipant
-        .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
-        .catch(() => {});
+        .publishData(new Uint8Array(0), { reliable: true, topic: LOCATION_REQUEST_TOPIC })
+        .then(() => console.log('[RideLoc] location-request broadcast sent'))
+        .catch(err => console.warn('[RideLoc] location-request broadcast FAILED:', err));
     };
     room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
 
@@ -303,8 +348,11 @@ export function useRiderLocations(
       if (rebroadcastTimer !== null) {
         clearInterval(rebroadcastTimer);
       }
+      if (activeRefreshTimer !== null) {
+        clearInterval(activeRefreshTimer);
+      }
     };
-  }, [room]);
+  }, [room, publishCurrentFix]);
 
   useEffect(() => {
     function handleData(
@@ -313,19 +361,31 @@ export function useRiderLocations(
       _kind?: DataPacket_Kind,
       topic?: string,
     ) {
+      if (topic === LOCATION_REQUEST_TOPIC) {
+        // Someone just (re)joined and wants everyone's current position right away -- see
+        // LOCATION_REQUEST_TOPIC's doc comment. A no-op if we have no fix of our own yet.
+        console.log(`[RideLoc] location-request received from ${participant?.identity ?? '(unknown)'}`);
+        publishCurrentFix();
+        return;
+      }
       if (topic !== LOCATION_TOPIC || !participant) {
         return;
       }
       const decoded = decodeLocationPayload(payload);
       if (!decoded) {
+        console.warn(`[RideLoc] location payload from ${participant.identity} failed to decode`);
         return;
       }
+      console.log(
+        `[RideLoc] location DataReceived from ${participant.identity}: ${decoded.lat.toFixed(5)},${decoded.lng.toFixed(5)} age=${Date.now() - decoded.timestamp}ms`,
+      );
       setState(prev => {
         // Diagnostic only: tells us, after the fact, whether this rider's location data ever
         // actually resumed flowing once they'd gone stale/offline -- the one thing a screenshot of
         // "still shows OFFLINE" can't show, since by definition it's taken while nothing has
         // arrived yet.
         if (prev[participant.identity] && !prev[participant.identity].connected) {
+          console.log(`[RideLoc] ${participant.identity} resumed after being marked disconnected`);
           logDiagnosticEvent(
             'remote_location_resumed',
             `${participant.name || participant.identity} sending location again`,
@@ -340,6 +400,7 @@ export function useRiderLocations(
     }
 
     function handleDisconnected(participant: RemoteParticipant) {
+      console.log(`[RideLoc] ParticipantDisconnected: ${participant.identity}`);
       logDiagnosticEvent(
         'remote_participant_disconnected',
         `${participant.name || participant.identity} disconnected`,
@@ -347,13 +408,19 @@ export function useRiderLocations(
       setState(prev => markRiderDisconnected(prev, participant.identity));
     }
 
+    function handleConnected(participant: RemoteParticipant) {
+      console.log(`[RideLoc] ParticipantConnected: ${participant.identity}`);
+    }
+
     room.on(RoomEvent.DataReceived, handleData);
     room.on(RoomEvent.ParticipantDisconnected, handleDisconnected);
+    room.on(RoomEvent.ParticipantConnected, handleConnected);
     return () => {
       room.off(RoomEvent.DataReceived, handleData);
       room.off(RoomEvent.ParticipantDisconnected, handleDisconnected);
+      room.off(RoomEvent.ParticipantConnected, handleConnected);
     };
-  }, [room]);
+  }, [room, publishCurrentFix]);
 
   return {
     locations: Object.values(state),

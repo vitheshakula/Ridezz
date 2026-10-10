@@ -9,6 +9,17 @@
  * backlog delaying fresh updates during poor mobile coverage. */
 export const LOCATION_TOPIC = 'ridezz.location';
 
+/** Dedicated topic for "resend your current location now" broadcasts. No payload needed -- the
+ * topic alone is the signal. Sent by a rider right after their own ConnectionStateChanged ->
+ * Connected transition (fresh join or reconnect): LiveKit's data channel is lossy and push-only,
+ * so a rider who just (re)joined has no way to pull everyone else's current position and must
+ * otherwise wait for each peer's own next organic broadcast. Confirmed on-device: after a long
+ * outage, LiveKit does a full rejoin (new participant SID, not a resumed session) rather than a
+ * lightweight reconnect, and other riders have no reason to single out a freshly (re)joined peer
+ * for an extra broadcast -- this request closes that gap instead of waiting out each peer's own
+ * REBROADCAST_INTERVAL_MS. */
+export const LOCATION_REQUEST_TOPIC = 'ridezz.location.request';
+
 export const LOCATION_PAYLOAD_VERSION = 1;
 
 /** Wire format published over LiveKit data. Deliberately small. */
