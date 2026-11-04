@@ -4,16 +4,44 @@ Node + Express + Prisma (PostgreSQL). Handles rider accounts and sign-in, create
 issues the short-lived LiveKit tokens the mobile app joins them with, so the LiveKit API secret
 never lives on a phone.
 
-The active Prisma migration history targets PostgreSQL. The original SQLite migrations are
-preserved unchanged under `prisma/sqlite-migrations-archive` for provenance only; Prisma does not
-deploy that archive. Do not use `prisma db push` as a substitute for reviewed migrations.
+The Prisma migration history targets PostgreSQL. Schema changes always go through a reviewed
+migration (`npm run prisma:migrate:dev`), never `prisma db push`.
 
 ```sh
 npm ci
 cp .env.example .env      # then replace DATABASE_URL with a PostgreSQL URL and fill in the rest
+npm run prisma:migrate:deploy
 npm run dev               # tsx watch
 npm run build && npm start
 ```
+
+## Scripts
+
+| Script                          | Purpose                                                        |
+| ------------------------------- | -------------------------------------------------------------- |
+| `npm run dev`                   | Start with reload on change                                    |
+| `npm run build` / `npm start`   | Compile to `dist/` and run it                                  |
+| `npm run lint`                  | ESLint                                                         |
+| `npm run typecheck`             | TypeScript, including tests                                    |
+| `npm run format` / `format:check` | Prettier                                                     |
+| `npm run test:unit`             | Unit tests in `src/**/*.test.ts` (no database needed)          |
+| `npm run test:coverage`         | Unit tests with an 85% line/branch/function threshold          |
+| `npm run test:integration`      | HTTP + PostgreSQL tests in `test/integration` (see below)      |
+| `npm test`                      | Unit, then integration tests                                   |
+| `npm run prisma:migrate:dev`    | Create a migration from a schema change (development only)     |
+| `npm run prisma:migrate:deploy` | Apply committed migrations (deployments, CI)                   |
+
+## Operations
+
+- **Health checks:** `GET /health` (process is up) and `GET /health/ready` (database reachable,
+  `503` otherwise). Point the platform's health check at `/health/ready`.
+- **Logging:** one JSON object per line on stdout/stderr with `timestamp`, `level`, `event` and,
+  for requests, the `requestId`. Set `LOG_LEVEL` to `debug`, `info` (default), `warn`, `error` or
+  `fatal`. Headers, query strings, bodies, tokens and database credentials are never logged.
+- **Shutdown:** `SIGTERM` and `SIGINT` stop accepting connections, finish in-flight requests and
+  disconnect from the database, forcing an exit after `SHUTDOWN_TIMEOUT_MS` (default 10 s).
+- **Configuration** is validated at startup; the process exits with a `server_config_invalid` log
+  line when anything required is missing or malformed.
 
 ## PostgreSQL migration history
 
@@ -43,7 +71,7 @@ The route integration tests require a dedicated, isolated PostgreSQL database su
 The database name must begin with `ridezz_test`, for example:
 
 ```sh
-TEST_DATABASE_URL=postgresql://user:password@localhost:5432/ridezz_test npm test
+TEST_DATABASE_URL=postgresql://user:password@localhost:5432/ridezz_test npm run test:integration
 ```
 
 Names such as `ridezz_test_local` and `ridezz_test_ci` are also accepted. The test setup verifies
@@ -55,18 +83,7 @@ use `db push` or `migrate reset`.
 
 ## Authentication
 
-| Route | Auth | Purpose |
-|---|---|---|
-| `POST /api/auth/register` (`/signup`) | – | `{ name, email, password }` -> `{ token, user }`. Gmail addresses only, password 8-72 bytes. |
-| `POST /api/auth/login` | – | `{ email, password }` -> `{ token, user }`. |
-| `POST /api/auth/google` | – | `{ idToken, mode }` from Google Sign-In -> `{ token, user }`. `mode` is `"login"` (default: existing accounts only, else 404 `ACCOUNT_NOT_FOUND` and nothing is created) or `"signup"` (finds or creates). |
-| `GET /api/auth/google/config` | – | `{ clientId }` the app must request its Google token for. |
-| `GET /api/auth/me` | Bearer | The signed-in rider. |
-| `GET /api/user/profile` | Bearer | `{ user }` with the rider's permanent `roomCode` (assigned now if they have none). |
-| `POST /api/rooms/create`, `/join` | Bearer | Room + LiveKit token. `create` hosts the rider's own permanent room. |
-
-`user` is `{ id, email, name, emailVerified, roomCode }`. Send `Authorization: Bearer <token>` on protected
-routes; tokens last 30 days.
+The full request/response reference is in [`docs/api.md`](../docs/api.md). Tokens last 30 days.
 
 - **Passwords** are stored only as bcrypt hashes (cost 10).
 - **Email + password accounts are unverified** (`emailVerified: false`): a Gmail-shaped address
@@ -91,8 +108,8 @@ never changed.
   `User.roomCode` catches a race between two sign-ups, which simply draw again.
 
 Because the code is short and permanent, anyone signed in who learns it can join that rider's
-voice channel at any time, and 90,000 codes can be tried. Rate limiting joins, or letting a host
-approve joiners, would close that; neither exists yet.
+voice channel at any time. Joins share the per-IP auth rate limit, which slows guessing the 90,000
+codes but does not stop a distributed attempt; letting a host approve joiners would close that.
 
 ## Restricting who can use it
 

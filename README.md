@@ -1,86 +1,81 @@
 # Ridezz
 
-Ridezz is a budget motorcycle group-intercom app. Up to 10 riders join one
-persistent voice room and talk continuously over mobile data/Wi-Fi, while the
-phone stays locked in a pocket and audio routes through whatever the rider is
-already wearing (Bluetooth helmet headset, Bluetooth earbuds, wired
-earphones, or the phone speaker/mic).
+Ridezz is a group intercom app for motorcycle riders. Up to 10 riders join one ride room with a
+5-digit code and talk hands-free over LiveKit voice while the phone stays in a pocket. Audio goes
+through whatever the rider wears: a Bluetooth helmet headset, earbuds, wired earphones or the
+phone itself. The app also shares live positions and a ride destination, and raises hazard,
+hard-braking and crash alerts. When mobile data drops, alerts keep moving rider to rider over
+Google Nearby Connections.
 
-Bluetooth in this app is **only** an audio accessory connection — it is never
-used for rider-to-rider networking. All rider-to-rider audio travels over
-WebRTC via LiveKit.
+[![CI](https://github.com/vitheshakula/Ridezz/actions/workflows/ci.yml/badge.svg)](https://github.com/vitheshakula/Ridezz/actions/workflows/ci.yml)
+[![Security](https://github.com/vitheshakula/Ridezz/actions/workflows/security.yml/badge.svg)](https://github.com/vitheshakula/Ridezz/actions/workflows/security.yml)
 
-## Architecture
+## Repository layout
+
+| Path                | Contents                                                                |
+| ------------------- | ----------------------------------------------------------------------- |
+| `mobile/`           | React Native (TypeScript) Android app with Kotlin native modules        |
+| `server/`           | Node.js + Express + Prisma (PostgreSQL) API: accounts, rooms, LiveKit tokens |
+| `docs/api.md`       | HTTP API reference                                                      |
+| `docs/architecture` | Architecture overview and design notes                                  |
+| `docs/deployment.md`| Deployment, rollback and operations                                     |
+| `docs/history`      | Earlier project status reports and audits, kept for reference           |
+| `.github/`          | CI, security scanning, Dependabot and pull request template             |
+
+## How it fits together
 
 ```
-Ridezz/
-├── mobile/   React Native (TypeScript) Android-first app
-├── server/   Node.js + TypeScript backend (LiveKit token issuance)
+ Android app ──HTTPS──▶ Ridezz server ──▶ PostgreSQL
+     │                      │
+     │                      └─ issues short-lived LiveKit tokens
+     ├──WebRTC──▶ LiveKit Cloud (voice, location, hazard data)
+     └──Nearby Connections──▶ other riders' phones (offline alerts)
 ```
 
-- **mobile/** — Bare React Native app (not Expo Go) so native WebRTC and
-  background-audio behavior work correctly. Uses LiveKit's React Native SDK
-  (`@livekit/react-native`, `@livekit/react-native-webrtc`, `livekit-client`)
-  for realtime audio over WebRTC.
-- **server/** — Will issue short-lived LiveKit access tokens so API secrets
-  never live in the mobile app. Not built out yet; the mobile app currently
-  targets LiveKit's development token flow for early bring-up.
-- **LiveKit Cloud** — hosts the SFU/media infrastructure. No custom WebRTC
-  SFU is implemented in this repo.
+The LiveKit API secret lives only on the server; the app receives short-lived room tokens. See
+[`docs/architecture/overview.md`](docs/architecture/overview.md) for the design decisions.
 
-## Current MVP scope
+## Getting started
 
-1. Enter rider name
-2. Enter/join a room
-3. Continuous full-duplex voice for up to 10 riders
-4. Large mute/unmute button
-5. Connected rider list
-6. Connection state: Connected / Reconnecting / Disconnected
-7. Automatic reconnection where supported
-8. Audio continues while the phone is locked/backgrounded
-9. Bluetooth/wired/system audio routing
-10. Leave ride
+Prerequisites: Node.js 22 (`.nvmrc`), PostgreSQL 16, a LiveKit project, and for the app JDK 17
+plus the Android SDK.
 
-Explicitly out of scope for now: accounts/signup, a database, maps,
-messaging, GPS tracking, SOS, social features, and ride history.
+1. **Server**
 
-See [PROJECT_STATUS.md](PROJECT_STATUS.md) for what's actually done.
+   ```sh
+   cd server
+   npm ci
+   cp .env.example .env
+   npm run prisma:migrate:deploy
+   npm run dev
+   ```
 
-## Local development setup
+   Fill in `.env` first; every variable is described in [`server/README.md`](server/README.md).
 
-Prerequisites:
+2. **Mobile app**
 
-- Node.js and npm
-- Android SDK (`ANDROID_HOME` / `ANDROID_SDK_ROOT`) with an installed
-  platform + build-tools, and either a device or emulator
-- A JDK compatible with the installed Android Gradle Plugin (currently
-  verify against the version in `mobile/android`)
+   ```sh
+   cd mobile
+   npm ci
+   cp .env.dev.example .env.dev
+   npm start
+   npm run android
+   ```
 
-Install and run the mobile app:
+   The app has `dev`, `staging` and `prod` environments; see [`mobile/README.md`](mobile/README.md).
+
+## Quality checks
+
+Each package runs the same checks locally and in CI:
 
 ```sh
-cd mobile
-npm install
-npx react-native run-android
+npm run format:check && npm run lint && npm run typecheck && npm run test:coverage
 ```
 
-## Planned LiveKit integration
+The server also has `npm run test:integration`, which needs a dedicated PostgreSQL test database.
 
-The mobile app depends on:
+## Contributing
 
-- `@livekit/react-native` — React Native SDK / room APIs
-- `@livekit/react-native-webrtc` — native WebRTC bindings
-- `livekit-client` — core LiveKit client used by the RN SDK
-
-Joining a real room requires a LiveKit access token, generated either via
-LiveKit Cloud's development token flow (short-term, for bring-up only) or by
-the `server/` token service (production path). LiveKit API secrets must
-never be embedded in the mobile app — only short-lived tokens are sent to
-clients.
-
-## Android-first testing strategy
-
-The first real milestone is two Android phones, on separate mobile-data
-connections, joining the same room, talking simultaneously over
-earbuds/headsets, muting/unmuting, and continuing to work with both screens
-locked. iOS is not a target until the Android path is proven.
+Read [CONTRIBUTING.md](CONTRIBUTING.md) for the branching model, commit style and review rules,
+and [SECURITY.md](SECURITY.md) for reporting vulnerabilities. Changes are recorded in
+[CHANGELOG.md](CHANGELOG.md).
