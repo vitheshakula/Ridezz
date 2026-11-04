@@ -1,3 +1,5 @@
+import { ROUTING_URL } from '../config/appConfig';
+
 export interface RoadRoute {
   coordinates: Array<[number, number]>;
   distanceMeters: number;
@@ -6,7 +8,6 @@ export interface RoadRoute {
 
 export type RoadRouteResult = { ok: true; route: RoadRoute } | { ok: false; reason: string };
 
-const OSRM_BASE_URL = 'https://router.project-osrm.org/route/v1/driving';
 const FETCH_TIMEOUT_MS = 8000;
 
 export async function fetchRoadRouteDetailed(
@@ -16,7 +17,7 @@ export async function fetchRoadRouteDetailed(
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const url = `${OSRM_BASE_URL}/${from.longitude},${from.latitude};${to.longitude},${to.latitude}?overview=full&geometries=geojson`;
+    const url = `${ROUTING_URL}/${from.longitude},${from.latitude};${to.longitude},${to.latitude}?overview=full&geometries=geojson`;
     const response = await fetch(url, { signal: controller.signal });
     if (!response.ok) {
       return { ok: false, reason: `Routing service returned HTTP ${response.status}` };

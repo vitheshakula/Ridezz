@@ -104,6 +104,9 @@ import {
   registerRideConnectivityDevMenu,
   startAppRideMeshSession,
 } from '../services/rideConnectivityService';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('RideScreen');
 
 const MESH_FALLBACK_DELAY_MS = 3000;
 const HAZARD_DUCK_VOLUME = 0.2;
@@ -185,7 +188,7 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
         });
         await AudioSession.startAudioSession();
       } catch (err) {
-        console.warn('AudioSession initialization error:', err);
+        log.warn('AudioSession initialization error:', err);
       }
     };
 
@@ -783,7 +786,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       await localParticipant.setMicrophoneEnabled(nextEnabled);
       micWantedRef.current = nextEnabled;
     } catch (err: any) {
-      console.warn('Mute toggle error:', err);
+      log.warn('Mute toggle error:', err);
       Alert.alert('Microphone Notice', err.message || 'Unable to toggle mute.');
     }
   }, [room.state, localParticipant, isMicrophoneEnabled]);

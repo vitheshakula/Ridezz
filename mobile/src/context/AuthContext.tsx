@@ -9,6 +9,9 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { TOKEN_KEY, type RiderUser } from '../services/AuthService';
 import { parseStoredUser } from '../utils/authStorage';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Auth');
 
 export type { RiderUser };
 
@@ -42,7 +45,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setUser(restoredUser);
         }
       } catch (error) {
-        console.error('Failed to restore auth session:', error);
+        log.error('Failed to restore auth session:', error);
       } finally {
         setIsLoading(false);
       }
@@ -58,7 +61,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setToken(newToken);
       setUser(userData);
     } catch (error) {
-      console.error('Failed to persist login session:', error);
+      log.error('Failed to persist login session:', error);
     }
   };
 
@@ -67,7 +70,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     try {
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
     } catch (error) {
-      console.error('Failed to persist updated profile:', error);
+      log.error('Failed to persist updated profile:', error);
     }
   }, []);
 
@@ -78,7 +81,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setToken(null);
       setUser(null);
     } catch (error) {
-      console.error('Failed to clear auth session:', error);
+      log.error('Failed to clear auth session:', error);
     }
   };
 

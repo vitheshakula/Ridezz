@@ -29,6 +29,9 @@ import { useRoomCode } from '../hooks/useRoomCode';
 import { useDestinationSuggestions } from '../hooks/useDestinationSuggestions';
 import { DestinationSuggestions } from '../components/DestinationSuggestions';
 import { isRoomCode, ROOM_CODE_LENGTH, sanitizeRoomCodeInput } from '../utils/roomCode';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('JoinScreen');
 
 export interface RideSession {
   serverUrl: string;
@@ -80,7 +83,7 @@ async function requestAllRidePermissions(): Promise<boolean> {
 
     return micGranted;
   } catch (err) {
-    console.warn('Failed to prompt permissions:', err);
+    log.warn('Failed to prompt permissions:', err);
     return false;
   }
 }

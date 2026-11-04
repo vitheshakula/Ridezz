@@ -20,6 +20,9 @@ import {
   type RiderLocationState,
 } from '../utils/riderLocation';
 import { logDiagnosticEvent } from '../services/diagnosticsLog';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('RideLoc');
 
 const WATCH_OPTIONS = {
   enableHighAccuracy: true,
@@ -73,9 +76,7 @@ export function useRiderLocations(
     const fix = latestFixRef.current;
     const identity = room.localParticipant?.identity || identityRef.current;
     if (!fix || !identity) {
-      console.log(
-        `[RideLoc] publishCurrentFix skipped: hasFix=${!!fix} identity=${identity || '(none)'}`,
-      );
+      log.debug(`publishCurrentFix skipped: hasFix=${!!fix} identity=${identity || '(none)'}`);
       return;
     }
     const payload = { ...fix, timestamp: Date.now() };
@@ -84,8 +85,8 @@ export function useRiderLocations(
     );
     room.localParticipant
       .publishData(encodeLocationPayload(payload), { reliable: true, topic: LOCATION_TOPIC })
-      .then(() => console.log(`[RideLoc] publishCurrentFix sent for ${identity}`))
-      .catch(err => console.warn(`[RideLoc] publishCurrentFix FAILED for ${identity}:`, err));
+      .then(() => log.debug(`publishCurrentFix sent for ${identity}`))
+      .catch(err => log.warn(`publishCurrentFix FAILED for ${identity}:`, err));
   }, [room]);
 
   useEffect(() => {
@@ -250,16 +251,16 @@ export function useRiderLocations(
       if (newState !== ConnectionState.Connected || cancelled) {
         return;
       }
-      console.log(
-        `[RideLoc] ConnectionStateChanged -> Connected (identity=${
+      log.debug(
+        `ConnectionStateChanged -> Connected (identity=${
           room.localParticipant?.identity || identityRef.current
         })`,
       );
       publishCurrentFix();
       room.localParticipant
         .publishData(new Uint8Array(0), { reliable: true, topic: LOCATION_REQUEST_TOPIC })
-        .then(() => console.log('[RideLoc] location-request broadcast sent'))
-        .catch(err => console.warn('[RideLoc] location-request broadcast FAILED:', err));
+        .then(() => log.debug('location-request broadcast sent'))
+        .catch(err => log.warn('location-request broadcast FAILED:', err));
     };
     room.on(RoomEvent.ConnectionStateChanged, handleConnectionStateChanged);
 
@@ -286,9 +287,7 @@ export function useRiderLocations(
       topic?: string,
     ) {
       if (topic === LOCATION_REQUEST_TOPIC) {
-        console.log(
-          `[RideLoc] location-request received from ${participant?.identity ?? '(unknown)'}`,
-        );
+        log.debug(`location-request received from ${participant?.identity ?? '(unknown)'}`);
         publishCurrentFix();
         return;
       }
@@ -297,17 +296,17 @@ export function useRiderLocations(
       }
       const decoded = decodeLocationPayload(payload);
       if (!decoded) {
-        console.warn(`[RideLoc] location payload from ${participant.identity} failed to decode`);
+        log.warn(`location payload from ${participant.identity} failed to decode`);
         return;
       }
-      console.log(
-        `[RideLoc] location DataReceived from ${participant.identity}: ${decoded.lat.toFixed(
+      log.debug(
+        `location DataReceived from ${participant.identity}: ${decoded.lat.toFixed(
           5,
         )},${decoded.lng.toFixed(5)} age=${Date.now() - decoded.timestamp}ms`,
       );
       setState(prev => {
         if (prev[participant.identity] && !prev[participant.identity].connected) {
-          console.log(`[RideLoc] ${participant.identity} resumed after being marked disconnected`);
+          log.debug(`${participant.identity} resumed after being marked disconnected`);
           logDiagnosticEvent(
             'remote_location_resumed',
             `${participant.name || participant.identity} sending location again`,
@@ -322,7 +321,7 @@ export function useRiderLocations(
     }
 
     function handleDisconnected(participant: RemoteParticipant) {
-      console.log(`[RideLoc] ParticipantDisconnected: ${participant.identity}`);
+      log.debug(`ParticipantDisconnected: ${participant.identity}`);
       logDiagnosticEvent(
         'remote_participant_disconnected',
         `${participant.name || participant.identity} disconnected`,
@@ -331,7 +330,7 @@ export function useRiderLocations(
     }
 
     function handleConnected(participant: RemoteParticipant) {
-      console.log(`[RideLoc] ParticipantConnected: ${participant.identity}`);
+      log.debug(`ParticipantConnected: ${participant.identity}`);
     }
 
     room.on(RoomEvent.DataReceived, handleData);

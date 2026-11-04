@@ -31,6 +31,9 @@ import {
   type RideMeshSessionCallbacks,
   type RideMeshSessionOwner,
 } from './rideMeshSession';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('RideConnectivity');
 
 const RIDE_CONNECTIVITY_DIAGNOSTICS = true;
 
@@ -39,9 +42,7 @@ export function logRideConnectivity(line: string): void {
     return;
   }
   logDiagnosticEvent('mesh_protocol', line);
-  if (__DEV__) {
-    console.log(`[RideConnectivity] ${line}`);
-  }
+  log.debug(line);
 }
 
 export function createAppRideNodeIdentity(): RideNodeIdentity {

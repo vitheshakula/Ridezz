@@ -1,5 +1,8 @@
 import { DeviceEventEmitter } from 'react-native';
 import { isAnnouncementEcho, parseSpeechPayload } from './SpeechHazardService';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('Jarvis');
 
 const WAKE_PHRASE = 'send message';
 
@@ -37,7 +40,7 @@ export function startJarvisVoice(options: JarvisVoiceOptions): () => void {
     dictationTimeoutMs = JARVIS_DICTATION_TIMEOUT_MS,
   } = options;
 
-  console.log('[Jarvis] listener started');
+  log.debug('listener started');
   type Phase = 'idle' | 'awaiting_dictation';
   let phase: Phase = 'idle';
   let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
@@ -51,7 +54,7 @@ export function startJarvisVoice(options: JarvisVoiceOptions): () => void {
   }
 
   function beginDictation(): void {
-    console.log('[Jarvis] wake phrase matched -> prompting for dictation');
+    log.debug('wake phrase matched -> prompting for dictation');
     phase = 'awaiting_dictation';
     clearTimer();
     Promise.resolve(announce('What message should I send?'))
@@ -61,7 +64,7 @@ export function startJarvisVoice(options: JarvisVoiceOptions): () => void {
           return;
         }
         timeoutTimer = setTimeout(() => {
-          console.log('[Jarvis] dictation timed out with nothing heard -> back to idle');
+          log.debug('dictation timed out with nothing heard -> back to idle');
           phase = 'idle';
           Promise.resolve(announce('Cancelled')).catch(() => {});
         }, dictationTimeoutMs);
@@ -72,7 +75,7 @@ export function startJarvisVoice(options: JarvisVoiceOptions): () => void {
     clearTimer();
     phase = 'idle';
     const message = sanitizeVoiceMessage(text);
-    console.log(`[Jarvis] dictation finished: "${message}"`);
+    log.debug(`dictation finished: "${message}"`);
     if (message) {
       onMessage(message);
     }
@@ -83,9 +86,9 @@ export function startJarvisVoice(options: JarvisVoiceOptions): () => void {
     if (source !== 'free' || !text) {
       return;
     }
-    console.log(`[Jarvis] heard (phase=${phase}): "${text}"`);
+    log.debug(`heard (phase=${phase}): "${text}"`);
     if (isEchoLikely() || isAnnouncementEcho(text)) {
-      console.log('[Jarvis] ignored -- echo guard or own announcement wording');
+      log.debug('ignored -- echo guard or own announcement wording');
       return;
     }
     if (phase === 'idle') {

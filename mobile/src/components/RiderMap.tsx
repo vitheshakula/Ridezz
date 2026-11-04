@@ -17,6 +17,9 @@ import { fetchRoadRouteDetailed, formatDuration, type RoadRoute } from '../servi
 import { brand, font, homeType } from '../homeTheme';
 import { FitIcon, FlagIcon, LocateIcon, MicIcon, MinusIcon, PlusIcon } from './HomeIcons';
 import { Logo } from './Logo';
+import { createLogger } from '../utils/logger';
+
+const log = createLogger('RiderMap');
 
 export interface RideDestination {
   name: string | null;
@@ -214,7 +217,7 @@ export default function RiderMap({
             destination: destinationLngLat,
           };
         } else {
-          console.warn(`Route unavailable: ${result.reason}`);
+          log.warn(`Route unavailable: ${result.reason}`);
           setRoadRoute(null);
           setRouteStatus('fallback');
           setRouteError(result.reason);
