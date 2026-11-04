@@ -5,10 +5,12 @@ import { describe, it } from 'node:test';
 import type { PrismaClient } from '@prisma/client';
 import express, { type Express } from 'express';
 import { createApp } from './app';
+import { GoogleUnavailableError } from './auth/google';
 import type { Env } from './config/env';
 import { asyncHandler, errorHandler, requestIdMiddleware } from './http';
 
 const TEST_ENV: Env = {
+  appEnv: 'test',
   port: 5000,
   logLevel: 'info',
   shutdownTimeoutMs: 10_000,
@@ -16,7 +18,7 @@ const TEST_ENV: Env = {
   googleClientId: null,
   allowedEmails: null,
   corsOrigins: null,
-  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100 },
+  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100, perAccountMax: 1000 },
   livekit: {
     apiKey: 'test-key',
     apiSecret: 'test-secret',
@@ -55,7 +57,7 @@ describe('HTTP fallthrough handling', () => {
         });
         assert.equal(response.status, 404);
         assert.match(response.headers.get('content-type') ?? '', /^application\/json\b/);
-        assert.deepEqual(await response.json(), { message: 'Not found.' });
+        assert.deepEqual(await response.json(), { message: 'Not found.', code: 'NOT_FOUND' });
       }
     });
   });
@@ -121,7 +123,7 @@ describe('HTTP security middleware', () => {
   });
 
   it('rate-limits sensitive auth and room-join routes with a generic JSON response', async () => {
-    const authRateLimit = { windowMs: 60_000, max: 2 };
+    const authRateLimit = { windowMs: 60_000, max: 2, perAccountMax: 1000 };
     await withServer(testApp({ authRateLimit }), async baseUrl => {
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await fetch(`${baseUrl}/api/auth/login`, {
@@ -140,6 +142,7 @@ describe('HTTP security middleware', () => {
       assert.match(limitedAuth.headers.get('content-type') ?? '', /^application\/json\b/);
       assert.deepEqual(await limitedAuth.json(), {
         message: 'Too many requests. Please try again later.',
+        code: 'RATE_LIMITED',
       });
 
       const anotherClient = await fetch(`${baseUrl}/api/auth/login`, {
@@ -160,6 +163,7 @@ describe('HTTP security middleware', () => {
       assert.equal(limitedJoin.status, 429);
       assert.deepEqual(await limitedJoin.json(), {
         message: 'Too many requests. Please try again later.',
+        code: 'RATE_LIMITED',
       });
     });
   });
@@ -172,7 +176,10 @@ describe('HTTP security middleware', () => {
         body: '{}',
       });
       assert.equal(normal.status, 400);
-      assert.deepEqual(await normal.json(), { message: 'Email and password are required.' });
+      assert.deepEqual(await normal.json(), {
+        message: 'Email and password are required.',
+        code: 'VALIDATION_FAILED',
+      });
 
       const oversized = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
@@ -180,7 +187,10 @@ describe('HTTP security middleware', () => {
         body: JSON.stringify({ value: 'x'.repeat(40 * 1024) }),
       });
       assert.equal(oversized.status, 413);
-      assert.deepEqual(await oversized.json(), { message: 'Invalid request.' });
+      assert.deepEqual(await oversized.json(), {
+        message: 'Invalid request.',
+        code: 'INVALID_REQUEST',
+      });
     });
   });
 
@@ -251,11 +261,17 @@ describe('central error handler', () => {
           headers: { 'x-request-id': 'error-test-id' },
         });
         assert.equal(unexpected.status, 500);
-        assert.deepEqual(await unexpected.json(), { message: 'Internal server error' });
+        assert.deepEqual(await unexpected.json(), {
+          message: 'Internal server error',
+          code: 'INTERNAL_ERROR',
+        });
 
         const clientError = await fetch(`${baseUrl}/client-error`);
         assert.equal(clientError.status, 422);
-        assert.deepEqual(await clientError.json(), { message: 'Invalid request.' });
+        assert.deepEqual(await clientError.json(), {
+          message: 'Invalid request.',
+          code: 'INVALID_REQUEST',
+        });
 
         const malformed = await fetch(`${baseUrl}/json`, {
           method: 'POST',
@@ -263,7 +279,10 @@ describe('central error handler', () => {
           body: '{not json',
         });
         assert.equal(malformed.status, 400);
-        assert.deepEqual(await malformed.json(), { message: 'Invalid request.' });
+        assert.deepEqual(await malformed.json(), {
+          message: 'Invalid request.',
+          code: 'INVALID_REQUEST',
+        });
       });
     } finally {
       console.error = originalConsoleError;
@@ -323,5 +342,68 @@ describe('health checks', () => {
     assert.equal(errorLines.length, 1);
     assert.equal(JSON.parse(errorLines[0]).event, 'health_database_unavailable');
     assert.equal(errorLines[0].includes('secret'), false);
+  });
+});
+
+describe('environment-aware CORS', () => {
+  it('refuses browser origins in production when CORS_ORIGINS is unset', async () => {
+    await withServer(testApp({ appEnv: 'production', corsOrigins: null }), async baseUrl => {
+      const browser = await fetch(`${baseUrl}/api/not-a-real-route`, {
+        headers: { origin: 'https://unknown.example' },
+      });
+      assert.equal(browser.headers.get('access-control-allow-origin'), null);
+
+      const native = await fetch(`${baseUrl}/api/not-a-real-route`);
+      assert.equal(native.status, 404);
+    });
+  });
+});
+
+describe('per-account sign-in limit', () => {
+  it('limits repeated attempts for one email across client addresses', async () => {
+    const authRateLimit = { windowMs: 60_000, max: 1000, perAccountMax: 2 };
+    await withServer(testApp({ authRateLimit }), async baseUrl => {
+      const attempt = (email: string, forwardedFor: string) =>
+        fetch(`${baseUrl}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-forwarded-for': forwardedFor },
+          body: JSON.stringify({ email, password: '' }),
+        });
+
+      assert.equal((await attempt('target@gmail.com', '198.51.100.1')).status, 400);
+      assert.equal((await attempt(' TARGET@gmail.com ', '198.51.100.2')).status, 400);
+      const limited = await attempt('target@gmail.com', '198.51.100.3');
+      assert.equal(limited.status, 429);
+      assert.equal(((await limited.json()) as { code: string }).code, 'RATE_LIMITED');
+
+      assert.equal((await attempt('someone.else@gmail.com', '198.51.100.3')).status, 400);
+    });
+  });
+});
+
+describe('Google sign-in when Google is unreachable', () => {
+  it('answers 503 SERVICE_UNAVAILABLE instead of blaming the rider', async () => {
+    const app = createApp({
+      prisma: {} as PrismaClient,
+      env: { ...TEST_ENV, googleClientId: 'client-id' },
+      verifyGoogleIdToken: async () => {
+        throw new GoogleUnavailableError(new Error('connect ETIMEDOUT'));
+      },
+    });
+    const originalConsoleError = console.error;
+    console.error = () => undefined;
+    try {
+      await withServer(app, async baseUrl => {
+        const response = await fetch(`${baseUrl}/api/v1/auth/google`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ idToken: 'token' }),
+        });
+        assert.equal(response.status, 503);
+        assert.equal(((await response.json()) as { code: string }).code, 'SERVICE_UNAVAILABLE');
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
   });
 });

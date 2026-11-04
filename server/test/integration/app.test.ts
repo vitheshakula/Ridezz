@@ -9,6 +9,7 @@ import { PrismaClient } from '@prisma/client';
 import { createApp } from '../../src/app';
 import type { GoogleIdentity, GoogleVerifier } from '../../src/auth/google';
 import { loadEnv } from '../../src/config/env';
+import { createLogger, setLogger } from '../../src/logger';
 import {
   createUserWithRoomCode,
   ensureRoomCode,
@@ -27,6 +28,8 @@ let testDatabaseUrl: string;
 
 const TEST_DATABASE_PREFIX = 'ridezz_test';
 const SUITE_AUTH_RATE_LIMIT_MAX = 10_000;
+
+setLogger(createLogger('error'));
 
 interface TestDatabaseConfig {
   url: string;
@@ -164,6 +167,7 @@ before(async () => {
     LIVEKIT_API_SECRET: 'livekit-secret-'.padEnd(40, 'y'),
     LIVEKIT_URL: 'wss://livekit.test',
     AUTH_RATE_LIMIT_MAX: String(SUITE_AUTH_RATE_LIMIT_MAX),
+    AUTH_ACCOUNT_RATE_LIMIT_MAX: String(SUITE_AUTH_RATE_LIMIT_MAX),
   });
   const app = createApp({ prisma, env, verifyGoogleIdToken: fakeVerifier });
   server = await new Promise<Server>(resolve => {
@@ -355,7 +359,7 @@ describe('POST /api/auth/login', () => {
       body: '{not json',
     });
     assert.equal(res.status, 400);
-    assert.deepEqual(await res.json(), { message: 'Invalid request.' });
+    assert.deepEqual(await res.json(), { message: 'Invalid request.', code: 'INVALID_REQUEST' });
   });
 });
 
@@ -370,7 +374,7 @@ describe('token protection (Passport JWT)', () => {
   it('rejects a request with no token', async () => {
     const res = await get('/api/auth/me');
     assert.equal(res.status, 401);
-    assert.deepEqual(res.body, { message: 'Authentication required.' });
+    assert.deepEqual(res.body, { message: 'Authentication required.', code: 'UNAUTHENTICATED' });
   });
 
   it('rejects garbage, a wrong scheme, and an empty bearer', async () => {
@@ -1488,5 +1492,22 @@ describe('permanent room codes', () => {
       const room = await prisma.room.findUniqueOrThrow({ where: { code: rider.user.roomCode } });
       assert.equal(room.hostId, owner.user.id, 'the existing room is untouched');
     });
+  });
+});
+
+describe('versioned API prefix', () => {
+  it('serves the same endpoints under /api/v1 as under /api', async () => {
+    const email = nextEmail();
+    const signup = await post('/api/v1/auth/signup', {
+      name: 'Versioned',
+      email,
+      password: 'longenough1',
+    });
+    assert.equal(signup.status, 201);
+
+    const legacy = await get('/api/auth/me', signup.body.token);
+    const versioned = await get('/api/v1/auth/me', signup.body.token);
+    assert.equal(legacy.status, 200);
+    assert.deepEqual(versioned.body, legacy.body);
   });
 });

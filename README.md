@@ -16,8 +16,11 @@ Google Nearby Connections.
 | ------------------- | ----------------------------------------------------------------------- |
 | `mobile/`           | React Native (TypeScript) Android app with Kotlin native modules        |
 | `server/`           | Node.js + Express + Prisma (PostgreSQL) API: accounts, rooms, LiveKit tokens |
-| `docs/api.md`       | HTTP API reference                                                      |
-| `docs/architecture` | Architecture overview and design notes                                  |
+| `docs/api.md`       | HTTP API reference (OpenAPI at `/api/v1/openapi.json`)                  |
+| `docs/database.md`  | Schema, indexes, migrations, backups                                    |
+| `docs/backend-checklist.md` | Backend best-practice compliance report                        |
+| `render.yaml`       | Staging and production hosting blueprint                                |
+| `docs/architecture` | Architecture overview, backend design and decisions, connectivity notes |
 | `docs/deployment.md`| Deployment, rollback and operations                                     |
 | `docs/history`      | Earlier project status reports and audits, kept for reference           |
 | `.github/`          | CI, security scanning, Dependabot and pull request template             |

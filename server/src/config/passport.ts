@@ -4,6 +4,7 @@ import passport from 'passport';
 import { ExtractJwt, Strategy as JwtStrategy } from 'passport-jwt';
 import { isEmailAllowed } from '../auth/access';
 import { toAuthUser, type AuthUser } from '../auth/user';
+import { ErrorCode, sendError } from '../errors';
 
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace -- Express request types can only be augmented through its namespace
@@ -12,6 +13,14 @@ declare global {
     interface User extends AuthUser {}
   }
 }
+
+const AUTH_USER_FIELDS = {
+  id: true,
+  email: true,
+  riderName: true,
+  emailVerified: true,
+  roomCode: true,
+} as const;
 
 export type PassportInstance = InstanceType<typeof passport.Passport>;
 
@@ -37,7 +46,9 @@ export function configurePassport(
       async (payload: TokenPayload, done) => {
         try {
           const id = payload.sub ?? payload.userId;
-          const user = id ? await prisma.user.findUnique({ where: { id } }) : null;
+          const user = id
+            ? await prisma.user.findUnique({ where: { id }, select: AUTH_USER_FIELDS })
+            : null;
           done(null, user && isEmailAllowed(allowedEmails, user.email) ? toAuthUser(user) : false);
         } catch (err) {
           done(err, false);
@@ -55,7 +66,7 @@ export function createRequireAuth(instance: PassportInstance): RequestHandler {
         return next(err);
       }
       if (!user) {
-        return res.status(401).json({ message: 'Authentication required.' });
+        return sendError(res, 401, ErrorCode.Unauthenticated, 'Authentication required.');
       }
       req.user = user;
       next();

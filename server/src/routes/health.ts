@@ -2,6 +2,7 @@ import { Router } from 'express';
 import type { PrismaClient } from '@prisma/client';
 import { logger } from '../logger';
 import { safeErrorDetails } from '../http';
+import { checkDatabase } from '../services/healthService';
 
 interface HealthRouterDeps {
   prisma: PrismaClient;
@@ -16,7 +17,7 @@ export function createHealthRouter({ prisma }: HealthRouterDeps): Router {
 
   router.get('/ready', async (_req, res) => {
     try {
-      await prisma.$queryRaw`SELECT 1`;
+      await checkDatabase(prisma);
       res.json({ status: 'ok', database: 'ok' });
     } catch (error) {
       logger().error('health_database_unavailable', safeErrorDetails(error));

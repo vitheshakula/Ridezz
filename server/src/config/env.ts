@@ -1,6 +1,9 @@
 import { isLogLevel, type LogLevel } from '../logger';
 
+export type AppEnv = 'development' | 'test' | 'staging' | 'production';
+
 export interface Env {
+  appEnv: AppEnv;
   port: number;
   logLevel: LogLevel;
   shutdownTimeoutMs: number;
@@ -8,7 +11,7 @@ export interface Env {
   googleClientId: string | null;
   allowedEmails: ReadonlySet<string> | null;
   corsOrigins: ReadonlySet<string> | null;
-  authRateLimit: { windowMs: number; max: number };
+  authRateLimit: { windowMs: number; max: number; perAccountMax: number };
   livekit: { apiKey: string; apiSecret: string; url: string };
 }
 
@@ -18,6 +21,8 @@ const DEFAULT_LOG_LEVEL: LogLevel = 'info';
 const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_AUTH_RATE_LIMIT_MAX = 100;
+const DEFAULT_AUTH_ACCOUNT_RATE_LIMIT_MAX = 10;
+const APP_ENVS: readonly AppEnv[] = ['development', 'test', 'staging', 'production'];
 
 function requireNonBlank(source: NodeJS.ProcessEnv, name: string): string {
   const value = source[name]?.trim();
@@ -86,6 +91,18 @@ function validateLiveKitUrl(raw: string): string {
   return raw;
 }
 
+function parseAppEnv(raw: string | undefined): AppEnv {
+  const value = raw?.trim().toLowerCase();
+  if (!value) {
+    return 'development';
+  }
+  const appEnv = APP_ENVS.find(candidate => candidate === value);
+  if (!appEnv) {
+    throw new Error('APP_ENV must be one of development, test, staging or production.');
+  }
+  return appEnv;
+}
+
 function parseLogLevel(raw: string | undefined): LogLevel {
   const value = raw?.trim().toLowerCase();
   if (!value) {
@@ -134,6 +151,7 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const livekitUrl = validateLiveKitUrl(requireNonBlank(source, 'LIVEKIT_URL'));
 
   return {
+    appEnv: parseAppEnv(source.APP_ENV),
     port: parsePort(source.PORT),
     logLevel: parseLogLevel(source.LOG_LEVEL),
     shutdownTimeoutMs: parsePositiveInteger(
@@ -155,6 +173,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
         source.AUTH_RATE_LIMIT_MAX,
         DEFAULT_AUTH_RATE_LIMIT_MAX,
         'AUTH_RATE_LIMIT_MAX',
+      ),
+      perAccountMax: parsePositiveInteger(
+        source.AUTH_ACCOUNT_RATE_LIMIT_MAX,
+        DEFAULT_AUTH_ACCOUNT_RATE_LIMIT_MAX,
+        'AUTH_ACCOUNT_RATE_LIMIT_MAX',
       ),
     },
     livekit: {

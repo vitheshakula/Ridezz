@@ -31,6 +31,46 @@ npm run build && npm start
 | `npm run prisma:migrate:dev`    | Create a migration from a schema change (development only)     |
 | `npm run prisma:migrate:deploy` | Apply committed migrations (deployments, CI)                   |
 
+## Configuration
+
+All settings come from environment variables (`.env` locally, the platform's secret store when
+deployed), are read only in `src/config/env.ts`, and are validated at startup.
+
+| Variable                      | Required | Default       | Purpose                                                        |
+| ----------------------------- | -------- | ------------- | -------------------------------------------------------------- |
+| `APP_ENV`                     | No       | `development` | `development`, `test`, `staging` or `production`               |
+| `JWT_SECRET`                  | Yes      |               | Signs login tokens; at least 32 characters                     |
+| `DATABASE_URL`                | Yes      |               | PostgreSQL URL; add `sslmode=require` and `connection_limit` as needed |
+| `LIVEKIT_API_KEY`             | Yes      |               | LiveKit project key                                            |
+| `LIVEKIT_API_SECRET`          | Yes      |               | LiveKit project secret                                         |
+| `LIVEKIT_URL`                 | Yes      |               | LiveKit WebSocket URL (`ws://` or `wss://`)                    |
+| `PORT`                        | No       | `5000`        | HTTP port                                                      |
+| `LOG_LEVEL`                   | No       | `info`        | `debug`, `info`, `warn`, `error` or `fatal`                    |
+| `SHUTDOWN_TIMEOUT_MS`         | No       | `10000`       | Forced exit after this long during shutdown                    |
+| `CORS_ORIGINS`                | No       |               | Comma-separated browser origins. Unset: any origin in development/test, none in staging/production |
+| `AUTH_RATE_LIMIT_WINDOW_MS`   | No       | `900000`      | Window for both rate limits                                    |
+| `AUTH_RATE_LIMIT_MAX`         | No       | `100`         | Sign-in/sign-up and room-join requests per IP per window       |
+| `AUTH_ACCOUNT_RATE_LIMIT_MAX` | No       | `10`          | Password sign-in attempts per email per window                 |
+| `ALLOWED_EMAILS`              | No       |               | Allow list; unset means any Gmail account                      |
+| `GOOGLE_CLIENT_ID`            | No       |               | Enables Google sign-in                                         |
+
+## Source layout
+
+| Path                 | Responsibility                                                       |
+| -------------------- | -------------------------------------------------------------------- |
+| `src/routes`         | Controllers: parse input, call a service, map the result to HTTP     |
+| `src/services`       | Business use cases on top of Prisma                                  |
+| `src/auth`, `src/rooms` | Pure domain rules: validation, tokens, room codes, destinations   |
+| `src/integrations`   | Shared helpers for external calls (retry with backoff and jitter)    |
+| `src/config`         | Environment parsing and Passport setup                               |
+| `src/errors.ts`      | Error codes and the `{ message, code }` error body                   |
+| `src/http.ts`        | Request IDs, request logging, central error handler                  |
+| `src/openapi.ts`     | OpenAPI 3.1 document, served at `/api/v1/openapi.json`               |
+| `test/integration`   | HTTP + PostgreSQL tests                                              |
+
+See [`docs/architecture/backend.md`](../docs/architecture/backend.md) for the design and
+[`docs/database.md`](../docs/database.md) for the schema.
+
 ## Operations
 
 - **Health checks:** `GET /health` (process is up) and `GET /health/ready` (database reachable,
@@ -83,7 +123,8 @@ use `db push` or `migrate reset`.
 
 ## Authentication
 
-The full request/response reference is in [`docs/api.md`](../docs/api.md). Tokens last 30 days.
+The full request/response reference is in [`docs/api.md`](../docs/api.md), and the machine-readable
+OpenAPI document is served at `GET /api/v1/openapi.json`. Tokens last 30 days.
 
 - **Passwords** are stored only as bcrypt hashes (cost 10).
 - **Email + password accounts are unverified** (`emailVerified: false`): a Gmail-shaped address

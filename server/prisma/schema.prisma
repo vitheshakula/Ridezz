@@ -29,4 +29,6 @@ model Room {
   destinationName String?
   destinationLat  Float?
   destinationLng  Float?
+
+  @@index([hostId])
 }

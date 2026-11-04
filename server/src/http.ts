@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from 'express';
+import { ErrorCode, sendError } from './errors';
 import { logger } from './logger';
 
 declare global {
@@ -77,14 +78,14 @@ export function asyncHandler(
 }
 
 export const notFoundHandler: RequestHandler = (_req, res) => {
-  res.status(404).json({ message: 'Not found.' });
+  sendError(res, 404, ErrorCode.NotFound, 'Not found.');
 };
 
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
   if (typeof err?.status === 'number' && err.status >= 400 && err.status < 500) {
-    res.status(err.status).json({ message: 'Invalid request.' });
+    sendError(res, err.status, ErrorCode.InvalidRequest, 'Invalid request.');
     return;
   }
   logRequestError(req, 'http_error', err);
-  res.status(500).json({ message: 'Internal server error' });
+  sendError(res, 500, ErrorCode.InternalError, 'Internal server error');
 };

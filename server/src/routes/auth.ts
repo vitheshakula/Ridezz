@@ -1,4 +1,5 @@
 import { Router, type RequestHandler } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type { PrismaClient, User } from '@prisma/client';
 import {
   emailError,
@@ -9,9 +10,11 @@ import {
 } from '../auth/validation';
 import { isEmailAllowed, NOT_ALLOWED_MESSAGE } from '../auth/access';
 import { signAuthToken } from '../auth/tokens';
-import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
+import { GoogleUnavailableError, type GoogleIdentity, type GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
+import { ErrorCode, sendError } from '../errors';
 import { asyncHandler, logRequestError } from '../http';
+import { logger } from '../logger';
 import {
   loginWithPassword,
   prepareCurrentUser,
@@ -25,6 +28,26 @@ interface AuthRouterDeps {
   env: Env;
   requireAuth: RequestHandler;
   verifyGoogleIdToken?: GoogleVerifier;
+}
+
+const GOOGLE_DISABLED_MESSAGE = 'Google sign-in is not configured on the server.';
+
+function createAccountLoginLimiter(env: Env): RequestHandler {
+  return rateLimit({
+    windowMs: env.authRateLimit.windowMs,
+    limit: env.authRateLimit.perAccountMax,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    skip: req => typeof req.body?.email !== 'string',
+    keyGenerator: req => `login:${normalizeEmail(req.body.email)}`,
+    handler: (_req, res) =>
+      sendError(
+        res,
+        429,
+        ErrorCode.RateLimited,
+        'Too many sign-in attempts for this account. Please try again later.',
+      ),
+  });
 }
 
 export function createAuthRouter({
@@ -45,60 +68,84 @@ export function createAuthRouter({
     asyncHandler(async (req, res) => {
       const { name, email, password } = req.body ?? {};
       if (typeof name !== 'string' || typeof email !== 'string' || typeof password !== 'string') {
-        return res.status(400).json({ message: 'Name, email and password are required.' });
+        return sendError(
+          res,
+          400,
+          ErrorCode.ValidationFailed,
+          'Name, email and password are required.',
+        );
       }
       const cleanName = name.trim();
       const cleanEmail = normalizeEmail(email);
       const problem = nameError(cleanName) ?? emailError(cleanEmail) ?? passwordError(password);
       if (problem) {
-        return res.status(400).json({ message: problem });
+        return sendError(res, 400, ErrorCode.ValidationFailed, problem);
       }
       if (!isEmailAllowed(env.allowedEmails, cleanEmail)) {
-        return res.status(403).json({ message: NOT_ALLOWED_MESSAGE });
+        return sendError(res, 403, ErrorCode.NotAllowed, NOT_ALLOWED_MESSAGE);
       }
 
-      const taken = { message: 'An account with this email already exists.' };
       const result = await registerWithPassword(prisma, {
         riderName: cleanName,
         email: cleanEmail,
         password,
       });
       if (result.kind === 'duplicate') {
-        return res.status(409).json(taken);
+        return sendError(
+          res,
+          409,
+          ErrorCode.EmailTaken,
+          'An account with this email already exists.',
+        );
       }
+      logger().info('user_registered', {
+        requestId: req.requestId,
+        userId: result.user.id,
+        method: 'password',
+      });
       return res.status(201).json(await session(result.user));
     }),
   );
 
   router.post(
     '/login',
+    createAccountLoginLimiter(env),
     asyncHandler(async (req, res) => {
       const { email, password } = req.body ?? {};
       if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
-        return res.status(400).json({ message: 'Email and password are required.' });
+        return sendError(res, 400, ErrorCode.ValidationFailed, 'Email and password are required.');
       }
 
       const cleanEmail = normalizeEmail(email);
       if (!isEmailAllowed(env.allowedEmails, cleanEmail)) {
-        return res.status(403).json({ message: NOT_ALLOWED_MESSAGE });
+        return sendError(res, 403, ErrorCode.NotAllowed, NOT_ALLOWED_MESSAGE);
       }
 
       const result = await loginWithPassword(prisma, cleanEmail, password);
       if (result.kind === 'google_only') {
-        return res
-          .status(401)
-          .json({ message: 'This account uses Google sign-in. Tap "Continue with Google".' });
+        return sendError(
+          res,
+          401,
+          ErrorCode.GoogleOnlyAccount,
+          'This account uses Google sign-in. Tap "Continue with Google".',
+        );
       }
       if (result.kind === 'invalid_credentials') {
-        return res.status(401).json({ message: 'Invalid credentials.' });
+        logger().warn('user_sign_in_failed', { requestId: req.requestId, method: 'password' });
+        return sendError(res, 401, ErrorCode.InvalidCredentials, 'Invalid credentials.');
       }
+      logger().info('user_signed_in', {
+        requestId: req.requestId,
+        userId: result.user.id,
+        method: 'password',
+      });
       return res.status(200).json(await session(result.user));
     }),
   );
 
   router.get('/google/config', (_req, res) => {
     if (!env.googleClientId) {
-      return res.status(503).json({ message: 'Google sign-in is not configured on the server.' });
+      return sendError(res, 503, ErrorCode.GoogleSignInDisabled, GOOGLE_DISABLED_MESSAGE);
     }
     return res.json({ clientId: env.googleClientId });
   });
@@ -107,47 +154,82 @@ export function createAuthRouter({
     '/google',
     asyncHandler(async (req, res) => {
       if (!verifyGoogleIdToken) {
-        return res.status(503).json({ message: 'Google sign-in is not configured on the server.' });
+        return sendError(res, 503, ErrorCode.GoogleSignInDisabled, GOOGLE_DISABLED_MESSAGE);
       }
       const { idToken, mode = 'login' } = req.body ?? {};
       if (typeof idToken !== 'string' || !idToken) {
-        return res.status(400).json({ message: 'A Google ID token is required.' });
+        return sendError(res, 400, ErrorCode.ValidationFailed, 'A Google ID token is required.');
       }
       if (mode !== 'login' && mode !== 'signup') {
-        return res.status(400).json({ message: 'Mode must be "login" or "signup".' });
+        return sendError(res, 400, ErrorCode.ValidationFailed, 'Mode must be "login" or "signup".');
       }
 
       let identity: GoogleIdentity;
       try {
         identity = await verifyGoogleIdToken(idToken);
       } catch (err) {
+        if (err instanceof GoogleUnavailableError) {
+          logRequestError(req, 'google_unavailable', err.cause, 'error');
+          return sendError(
+            res,
+            503,
+            ErrorCode.ServiceUnavailable,
+            'Google sign-in is temporarily unavailable. Please try again shortly.',
+          );
+        }
         logRequestError(req, 'google_token_rejected', err, 'warn');
-        return res.status(401).json({ message: 'Google sign-in failed. Please try again.' });
+        return sendError(
+          res,
+          401,
+          ErrorCode.GoogleTokenRejected,
+          'Google sign-in failed. Please try again.',
+        );
       }
 
       const email = normalizeEmail(identity.email);
       if (!identity.emailVerified) {
-        return res.status(401).json({ message: 'Your Google email address is not verified.' });
+        return sendError(
+          res,
+          401,
+          ErrorCode.EmailNotVerified,
+          'Your Google email address is not verified.',
+        );
       }
       if (!isAllowedEmailDomain(email)) {
-        return res.status(403).json({ message: 'Only Gmail accounts are supported.' });
+        return sendError(
+          res,
+          403,
+          ErrorCode.EmailDomainNotSupported,
+          'Only Gmail accounts are supported.',
+        );
       }
       if (!isEmailAllowed(env.allowedEmails, email)) {
-        return res.status(403).json({ message: NOT_ALLOWED_MESSAGE });
+        return sendError(res, 403, ErrorCode.NotAllowed, NOT_ALLOWED_MESSAGE);
       }
 
       const result = await reconcileGoogleAccount(prisma, identity, email, mode);
       if (result.kind === 'not_found') {
-        return res.status(404).json({
-          message: 'No account found for this Google account. Create an account first.',
-          code: 'ACCOUNT_NOT_FOUND',
-        });
+        return sendError(
+          res,
+          404,
+          ErrorCode.AccountNotFound,
+          'No account found for this Google account. Create an account first.',
+        );
       }
       if (result.kind === 'conflict') {
-        return res
-          .status(409)
-          .json({ message: 'This email is already linked to a different Google account.' });
+        return sendError(
+          res,
+          409,
+          ErrorCode.GoogleAccountConflict,
+          'This email is already linked to a different Google account.',
+        );
       }
+      logger().info('user_signed_in', {
+        requestId: req.requestId,
+        userId: result.user.id,
+        method: 'google',
+        mode,
+      });
       return res.status(200).json(await session(result.user));
     }),
   );

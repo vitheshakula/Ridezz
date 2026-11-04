@@ -44,7 +44,7 @@ describe('loadEnv', () => {
     assert.equal(result.jwtSecret, SECRET);
     assert.equal(result.googleClientId, 'my-client-id');
     assert.deepEqual([...result.corsOrigins!], ['https://app.example', 'https://admin.example']);
-    assert.deepEqual(result.authRateLimit, { windowMs: 60000, max: 25 });
+    assert.deepEqual(result.authRateLimit, { windowMs: 60000, max: 25, perAccountMax: 10 });
     assert.deepEqual(result.livekit, { apiKey: 'k', apiSecret: 's', url: 'wss://x.example' });
   });
 
@@ -74,7 +74,7 @@ describe('loadEnv', () => {
   it('uses prototype-friendly defaults for CORS and rate limiting', () => {
     const result = loadEnv(env());
     assert.equal(result.corsOrigins, null);
-    assert.deepEqual(result.authRateLimit, { windowMs: 900000, max: 100 });
+    assert.deepEqual(result.authRateLimit, { windowMs: 900000, max: 100, perAccountMax: 10 });
   });
 });
 

@@ -9,6 +9,7 @@ import { errorHandler, notFoundHandler } from '../http';
 import { createRoomsRouter } from './rooms';
 
 const TEST_ENV: Env = {
+  appEnv: 'test',
   port: 5000,
   logLevel: 'info',
   shutdownTimeoutMs: 10_000,
@@ -16,7 +17,7 @@ const TEST_ENV: Env = {
   googleClientId: null,
   allowedEmails: null,
   corsOrigins: null,
-  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100 },
+  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100, perAccountMax: 1000 },
   livekit: {
     apiKey: 'test-key',
     apiSecret: 'test-secret',
@@ -90,7 +91,7 @@ describe('room-code validation', () => {
       for (const roomCode of ['', 'abcde', '1234', '123456', '12 34', '   ']) {
         const reply = await request(baseUrl, 'POST', '/api/rooms/join', { roomCode });
         assert.equal(reply.status, 400, JSON.stringify(roomCode));
-        assert.deepEqual(reply.body, { message: 'Invalid room code.' });
+        assert.deepEqual(reply.body, { message: 'Invalid room code.', code: 'VALIDATION_FAILED' });
       }
     });
 
@@ -114,7 +115,7 @@ describe('room-code validation', () => {
           destination,
         );
         assert.equal(reply.status, 400, roomCode);
-        assert.deepEqual(reply.body, { message: 'Invalid room code.' });
+        assert.deepEqual(reply.body, { message: 'Invalid room code.', code: 'VALIDATION_FAILED' });
       }
     });
 
@@ -132,11 +133,14 @@ describe('room-code validation', () => {
     await withServer(app, async baseUrl => {
       const join = await request(baseUrl, 'POST', '/api/rooms/join', { roomCode: ' 12345 ' });
       assert.equal(join.status, 404);
-      assert.deepEqual(join.body, { message: 'Ride room not found. Check the 5-digit code.' });
+      assert.deepEqual(join.body, {
+        message: 'Ride room not found. Check the 5-digit code.',
+        code: 'ROOM_NOT_FOUND',
+      });
 
       const update = await request(baseUrl, 'PATCH', '/api/rooms/12345/destination', destination);
       assert.equal(update.status, 404);
-      assert.deepEqual(update.body, { message: 'Ride room not found.' });
+      assert.deepEqual(update.body, { message: 'Ride room not found.', code: 'ROOM_NOT_FOUND' });
     });
 
     assert.deepEqual(lookedUpCodes, ['12345', '12345']);
@@ -152,18 +156,24 @@ describe('room-code validation', () => {
       await withServer(app, async baseUrl => {
         const create = await request(baseUrl, 'POST', '/api/rooms/create', {});
         assert.equal(create.status, 500);
-        assert.deepEqual(create.body, { message: 'Failed to create room.' });
+        assert.deepEqual(create.body, {
+          message: 'Failed to create room.',
+          code: 'INTERNAL_ERROR',
+        });
 
         const join = await request(baseUrl, 'POST', '/api/rooms/join', { roomCode: '12345' });
         assert.equal(join.status, 500);
-        assert.deepEqual(join.body, { message: 'Failed to join room.' });
+        assert.deepEqual(join.body, { message: 'Failed to join room.', code: 'INTERNAL_ERROR' });
 
         const update = await request(baseUrl, 'PATCH', '/api/rooms/12345/destination', {
           destinationLat: 17.38,
           destinationLng: 78.4,
         });
         assert.equal(update.status, 500);
-        assert.deepEqual(update.body, { message: 'Failed to update destination.' });
+        assert.deepEqual(update.body, {
+          message: 'Failed to update destination.',
+          code: 'INTERNAL_ERROR',
+        });
       });
     } finally {
       console.error = originalConsoleError;
