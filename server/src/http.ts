@@ -3,7 +3,7 @@ import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Respon
 import { logger } from './logger';
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express request types can only be augmented through its namespace
   namespace Express {
     interface Request {
       requestId: string;

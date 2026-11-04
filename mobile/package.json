@@ -15,7 +15,9 @@
     "start": "react-native start",
     "test": "jest",
     "format": "prettier --write \"src/**/*.{ts,tsx}\" \"__tests__/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\" \"App.tsx\" \"*.js\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"__tests__/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\" \"App.tsx\" \"*.js\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\" \"__tests__/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\" \"App.tsx\" \"*.js\"",
+    "typecheck": "tsc --noEmit",
+    "test:coverage": "jest --coverage"
   },
   "dependencies": {
     "@livekit/react-native": "^2.12.0",

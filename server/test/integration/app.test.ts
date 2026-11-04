@@ -9,7 +9,11 @@ import { PrismaClient } from '@prisma/client';
 import { createApp } from '../../src/app';
 import type { GoogleIdentity, GoogleVerifier } from '../../src/auth/google';
 import { loadEnv } from '../../src/config/env';
-import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from '../../src/auth/roomCode';
+import {
+  createUserWithRoomCode,
+  ensureRoomCode,
+  RoomCodeUnavailableError,
+} from '../../src/auth/roomCode';
 
 const JWT_SECRET = 'test-secret-'.padEnd(48, 'x');
 const GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';

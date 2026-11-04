@@ -61,7 +61,7 @@ export function useRiderPresenceToasts(
         }, TOAST_DURATION_MS);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run only when the set of rider identities changes, not on every location update
   }, [identityKey]);
 
   useEffect(

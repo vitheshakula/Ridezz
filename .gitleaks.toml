@@ -1,0 +1,9 @@
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Public Android debug keystore and placeholder example files"
+paths = [
+  '''mobile/android/app/debug\.keystore''',
+  '''\.env(\.[a-z]+)?\.example$''',
+]

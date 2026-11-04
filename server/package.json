@@ -22,7 +22,7 @@
     "prisma:generate": "prisma generate",
     "prisma:migrate:dev": "prisma migrate dev",
     "prisma:migrate:deploy": "prisma migrate deploy",
-    "test:coverage": "node --import tsx --test --experimental-test-coverage \"src/**/*.test.ts\""
+    "test:coverage": "node --import tsx --test --experimental-test-coverage --test-coverage-exclude=\"src/**/*.test.ts\" --test-coverage-lines=85 --test-coverage-branches=85 --test-coverage-functions=85 \"src/**/*.test.ts\""
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",

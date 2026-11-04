@@ -46,3 +46,5 @@ mobile/android/app/src/main/res/raw/
 **/.env
 **/.env.*
 !**/.env.*.example
+
+coverage/

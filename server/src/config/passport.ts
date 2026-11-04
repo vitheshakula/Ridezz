@@ -6,9 +6,9 @@ import { isEmailAllowed } from '../auth/access';
 import { toAuthUser, type AuthUser } from '../auth/user';
 
 declare global {
-  // eslint-disable-next-line @typescript-eslint/no-namespace
+  // eslint-disable-next-line @typescript-eslint/no-namespace -- Express request types can only be augmented through its namespace
   namespace Express {
-    // eslint-disable-next-line @typescript-eslint/no-empty-object-type
+    // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- declaration merging needs an interface
     interface User extends AuthUser {}
   }
 }

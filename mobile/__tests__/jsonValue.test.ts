@@ -40,7 +40,7 @@ describe('isJsonValue', () => {
     ['Date', new Date(0)],
     ['Map', new Map()],
     ['class instance', new Point()],
-    ['sparse array', [1, , 3]], // eslint-disable-line no-sparse-arrays
+    ['sparse array', [1, , 3]], // eslint-disable-line no-sparse-arrays -- the sparse array is the input under test
     ['array holding undefined', [undefined]],
     ['object holding a function', { f: () => 1 }],
   ])('rejects %s', (_label, value) => {
