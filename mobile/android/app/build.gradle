@@ -2,6 +2,42 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
+/**
+ * Environments. Each product flavor (dev, staging, prod) reads its own env file from mobile/.
+ * react-native-config turns that file into BuildConfig fields, which the JS side reads through
+ * src/config/appConfig.ts. Copy the matching `.env.<flavor>.example` to `.env.<flavor>` first.
+ *
+ * react-native-config picks the file from the *task name* (e.g. installDevDebug -> .env.dev), so a
+ * build must always name its flavor -- see the guard below.
+ */
+def appFlavors = ["dev", "staging", "prod"]
+project.ext.envConfigFiles = [
+    dev    : ".env.dev",
+    staging: ".env.staging",
+    prod   : ".env.prod",
+]
+
+// Fail fast on builds that would silently pick the wrong env file: a flavorless task such as
+// `assembleRelease` would build every flavor against the same (default) file, and naming two
+// flavors in one invocation would build both against the first one's file.
+def appBuildTask = ~/(?i)(assemble|bundle|install)(debug|debugoptimized|release)?/
+def requestedTasks = gradle.startParameter.taskNames.collect { it.tokenize(':').last() }
+if (requestedTasks.any { it ==~ appBuildTask }) {
+    throw new GradleException(
+        "Name the environment in the task, e.g. installDevDebug, assembleStagingRelease or " +
+        "bundleProdRelease (got: ${requestedTasks.join(' ')}).")
+}
+def requestedFlavors = appFlavors.findAll { flavor ->
+    requestedTasks.any { it.toLowerCase() ==~ /[a-z]+${flavor}(debug|debugoptimized|release).*/ }
+}
+if (requestedFlavors.size() > 1) {
+    throw new GradleException(
+        "Build one environment per Gradle invocation (got ${requestedFlavors.join(', ')}): " +
+        "the env file is chosen once per run.")
+}
+
+apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
+
 
 /**
  * This is the configuration block to customize your React Native Android app.
@@ -23,6 +59,7 @@ react {
     //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
     //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
     // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
+    debuggableVariants = appFlavors.collectMany { [it + "Debug", it + "DebugOptimized"] }
 
     /* Bundling */
     //   A list containing the node command and its flags. Default is just 'node'.
@@ -85,6 +122,35 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
+        // BuildConfig lives in the namespace, not the (suffixed) applicationId; tell
+        // react-native-config where to find it.
+        resValue "string", "build_config_package", "com.rideaze.mobile"
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    flavorDimensions "environment"
+    productFlavors {
+        // Installs side by side with the others thanks to its own application id.
+        dev {
+            dimension "environment"
+            applicationIdSuffix ".dev"
+            versionNameSuffix "-dev"
+            resValue "string", "app_name", "Rideaze Dev"
+        }
+        staging {
+            dimension "environment"
+            applicationIdSuffix ".staging"
+            versionNameSuffix "-staging"
+            resValue "string", "app_name", "Rideaze Staging"
+        }
+        // The real app: plain com.rideaze.mobile, the only id that ever goes to the Play Store.
+        prod {
+            dimension "environment"
+            resValue "string", "app_name", "Rideaze"
+        }
     }
     signingConfigs {
         debug {

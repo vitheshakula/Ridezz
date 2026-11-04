@@ -1,5 +1,49 @@
 This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
 
+# Environments
+
+The Android app has three environments, built as Gradle product flavors (`android/app/build.gradle`):
+
+| Flavor    | Application id               | App name          | Env file        | Points at                     |
+|-----------|------------------------------|-------------------|-----------------|-------------------------------|
+| `dev`     | `com.rideaze.mobile.dev`     | Rideaze Dev       | `.env.dev`      | Your local server             |
+| `staging` | `com.rideaze.mobile.staging` | Rideaze Staging   | `.env.staging`  | The shared hosted test server |
+| `prod`    | `com.rideaze.mobile`         | Rideaze           | `.env.prod`     | Production                    |
+
+Each flavor has its own application id, so all three can be installed on one phone side by side.
+Combined with the build types this gives variants such as `devDebug`, `stagingRelease` and
+`prodRelease`.
+
+**Setup:** copy each example you need and fill it in (the real files are gitignored):
+
+```sh
+cp .env.dev.example .env.dev
+cp .env.staging.example .env.staging
+cp .env.prod.example .env.prod
+```
+
+The values are read by [`react-native-config`](https://github.com/react-native-config/react-native-config)
+and baked into the native build, so **after changing an env file, rebuild the app** -- restarting
+Metro is not enough. App code reads them only through `src/config/appConfig.ts`, which also exposes
+`APP_ENV` (`'dev' | 'staging' | 'prod'`).
+
+| Task                                   | Command                         |
+|----------------------------------------|---------------------------------|
+| Run dev on a device (default)          | `npm run android`               |
+| Run staging / prod in debug mode       | `npm run android:staging` / `npm run android:prod` |
+| Build a staging release APK            | `npm run build:android:staging` |
+| Build the prod release bundle (AAB)    | `npm run build:android:prod`    |
+
+Always name the flavor in Gradle tasks (`assembleStagingRelease`, not `assembleRelease`), and build
+one flavor per Gradle run: the env file is chosen once per run from the task name, so the build
+refuses flavorless or mixed-flavor task lists rather than baking in the wrong backend.
+
+Google Sign-In needs an Android OAuth client for each application id you use (see
+`server/README.md`, *Google Cloud setup*). Release builds are still signed with the debug keystore,
+which is fine for testing but must be replaced before a Play Store release.
+
+iOS has no flavors yet; an iOS build reads `.env` and reports itself as `dev`.
+
 # Getting Started
 
 > **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.

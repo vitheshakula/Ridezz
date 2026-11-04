@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ElementRef } fr
 import { Animated, Easing, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Camera, GeoJSONSource, Layer, Map, Marker } from '@maplibre/maplibre-react-native';
 import Geolocation from '@react-native-community/geolocation';
-import { MAPTILER_API_KEY } from '@env';
+import { MAPTILER_API_KEY } from '../config/appConfig';
 import {
   classifyFreshness,
   computeCentroid,

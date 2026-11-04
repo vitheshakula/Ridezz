@@ -1,4 +1,5 @@
-import { API_URL } from '@env';
+// A module (not a script), so its helpers do not collide with other test files' globals.
+export {};
 
 /**
  * AuthService talks to axios, AsyncStorage and the native Google Sign-In module, none of which run
@@ -44,16 +45,13 @@ function load() {
 const session = { token: 'app-jwt', user: { id: 'u1', email: 'a@gmail.com', name: 'Alex' } };
 const googleSuccess = (idToken: string | null) => ({ type: 'success', data: { idToken } });
 
-// attachToken refuses to run without an API_URL (by design), which the .env supplies locally.
-const withApiUrl = API_URL ? it : it.skip;
-
 describe('the API client', () => {
   it('sends its requests through the token interceptor', () => {
     const { service, api } = load();
     expect(api.interceptors.request.use).toHaveBeenCalledWith(service.attachToken);
   });
 
-  withApiUrl('attaches Authorization: Bearer <token> when a rider is signed in', async () => {
+  it('attaches Authorization: Bearer <token> when a rider is signed in', async () => {
     const { service, storage } = load();
     storage.getItem.mockResolvedValue('the-jwt');
 
@@ -63,7 +61,7 @@ describe('the API client', () => {
     expect(config.headers.Authorization).toBe('Bearer the-jwt');
   });
 
-  withApiUrl('sends no Authorization header when nobody is signed in', async () => {
+  it('sends no Authorization header when nobody is signed in', async () => {
     const { service, storage } = load();
     storage.getItem.mockResolvedValue(null);
 

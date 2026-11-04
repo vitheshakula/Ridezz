@@ -113,8 +113,10 @@ You need two OAuth clients **in the same project**:
 2. **Web application** client -- Credentials > Create credentials > OAuth client ID > *Web
    application*. Its **Client ID** is `GOOGLE_CLIENT_ID` in `server/.env`. (The server checks that
    each Google token was issued for this ID.)
-3. **Android** client -- same place, type *Android*:
-   - Package name: `com.rideaze.mobile`
+3. **Android** client -- same place, type *Android*, **one per app environment** (each flavor has
+   its own application id, see `mobile/README.md`):
+   - Package name: `com.rideaze.mobile` (prod), `com.rideaze.mobile.staging` (staging),
+     `com.rideaze.mobile.dev` (dev)
    - SHA-1 certificate fingerprint of the key the app is signed with. For the checked-in debug
      keystore: `5E:8F:16:06:2E:A3:CD:2C:4A:0D:54:78:76:BA:A6:F3:8C:AB:F6:25`
      (`keytool -list -v -keystore mobile/android/app/debug.keystore -alias androiddebugkey -storepass android`).

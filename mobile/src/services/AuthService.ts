@@ -6,7 +6,7 @@ import {
   isSuccessResponse,
   statusCodes,
 } from '@react-native-google-signin/google-signin';
-import { API_URL } from '@env';
+import { API_URL, APP_ENV } from '../config/appConfig';
 import { AuthError } from '../utils/authErrors';
 import { normalizeEmail } from '../utils/authValidation';
 
@@ -39,7 +39,7 @@ export interface AuthResult {
 export async function attachToken(config: InternalAxiosRequestConfig): Promise<InternalAxiosRequestConfig> {
   if (!API_URL) {
     // A missing URL would otherwise silently send requests nowhere useful.
-    throw new Error('API_URL is not set in mobile/.env');
+    throw new Error(`API_URL is not set in mobile/.env.${APP_ENV}`);
   }
   const token = await AsyncStorage.getItem(TOKEN_KEY);
   if (token) {

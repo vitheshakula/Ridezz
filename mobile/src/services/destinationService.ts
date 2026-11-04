@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { MAPTILER_API_KEY } from '@env';
+import { MAPTILER_API_KEY } from '../config/appConfig';
 import type { RideDestination } from '../components/RiderMap';
 import { api } from './AuthService';
 

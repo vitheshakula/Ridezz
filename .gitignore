@@ -58,3 +58,4 @@ mobile/android/app/src/main/res/raw/
 # All subfolder .env files
 **/.env
 **/.env.*
+!**/.env.*.example
