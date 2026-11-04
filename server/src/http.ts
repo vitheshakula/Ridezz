@@ -1,7 +1,9 @@
 import { randomUUID } from 'node:crypto';
 import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from 'express';
+import { logger } from './logger';
 
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       requestId: string;
@@ -27,21 +29,18 @@ export const requestLogger: RequestHandler = (req, res, next) => {
   const path = requestPath(req);
   res.on('finish', () => {
     const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-    console.log(
-      JSON.stringify({
-        event: 'http_request',
-        requestId: req.requestId,
-        method: req.method,
-        path,
-        status: res.statusCode,
-        durationMs: Math.round(durationMs * 100) / 100,
-      }),
-    );
+    logger().info('http_request', {
+      requestId: req.requestId,
+      method: req.method,
+      path,
+      status: res.statusCode,
+      durationMs: Math.round(durationMs * 100) / 100,
+    });
   });
   next();
 };
 
-function safeErrorDetails(error: unknown): { errorName: string; errorMessage: string } {
+export function safeErrorDetails(error: unknown): { errorName: string; errorMessage: string } {
   if (!(error instanceof Error)) {
     return { errorName: 'NonError', errorMessage: 'A non-Error value was thrown.' };
   }
@@ -61,15 +60,12 @@ export function logRequestError(
   error: unknown,
   level: 'error' | 'warn' = 'error',
 ): void {
-  console[level](
-    JSON.stringify({
-      event,
-      requestId: req.requestId ?? 'unavailable',
-      method: req.method,
-      path: requestPath(req),
-      ...safeErrorDetails(error),
-    }),
-  );
+  logger()[level](event, {
+    requestId: req.requestId ?? 'unavailable',
+    method: req.method,
+    path: requestPath(req),
+    ...safeErrorDetails(error),
+  });
 }
 
 export function asyncHandler(

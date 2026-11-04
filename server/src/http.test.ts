@@ -10,6 +10,8 @@ import { asyncHandler, errorHandler, requestIdMiddleware } from './http';
 
 const TEST_ENV: Env = {
   port: 5000,
+  logLevel: 'info',
+  shutdownTimeoutMs: 10_000,
   jwtSecret: 'test-secret'.padEnd(40, 'x'),
   googleClientId: null,
   allowedEmails: null,
@@ -278,5 +280,48 @@ describe('central error handler', () => {
     assert.equal(errorEntries[0].includes('private-user'), false);
     assert.equal(errorEntries[0].includes('private-password'), false);
     assert.equal(errorEntries[0].includes('secret-token'), false);
+  });
+});
+
+describe('health checks', () => {
+  it('reports liveness without touching the database', async () => {
+    await withServer(testApp(), async baseUrl => {
+      const response = await fetch(`${baseUrl}/health`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { status: 'ok' });
+    });
+  });
+
+  it('reports ready when the database answers and 503 when it does not', async () => {
+    const healthy = { $queryRaw: async () => [{ '?column?': 1 }] } as unknown as PrismaClient;
+    await withServer(createApp({ prisma: healthy, env: TEST_ENV }), async baseUrl => {
+      const response = await fetch(`${baseUrl}/health/ready`);
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { status: 'ok', database: 'ok' });
+    });
+
+    const failing = {
+      $queryRaw: async () => {
+        throw new Error('connect ECONNREFUSED postgresql://user:secret@db.internal/ridezz');
+      },
+    } as unknown as PrismaClient;
+    const errorLines: string[] = [];
+    const originalConsoleError = console.error;
+    console.error = (line: string) => errorLines.push(line);
+    try {
+      await withServer(createApp({ prisma: failing, env: TEST_ENV }), async baseUrl => {
+        const response = await fetch(`${baseUrl}/health/ready`);
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), {
+          status: 'unavailable',
+          database: 'unavailable',
+        });
+      });
+    } finally {
+      console.error = originalConsoleError;
+    }
+    assert.equal(errorLines.length, 1);
+    assert.equal(JSON.parse(errorLines[0]).event, 'health_database_unavailable');
+    assert.equal(errorLines[0].includes('secret'), false);
   });
 });

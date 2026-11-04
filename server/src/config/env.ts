@@ -1,5 +1,9 @@
+import { isLogLevel, type LogLevel } from '../logger';
+
 export interface Env {
   port: number;
+  logLevel: LogLevel;
+  shutdownTimeoutMs: number;
   jwtSecret: string;
   googleClientId: string | null;
   allowedEmails: ReadonlySet<string> | null;
@@ -10,6 +14,8 @@ export interface Env {
 
 const MIN_JWT_SECRET_LENGTH = 32;
 const DEFAULT_PORT = 5000;
+const DEFAULT_LOG_LEVEL: LogLevel = 'info';
+const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_AUTH_RATE_LIMIT_MAX = 100;
 
@@ -80,6 +86,17 @@ function validateLiveKitUrl(raw: string): string {
   return raw;
 }
 
+function parseLogLevel(raw: string | undefined): LogLevel {
+  const value = raw?.trim().toLowerCase();
+  if (!value) {
+    return DEFAULT_LOG_LEVEL;
+  }
+  if (!isLogLevel(value)) {
+    throw new Error('LOG_LEVEL must be one of debug, info, warn, error or fatal.');
+  }
+  return value;
+}
+
 export function parseAllowedEmails(raw: string | undefined): ReadonlySet<string> | null {
   const emails = (raw ?? '')
     .split(/[\s,;]+/)
@@ -118,6 +135,12 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
 
   return {
     port: parsePort(source.PORT),
+    logLevel: parseLogLevel(source.LOG_LEVEL),
+    shutdownTimeoutMs: parsePositiveInteger(
+      source.SHUTDOWN_TIMEOUT_MS,
+      DEFAULT_SHUTDOWN_TIMEOUT_MS,
+      'SHUTDOWN_TIMEOUT_MS',
+    ),
     jwtSecret,
     googleClientId: source.GOOGLE_CLIENT_ID?.trim() || null,
     allowedEmails: parseAllowedEmails(source.ALLOWED_EMAILS),

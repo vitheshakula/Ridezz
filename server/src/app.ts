@@ -8,6 +8,7 @@ import { configurePassport, createRequireAuth } from './config/passport';
 import type { Env } from './config/env';
 import { errorHandler, notFoundHandler, requestIdMiddleware, requestLogger } from './http';
 import { createAuthRouter } from './routes/auth';
+import { createHealthRouter } from './routes/health';
 import { createRoomsRouter } from './routes/rooms';
 import { createUserRouter } from './routes/user';
 
@@ -42,6 +43,7 @@ export function createApp({ prisma, env, verifyGoogleIdToken }: AppDeps): Expres
   app.use(requestIdMiddleware);
   app.use(requestLogger);
   app.use(helmet());
+  app.use('/health', createHealthRouter({ prisma }));
   app.use(
     env.corsOrigins
       ? cors({

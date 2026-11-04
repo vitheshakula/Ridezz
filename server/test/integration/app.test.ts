@@ -6,10 +6,10 @@ import { after, before, describe, it } from 'node:test';
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import { PrismaClient } from '@prisma/client';
-import { createApp } from './app';
-import type { GoogleIdentity, GoogleVerifier } from './auth/google';
-import { loadEnv } from './config/env';
-import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from './auth/roomCode';
+import { createApp } from '../../src/app';
+import type { GoogleIdentity, GoogleVerifier } from '../../src/auth/google';
+import { loadEnv } from '../../src/config/env';
+import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from '../../src/auth/roomCode';
 
 const JWT_SECRET = 'test-secret-'.padEnd(48, 'x');
 const GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
@@ -22,6 +22,7 @@ let applicationTablesReady = false;
 let testDatabaseUrl: string;
 
 const TEST_DATABASE_PREFIX = 'ridezz_test';
+const SUITE_AUTH_RATE_LIMIT_MAX = 10_000;
 
 interface TestDatabaseConfig {
   url: string;
@@ -158,6 +159,7 @@ before(async () => {
     LIVEKIT_API_KEY: 'devkey',
     LIVEKIT_API_SECRET: 'livekit-secret-'.padEnd(40, 'y'),
     LIVEKIT_URL: 'wss://livekit.test',
+    AUTH_RATE_LIMIT_MAX: String(SUITE_AUTH_RATE_LIMIT_MAX),
   });
   const app = createApp({ prisma, env, verifyGoogleIdToken: fakeVerifier });
   server = await new Promise<Server>(resolve => {

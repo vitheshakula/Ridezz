@@ -48,6 +48,19 @@ describe('loadEnv', () => {
     assert.deepEqual(result.livekit, { apiKey: 'k', apiSecret: 's', url: 'wss://x.example' });
   });
 
+  it('defaults and validates the log level and shutdown timeout', () => {
+    const defaults = loadEnv(env());
+    assert.equal(defaults.logLevel, 'info');
+    assert.equal(defaults.shutdownTimeoutMs, 10_000);
+
+    const configured = loadEnv(env({ LOG_LEVEL: ' WARN ', SHUTDOWN_TIMEOUT_MS: '2500' }));
+    assert.equal(configured.logLevel, 'warn');
+    assert.equal(configured.shutdownTimeoutMs, 2500);
+
+    assert.throws(() => loadEnv(env({ LOG_LEVEL: 'verbose' })), /LOG_LEVEL must be one of/);
+    assert.throws(() => loadEnv(env({ SHUTDOWN_TIMEOUT_MS: '0' })), /SHUTDOWN_TIMEOUT_MS/);
+  });
+
   it('treats a missing or blank Google client id as Google sign-in disabled', () => {
     assert.equal(loadEnv(env({ GOOGLE_CLIENT_ID: undefined })).googleClientId, null);
     assert.equal(loadEnv(env({ GOOGLE_CLIENT_ID: '  ' })).googleClientId, null);

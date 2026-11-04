@@ -10,6 +10,8 @@ import { createRoomsRouter } from './rooms';
 
 const TEST_ENV: Env = {
   port: 5000,
+  logLevel: 'info',
+  shutdownTimeoutMs: 10_000,
   jwtSecret: 'test-secret'.padEnd(40, 'x'),
   googleClientId: null,
   allowedEmails: null,
