@@ -1,25 +1,8 @@
-/**
- * Runs an async cycle repeatedly, never overlapping. Used for heartbeats; reusable for other
- * periodic control-plane traffic.
- *
- * Semantics:
- *   - start(): runs a cycle immediately, unless one is still in flight from before a stop(), in
- *     which case the loop resumes when that cycle settles. A second start() while running is a
- *     no-op, so there is never more than one loop.
- *   - After each cycle settles (fulfilled or rejected), the next is scheduled `intervalMs` later.
- *     The period is therefore cycle duration + intervalMs: a slow cycle delays the next one and
- *     cycles never queue up or overlap.
- *   - stop(): cancels any pending timer. An in-flight cycle is not cancelled; it settles normally
- *     and no further cycle is scheduled. Repeated stop() is safe.
- *   - A rejected cycle or a throwing onCycleSettled never breaks the loop.
- */
-
 export type CycleOutcome<T> = { ok: true; value: T } | { ok: false; error: unknown };
 
 export interface CycleSchedulerOptions<T> {
   runCycle: () => Promise<T>;
   intervalMs: number;
-  /** Observability hook, called once per settled cycle. */
   onCycleSettled?: (outcome: CycleOutcome<T>) => void;
 }
 
@@ -45,9 +28,7 @@ export function createCycleScheduler<T>({
   const report = (outcome: CycleOutcome<T>) => {
     try {
       onCycleSettled?.(outcome);
-    } catch {
-      // Observability must not break the loop.
-    }
+    } catch {}
   };
 
   const settle = (outcome: CycleOutcome<T>) => {

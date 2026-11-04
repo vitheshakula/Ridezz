@@ -28,7 +28,9 @@ describe('createLiveKitToken', () => {
 
     const token = await createLiveKitToken(credentials, roomCode, riderName, userId, true);
     const after = Date.now();
-    const claims = jwt.verify(token, credentials.apiSecret, { algorithms: ['HS256'] }) as LiveKitClaims;
+    const claims = jwt.verify(token, credentials.apiSecret, {
+      algorithms: ['HS256'],
+    }) as LiveKitClaims;
 
     assert.equal(claims.iss, credentials.apiKey);
     assert.equal(claims.name, riderName);

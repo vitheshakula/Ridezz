@@ -8,11 +8,6 @@ interface HazardGlyphProps {
   color: string;
 }
 
-/**
- * Glyph for each hazard category the app already detects (HAZARD_RULES). Purely visual: 24x24
- * viewBox, 2px round strokes. Keyed by HazardType so a new category without a glyph is a
- * compile error here rather than a silent blank.
- */
 const GLYPHS: Record<HazardType, React.ReactNode> = {
   missed_turn: <Path d="M9 21v-8a4 4 0 0 1 4-4h6M15 5l4 4-4 4" />,
   fuel: (
@@ -77,7 +72,6 @@ const GLYPHS: Record<HazardType, React.ReactNode> = {
       <Path d="M8 12h8" />
     </>
   ),
-  // A vehicle with pause bars above it: parked when it shouldn't be.
   vehicle_stopped: (
     <>
       <Path d="M3 17h18M5 17l1.5-5h11L19 17" />
@@ -86,14 +80,12 @@ const GLYPHS: Record<HazardType, React.ReactNode> = {
       <Path d="M10.5 3.5v5M13.5 3.5v5" />
     </>
   ),
-  // A hairpin: the road doubles back on itself.
   sharp_turn: (
     <>
       <Path d="M6 21V10a5 5 0 0 1 10 0v9" />
       <Path d="M12.5 15.5L16 19l3.5-3.5" />
     </>
   ),
-  // A dictated voice note (see JarvisVoiceService): a speech bubble with text lines.
   info: (
     <>
       <Path d="M4 5h16v11H9l-4 4V5z" />
@@ -119,5 +111,9 @@ export function HazardGlyph({ type, size = 24, color }: HazardGlyphProps) {
   );
 }
 
-/** Hazards that mean "stop / someone may be hurt" render red; the rest are amber warnings. */
-export const CRITICAL_HAZARDS: ReadonlySet<HazardType> = new Set<HazardType>(['accident', 'stop', 'obstacle', 'vehicle_stopped']);
+export const CRITICAL_HAZARDS: ReadonlySet<HazardType> = new Set<HazardType>([
+  'accident',
+  'stop',
+  'obstacle',
+  'vehicle_stopped',
+]);

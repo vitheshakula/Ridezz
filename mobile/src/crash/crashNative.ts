@@ -12,7 +12,6 @@ import {
   type CrashSos,
 } from './crashTypes';
 
-/** Optional tuning overrides for startMonitoring(); anything out of range keeps its default. */
 export interface CrashMonitoringOptions {
   impactG?: number;
   rotationRadS?: number;
@@ -33,11 +32,9 @@ interface CrashDetectionNative {
   simulateCrash(): Promise<void>;
 }
 
-// Looked up per call (not captured at import) so it always reflects the registered native module.
 const getNative = (): CrashDetectionNative | undefined => NativeModules.CrashDetection;
 
-export const isCrashDetectionAvailable = (): boolean =>
-  Platform.OS === 'android' && !!getNative();
+export const isCrashDetectionAvailable = (): boolean => Platform.OS === 'android' && !!getNative();
 
 function requireNative(): CrashDetectionNative {
   const native = getNative();
@@ -51,16 +48,17 @@ export const crashNative = {
   startMonitoring: (options?: CrashMonitoringOptions) =>
     requireNative().startMonitoring(options ?? null),
   stopMonitoring: (): Promise<void> =>
-    isCrashDetectionAvailable() ? requireNative().stopMonitoring().catch(() => {}) : Promise.resolve(),
-  /** "I'm OK" -- from a tap, or from a voice command once one is wired up. */
+    isCrashDetectionAvailable()
+      ? requireNative()
+          .stopMonitoring()
+          .catch(() => {})
+      : Promise.resolve(),
   cancelCrashAlert: () => requireNative().cancelCrashAlert(),
   sendAlertNow: () => requireNative().sendAlertNow(),
   acknowledgeAlert: () => requireNative().acknowledgeAlert(),
-  /** Pins the riding reference to the phone's current attitude. Hold the phone steady ~2 s. */
   calibrateRidingAngle: async (): Promise<CrashCalibrationResult> =>
     decodeCalibration(await requireNative().calibrateRidingAngle()),
   clearRidingCalibration: () => requireNative().clearRidingCalibration(),
-  /** An alert whose event may have been missed; returns it once and forgets it. */
   consumePendingSos: async (): Promise<CrashSos | null> =>
     decodeCrashSos(await requireNative().consumePendingSos()),
   simulateCrash: () => requireNative().simulateCrash(),
@@ -77,7 +75,6 @@ export interface CrashEventHandlers {
 
 const PHASES: readonly string[] = ['idle', 'countdown', 'sos', 'cancelled'];
 
-/** Subscribes to the native events. Malformed payloads are dropped. Returns an unsubscribe. */
 export function subscribeToCrashEvents(handlers: CrashEventHandlers): () => void {
   const subs = [
     DeviceEventEmitter.addListener('onCrashCandidateDetected', (raw: unknown) => {

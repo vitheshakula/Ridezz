@@ -21,40 +21,15 @@ import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.StorageService
 
-/**
- * Offline, on-device speech recognition (Vosk) used for hazard-word detection. Works with zero
- * connectivity. One microphone stream (16 kHz mono, VOICE_RECOGNITION) feeds TWO recognizers that
- * share the one bundled model:
- *
- *  - "free": the full vocabulary. Reads ordinary sentences properly (it feeds the "Heard:" line) and
- *    never invents hazards, but mixes hazard words up with ordinary ones ("pothole" -> "boy told").
- *  - "grammar": restricted to assets/vosk-grammar.json -- the hazard phrases plus ~1500 ordinary
- *    words (see scripts/vosk-grammar/make_grammar.py). It catches those mix-ups, but forces some
- *    unfamiliar words into hazard words, so JS only trusts it above a per-word confidence.
- *
- * Emits one event per FINISHED utterance (partial hypotheses are never sent -- acting on them gave
- * false alerts and they flooded the bridge):
- *   onSpeechResult -> Vosk's result JSON plus a "source": {"text": "...", "result": [{"word",
- *                     "conf",...}], "source": "free" | "grammar"}
- *   onSpeechError  -> error message string
- * Keyword matching, confidence checks and dedup live in JS (SpeechHazardService.ts).
- *
- * The model must be bundled at android/app/src/main/assets/vosk-model-small-en-us-0.15/ (it is
- * unpacked to app-private storage on first use). If the grammar file is missing, only "free" runs.
- *
- * Do not grow the grammar past ~1500 words: bigger vocabularies crashed Vosk natively in testing,
- * and every word must exist in the model (the generator checks).
- */
 class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
-
   companion object {
     private const val MODEL_ASSET_DIR = "vosk-model-small-en-us-0.15"
     private const val MODEL_TARGET_DIR = "vosk-model"
     private const val GRAMMAR_ASSET = "vosk-grammar.json"
     private const val SAMPLE_RATE_HZ = 16000
     private const val SAMPLE_RATE = 16000.0f
-    private const val CHUNK_SAMPLES = SAMPLE_RATE_HZ / 10 // 100 ms
+    private const val CHUNK_SAMPLES = SAMPLE_RATE_HZ / 10
     private const val STOP_JOIN_MS = 2000L
     private const val TAG = "VoiceHazard"
   }
@@ -63,7 +38,6 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
   private var model: Model? = null
   private var worker: Thread? = null
   private var unpacking = false
-  // Set by start, cleared by stop -- lets a stop that arrives mid-unpack cancel the pending start.
   @Volatile private var wantListening = false
   private val pendingStarts = mutableListOf<Promise>()
 
@@ -143,7 +117,6 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
   private fun beginRecognition(m: Model, promises: List<Promise>) {
     var started = false
     synchronized(lock) {
-      // A stop may have arrived while the model was unpacking; then there is nothing to start.
       if (wantListening && worker?.isAlive != true) {
         worker = Thread({ run(m, promises) }, "vosk-hazard").also { it.start() }
         started = true
@@ -152,7 +125,6 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
     if (!started) promises.forEach { it.resolve(null) }
   }
 
-  /** Worker thread: open the mic, feed both recognizers, emit finished utterances, clean up. */
   private fun run(m: Model, promises: List<Promise>) {
     Process.setThreadPriority(Process.THREAD_PRIORITY_AUDIO)
     var free: Recognizer? = null
@@ -206,13 +178,11 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
       grammar?.close()
       free?.close()
       synchronized(lock) {
-        // A finished or failed worker clears itself, so a later start spawns a fresh one.
         if (worker === Thread.currentThread()) worker = null
       }
     }
   }
 
-  /** The recognizer limited to the hazard grammar, or null (full vocabulary only) if unusable. */
   private fun newGrammarRecognizer(m: Model): Recognizer? =
     try {
       val grammar = reactContext.assets.open(GRAMMAR_ASSET).bufferedReader().use { it.readText() }
@@ -222,7 +192,6 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
       null
     }
 
-  /** Sends a finished utterance to JS, tagged with which recognizer heard it. Silence is dropped. */
   private fun emitResult(source: String, json: String?) {
     if (json == null) return
     try {
@@ -240,8 +209,6 @@ class VoiceHazardModule(private val reactContext: ReactApplicationContext) :
       wantListening = false
       t = worker
     }
-    // The worker releases the mic and recognizers itself; wait briefly so a quick stop -> start
-    // cannot have two workers on the microphone.
     if (t != null && t !== Thread.currentThread()) {
       try {
         t.join(STOP_JOIN_MS)

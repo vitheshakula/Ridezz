@@ -1,7 +1,3 @@
-// Manual Jest mock for @react-native-async-storage/async-storage.
-//
-// The real package ships untranspiled ES modules and needs a native module, so importing it under
-// Jest fails outright. This keeps values in memory, which is all AuthContext / AuthService need.
 const store = new Map<string, string>();
 
 export default {

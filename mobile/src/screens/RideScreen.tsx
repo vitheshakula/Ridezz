@@ -67,7 +67,12 @@ import { useHardBraking, usePeerBraking } from '../braking/useHardBraking';
 import { nearbyMeshService } from '../services/NearbyMeshService';
 import { createMeshSyncManager, type MeshSyncManager } from '../services/meshSyncManager';
 import { startJarvisVoice } from '../services/JarvisVoiceService';
-import { isMeshHazardKind, type GeoPoint, type HazardEventPacket, type RiderNode } from '../types/telemetry';
+import {
+  isMeshHazardKind,
+  type GeoPoint,
+  type HazardEventPacket,
+  type RiderNode,
+} from '../types/telemetry';
 import { nearbyTransport } from '../transports/NearbyTransport';
 import { createLiveKitHazardTransport } from '../transports/LiveKitHazardTransport';
 import type { TransportStatus } from '../transports/Transport';
@@ -100,28 +105,17 @@ import {
   startAppRideMeshSession,
 } from '../services/rideConnectivityService';
 
-/** How long the room must be unreachable before the HUD switches to "MESH". Debounces brief
- * cellular blips so the pill doesn't flicker. */
 const MESH_FALLBACK_DELAY_MS = 3000;
-/** How far the other riders' voices are turned down while a hazard is being read aloud. Not
- * fully silent -- a rider mid-sentence stays faintly audible under the announcement rather than
- * abruptly vanishing and reappearing. */
 const HAZARD_DUCK_VOLUME = 0.2;
 const CALL_VOLUME = 1.0;
 
 type Transport = 'cloud' | 'mesh' | 'connecting';
 
-/** Turns every other rider's mic volume down (or back up) in this room. Used to duck the live
- * call for the exact duration of a spoken hazard announcement -- see speakHazardAudio's promise,
- * which resolves only once the announcement actually finishes, so the `finally` below fires at
- * the right time and can't leave the call stuck quiet if the app is fine but the announcement
- * itself fails for some reason. */
 function duckRemoteAudio(room: Room, duck: boolean): void {
   const volume = duck ? HAZARD_DUCK_VOLUME : CALL_VOLUME;
   room.remoteParticipants.forEach(participant => participant.setVolume(volume));
 }
 
-/** Runtime permissions Nearby Connections needs (mirrors NearbyMeshModule.requiredPermissions). */
 async function ensureMeshPermission(): Promise<boolean> {
   if (Platform.OS !== 'android') {
     return false;
@@ -175,7 +169,6 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
     let cancelled = false;
 
     const setupNativeAudio = async () => {
-      // 1. FOREGROUND SERVICE: Keeps Android from putting the app to sleep when riding
       try {
         await startIntercomService();
       } catch (e: any) {
@@ -184,11 +177,6 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
         }
       }
 
-      // 2. DISCORD-STYLE VOIP AUDIO ROUTING:
-      // Configures Android AudioManager into 'communication' mode.
-      // - Activates hardware Acoustic Echo Cancellation (AEC) and noise gates.
-      // - Routes voice through helmet Bluetooth headsets (SCO) instead of media music stream.
-      // - Prevents OS buffer drops and audio clock drift.
       try {
         await AudioSession.configureAudio({
           android: {
@@ -218,41 +206,32 @@ export default function RideScreen({ session, onLeave }: RideScreenProps) {
       video={false}
       connect={true}
       options={{
-        // 3. HARDWARE VOICE CAPTURE PIPELINE:
-        // Controls how the phone reads from the microphone before encoding.
         audioCaptureDefaults: {
-          autoGainControl: true,  // AGC: Normalizes volume (boosts quiet speech, compresses shouting)
-          echoCancellation: true, // Prevents acoustic feedback if someone isn't wearing headphones
-          noiseSuppression: true, // Built-in WebRTC noise floor suppressor
-          channelCount: 1,        // Mono voice: Cuts CPU & network usage in half compared to stereo
+          autoGainControl: true,
+          echoCancellation: true,
+          noiseSuppression: true,
+          channelCount: 1,
         },
-        // 4. OPUS ENCODING & VAD (VOICE ACTIVITY DETECTION):
         publishDefaults: {
-          // 24 kbps is the exact bitrate Discord uses for high-fidelity speech clarity
           audioPreset: {
             maxBitrate: 24000,
           },
-          // DTX (Discontinuous Transmission): Acts as an automatic audio gate.
-          // WebRTC pauses packet transmission when the rider is quiet, eliminating
-          // constant background static and preserving mobile cellular data.
           dtx: true,
-          // Disables RED encapsulation to prevent buffer queues and fast-forward bursts
           red: false,
         },
-        // 5. CELLULAR HANDOFF RETRY POLICY:
-        // Always returns a delay (never null), so the SDK never gives up on its own -- signal
-        // loss keeps the rider in the room (RideRoom falls back to the offline mesh meanwhile).
         reconnectPolicy: {
-          nextRetryDelayInMs: (retryContext) => {
+          nextRetryDelayInMs: retryContext => {
             return Math.min(100 * Math.pow(1.5, retryContext.retryCount), 2000);
           },
         },
       }}
       onConnected={() => setConnectError(null)}
-      onError={(e) => setConnectError(e.message)}
-      onMediaDeviceFailure={(failure) => {
+      onError={e => setConnectError(e.message)}
+      onMediaDeviceFailure={failure => {
         if (failure) {
-          setConnectError(`Microphone unavailable (${MEDIA_DEVICE_FAILURE_LABELS[failure] || failure}).`);
+          setConnectError(
+            `Microphone unavailable (${MEDIA_DEVICE_FAILURE_LABELS[failure] || failure}).`,
+          );
         }
       }}
     >
@@ -284,8 +263,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const localSpeaking = speakers.some(p => p.isLocal);
   const remoteSpeaking = speakers.some(p => !p.isLocal);
   const { token: authToken } = useAuth();
-  // Layout-only state: measured HUD / panel heights (so map overlays stay clear of them),
-  // whether the rider list is expanded, and the settings sheet.
   const [hudHeight, setHudHeight] = useState(0);
   const [panelHeight, setPanelHeight] = useState(0);
   const [panelExpanded, setPanelExpanded] = useState(false);
@@ -293,16 +270,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [currentDestination, setCurrentDestination] = useState<RideDestination | null>(
     session.destination ?? null,
   );
-  // The real road-route RiderMap last fetched (OSRM), so OfflineRiderMap can keep showing an
-  // actual route line -- not just a destination pin -- after the app falls back to mesh-only.
-  // Stable identity (deps: []) so RiderMap's own effect that calls this doesn't re-fire on every
-  // RideScreen render.
   const [cachedRouteGeometry, setCachedRouteGeometry] = useState<GeoJSON.LineString | null>(null);
   const handleRouteGeometryChange = useCallback((geometry: GeoJSON.LineString | null) => {
     setCachedRouteGeometry(geometry);
   }, []);
-  // OfflineRiderMap only detects and reports off-route transitions (it has no TTS access of its
-  // own); speaking the alert is this screen's job, same division as every other audio cue here.
   const handleOffRouteChange = useCallback((isOffRoute: boolean) => {
     speakText(isOffRoute ? 'You are off route.' : 'Back on route.').catch(() => {});
   }, []);
@@ -310,15 +281,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [destinationQuery, setDestinationQuery] = useState(session.destination?.name ?? '');
   const [destinationUpdating, setDestinationUpdating] = useState(false);
   const [destinationError, setDestinationError] = useState<string | null>(null);
-  // The suggestion the host tapped, until they edit the text again (then it's re-geocoded).
   const [pickedDestination, setPickedDestination] = useState<RideDestination | null>(null);
   const destinationSuggestions = useDestinationSuggestions(
     destinationQuery,
     destinationEditorVisible && pickedDestination === null,
   );
-  // Telling the other riders about a new destination is best-effort: the change is already saved
-  // on the server by then, and a broadcast that fails (LiveKit says "PC manager is closed" while
-  // this phone is reconnecting) is held and re-sent once the room is back. See destinationBroadcast.
   const destinationBroadcaster = useMemo(
     () =>
       createDestinationBroadcaster(destination =>
@@ -400,13 +367,14 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         return;
       }
       const confirmed = await updateRoomDestination(session.roomCode, geocoded, authToken);
-      // Saved: from here the change has happened, whatever the broadcast below does.
       setCurrentDestination(confirmed);
       setDestinationQuery(confirmed.name ?? query);
       setDestinationEditorVisible(false);
       destinationBroadcaster.send(confirmed).then(delivered => {
         if (!delivered) {
-          showDestinationNotice("Destination saved. Other riders will get it once you're back online.");
+          showDestinationNotice(
+            "Destination saved. Other riders will get it once you're back online.",
+          );
         }
       });
     } catch (error: any) {
@@ -425,7 +393,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     showDestinationNotice,
   ]);
 
-  // A destination that could not be sent while the room was reconnecting goes out once it is back.
   useEffect(() => {
     if (connectionState === ConnectionState.Connected && destinationBroadcaster.hasPending()) {
       destinationBroadcaster.retryPending();
@@ -439,14 +406,13 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     }
   }, [connectionState, session.roomCode]);
 
-  useConnectionCues(connectionState, (transition) => {
+  useConnectionCues(connectionState, transition => {
     logDiagnosticEvent(
       transition === 'lost' ? 'connection_lost' : 'reconnected',
       transition === 'lost' ? 'Connection lost — reconnecting' : 'Connection restored',
     );
   });
 
-  // Capacity check
   useEffect(() => {
     if (connectionState !== ConnectionState.Connected || hasCheckedCapacityRef.current) {
       return;
@@ -461,7 +427,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     }
   }, [connectionState, room, onLeave]);
 
-  // --- Cloud <-> offline mesh fallback -------------------------------------------------------
   const isOnline = connectionState === ConnectionState.Connected;
   const isOnlineRef = useRef(isOnline);
   isOnlineRef.current = isOnline;
@@ -479,12 +444,11 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const [lastSent, setLastSent] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [offlinePeerCount, setOfflinePeerCount] = useState(0);
-  const [bannerAlert, setBannerAlert] = useState<{ packet: HazardPacket; kind: HazardBannerKind } | null>(
-    null,
-  );
+  const [bannerAlert, setBannerAlert] = useState<{
+    packet: HazardPacket;
+    kind: HazardBannerKind;
+  } | null>(null);
   const senderIdRef = useRef(Math.random().toString(36).slice(2, 10));
-  // True while this phone's own speaker is reading an alert (plus a short tail), so the always-on
-  // recognizer ignores it instead of hearing "...reported low fuel" as this rider saying it.
   const echoGuardRef = useRef(createEchoGuard());
   const onLocalMeshHazardRef = useRef<(packet: HazardPacket) => void>(() => {});
   const hazardCoordinator = useMemo(
@@ -496,12 +460,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         isOnline: () => isOnlineRef.current,
         onLocalAccepted: packet => {
           onLocalMeshHazardRef.current(packet);
-          // Silent, visual-only confirmation: the rider already knows what they just said.
           setBannerAlert({ packet, kind: 'sent' });
         },
         onIncomingAccepted: (packet, _ingress, shouldAnnounce) => {
           setBannerAlert({ packet, kind: 'received' });
-          // Presentation stays in RideScreen: announce once, duck for the readout, then restore.
           if (shouldAnnounce) {
             echoGuardRef.current.begin();
             duckRemoteAudio(room, true);
@@ -514,9 +476,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         onLocalSendResult: (packet, outcomes) => {
           const result = outcomes
             .map(outcome =>
-              outcome.ok
-                ? `${outcome.channel} ok`
-                : `${outcome.channel} FAILED (${outcome.error})`,
+              outcome.ok ? `${outcome.channel} ok` : `${outcome.channel} FAILED (${outcome.error})`,
             )
             .join(', ');
           setLastSent(`${HAZARD_LABELS[packet.hazard]} → ${result}`);
@@ -527,8 +487,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   const hazardCoordinatorRef = useRef(hazardCoordinator);
   hazardCoordinatorRef.current = hazardCoordinator;
 
-  // --- Offline mesh-sync: 3-min telemetry pings + hazard relay + reconnect flush, layered on the
-  // same Nearby Connections session as the voice-hazard mesh above (see meshSyncManager.ts). ---
   const selfLocationRef = useRef<GeoPoint | null>(null);
   const onMeshHazardRef = useRef<(hazard: HazardEventPacket) => void>(() => {});
   const [offlineRiders, setOfflineRiders] = useState<RiderNode[]>([]);
@@ -547,11 +505,12 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   }
   const meshSyncManager = meshSyncManagerRef.current;
   onMeshHazardRef.current = hazard => {
-    logDiagnosticEvent('mesh_hazard_received', `${hazard.hazardType} relayed from ${hazard.riderName}`);
+    logDiagnosticEvent(
+      'mesh_hazard_received',
+      `${hazard.hazardType} relayed from ${hazard.riderName}`,
+    );
   };
   onLocalMeshHazardRef.current = packet => {
-    // A crash alert pins the map where the rider went down, not where the last periodic
-    // location ping happened to be.
     const crashSpot =
       packet.sos?.lat !== undefined && packet.sos.lng !== undefined
         ? { latitude: packet.sos.lat, longitude: packet.sos.lng }
@@ -564,7 +523,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const transport: Transport = isOnline ? 'cloud' : meshMode ? 'mesh' : 'connecting';
 
-  // Enter mesh mode only after a sustained outage; leave it the moment the room is back.
   useEffect(() => {
     if (isOnline) {
       setMeshMode(false);
@@ -574,9 +532,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     return () => clearTimeout(timer);
   }, [isOnline]);
 
-  // A ride never ends on signal loss. If the SDK has given up (state Disconnected) -- retries
-  // exhausted or the signal channel closed -- keep re-joining with backoff. Skipped for the
-  // deliberate capacity kick; a manual Leave unmounts this screen, which cancels the timer.
   useEffect(() => {
     if (connectionState !== ConnectionState.Disconnected || capacityError) {
       return;
@@ -597,8 +552,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         }
       }
     };
-    // Initial delay also covers the first render, when the room is still Disconnected only
-    // because LiveKitRoom hasn't started its own connect yet.
     timer = setTimeout(tryReconnect, 2000);
     return () => {
       cancelled = true;
@@ -606,14 +559,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     };
   }, [connectionState, capacityError, room, session.serverUrl, session.token]);
 
-  // Ask once, up front, so a mid-ride outage never triggers a permission dialog.
   useEffect(() => {
     ensureMeshPermission().then(setMeshPermission);
   }, []);
 
-  // Tracks connected mesh peers independently of meshStatus, for the "Riders Connected Offline"
-  // sub-label -- always subscribed (a no-op while the mesh session isn't running). Also feeds
-  // meshSyncManager: a 0 -> positive jump means mesh connectivity was regained.
   useEffect(
     () =>
       nearbyTransport.onPeerCountChanged(count => {
@@ -623,9 +572,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     [meshSyncManager],
   );
 
-  // The mesh runs for the whole ride, not only while offline: an online rider has to hear a hazard
-  // from an offline neighbour (over Nearby Connections) to relay it into the room. Costs some
-  // battery; Bluetooth must be on and Google Play Services present.
   useEffect(() => {
     if (meshPermission === null) {
       return;
@@ -634,9 +580,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       setMeshError('Bluetooth / nearby-devices permission denied');
       return;
     }
-    // The single Nearby owner (see rideMeshSession): the app connectivity client starts Nearby and
-    // the Phase 2 runtime on it, retries a failed start, and falls back to a Phase 1-only session
-    // if the protocol cannot initialize. Mesh sync starts once Nearby is up and stops before it.
     const disposeMesh = startAppRideMeshSession({
       rideId: session.roomCode,
       riderName: session.riderName,
@@ -659,12 +602,10 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     };
   }, [meshPermission, session.roomCode, session.riderName, meshSyncManager]);
 
-  // Debug builds only: dev-menu switch to make this one phone a test cloud gateway.
   useEffect(registerRideConnectivityDevMenu, []);
 
   useEffect(() => hazardCoordinator.subscribe(), [hazardCoordinator]);
 
-  // Always-on offline speech -> hazard detection; independent of connectivity and of the mic mute.
   useEffect(
     () =>
       startSpeechHazardDetection({
@@ -678,19 +619,19 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     [session.riderName],
   );
 
-  // "Jarvis": wake word ("send message") -> dictated message -> dispatched to the group over the
-  // mesh. Rides on the same always-on speech recognizer as hazard detection above; doesn't start
-  // or stop the microphone itself.
   useEffect(
     () =>
       startJarvisVoice({
-        // Dispatched through the same hazard pipeline as a spoken hazard or crash alert -- it
-        // already handles both the mesh and the cloud room in one call, and the receiving end
-        // already reads an incoming hazard aloud and banners it (see hazardCoordinator's
-        // onIncomingAccepted above), so a voice note gets both for free.
         onMessage: message =>
           hazardCoordinatorRef.current.submitLocal(
-            createHazardPacket('info', senderIdRef.current, session.riderName, Date.now(), undefined, message),
+            createHazardPacket(
+              'info',
+              senderIdRef.current,
+              session.riderName,
+              Date.now(),
+              undefined,
+              message,
+            ),
           ),
         announce: text => {
           echoGuardRef.current.begin();
@@ -713,7 +654,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 
   const riderIdentities = useMemo(
-    () => sortedRemoteParticipants.map((p) => ({ identity: p.identity, name: p.name || p.identity })),
+    () => sortedRemoteParticipants.map(p => ({ identity: p.identity, name: p.name || p.identity })),
     [sortedRemoteParticipants],
   );
 
@@ -738,21 +679,16 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     session.riderName,
   );
 
-  // Keeps meshSyncManager's 3-minute telemetry ping fed with this device's latest GPS fix,
-  // reusing the same location source the online rider map already has -- no second GPS watch.
   useEffect(() => {
     const local = locations.find(l => l.participantIdentity === localParticipant.identity);
-    selfLocationRef.current = local ? { latitude: local.latitude, longitude: local.longitude } : null;
+    selfLocationRef.current = local
+      ? { latitude: local.latitude, longitude: local.longitude }
+      : null;
   }, [locations, localParticipant.identity]);
 
-  // Crash / laydown detection: IMU + GNSS evidence -> "Are you OK?" countdown -> an 'accident'
-  // alert to the group through the same hazard path as a spoken report (mesh and cloud). The
-  // announcement goes through the echo guard so the always-on recogniser ignores it.
   const crash = useCrashDetection({
     enabled: true,
     onSos: sos => {
-      // Position, speed and severity ride along on the 'accident' packet (over the mesh and the
-      // cloud room); a missing GNSS fix simply leaves the position out.
       const hasPosition = sos.latitude !== null && sos.longitude !== null;
       hazardCoordinatorRef.current.submitLocal(
         createHazardPacket('accident', senderIdRef.current, session.riderName, sos.timestamp, {
@@ -773,9 +709,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     },
   });
 
-  // Emergency hard braking: the native detector alerts at IMU onset; the compact packet goes out
-  // over the mesh (and the cloud when online) before any local feedback. Riders behind get a
-  // flasher, a strong vibration and a spoken warning.
   const brakeAnnounce = useCallback(
     (text: string) => {
       echoGuardRef.current.begin();
@@ -820,7 +753,7 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
       return 'Checking location permission...';
     }
     if (locationPermissionGranted === false) {
-      return "Location sharing is unavailable. The intercom still works normally.";
+      return 'Location sharing is unavailable. The intercom still works normally.';
     }
 
     const hasLocalLocation = locations.some(
@@ -839,7 +772,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
     return null;
   }, [locationPermissionGranted, locations, localParticipant.identity]);
-  // Mute / Unmute Toggle
   const handleToggleMute = useCallback(async () => {
     if (room.state !== ConnectionState.Connected) {
       Alert.alert('Please wait', 'Connecting to audio stream...');
@@ -858,7 +790,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const riderCount = remoteParticipants.length + 1;
   const displayedError = capacityError ?? connectError;
-  const statusLabel = connectError ? 'Error' : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
+  const statusLabel = connectError
+    ? 'Error'
+    : CONNECTION_STATE_LABELS[connectionState] ?? 'Unknown';
 
   const warningLines = [
     backgroundWarning,
@@ -866,23 +800,23 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
     voiceError ? `Hazard voice detection off: ${voiceError}` : null,
   ].filter(Boolean) as string[];
 
-  // --- Presentation-only values (all derived from the state above) ------------------------------
   const onlineCount = riderCount;
   const connectionTone =
     connectionState === ConnectionState.Connected && !connectError
       ? brand.success
       : connectionState === ConnectionState.Reconnecting ||
-          connectionState === ConnectionState.SignalReconnecting ||
-          connectionState === ConnectionState.Connecting
-        ? brand.warning
-        : brand.danger;
-  const transportLabel = transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING';
+        connectionState === ConnectionState.SignalReconnecting ||
+        connectionState === ConnectionState.Connecting
+      ? brand.warning
+      : brand.danger;
+  const transportLabel =
+    transport === 'cloud' ? 'CLOUD' : transport === 'mesh' ? 'MESH' : 'CONNECTING';
   const meshProblem = meshError ?? meshStatus.error;
   const meshLabel = meshProblem
     ? 'MESH UNAVAILABLE'
     : meshStatus.active
-      ? `MESH ACTIVE · ${meshStatus.peers} NEARBY`
-      : 'MESH IDLE';
+    ? `MESH ACTIVE · ${meshStatus.peers} NEARBY`
+    : 'MESH IDLE';
   const meshTone = meshProblem ? brand.warning : meshStatus.active ? brand.primary : brand.outline;
 
   const voiceState: { label: string; tone: string } = (() => {
@@ -920,16 +854,12 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
 
   const hudBottom = insets.top + 8 + hudHeight;
   const bannerTop = hudBottom + 8;
-  // The crash card takes the hazard banner slot while it is up.
   const crashCardActive = crash.state.phase === 'countdown' || crash.state.phase === 'sos';
 
   return (
     <View style={styles.container}>
       <View style={StyleSheet.absoluteFill}>
         {transport === 'mesh' ? (
-          // No cloud room means no LiveKit data channel, so RiderMap's `locations` never carries
-          // anyone but this device -- meshSyncManager's TELEMETRY_PING relay is what still knows
-          // where other riders are while offline, so the map switches to that source instead.
           <OfflineRiderMap
             riders={offlineRiders}
             mapStyleUrl={MAPTILER_STYLE_URL}
@@ -974,7 +904,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
         )}
       </View>
 
-      {/* Visual presence notifications */}
       {presenceToast ? <PresenceToast message={presenceToast} /> : null}
       {destinationNotice ? <PresenceToast message={destinationNotice} /> : null}
       {bannerAlert && !crashCardActive ? (
@@ -1251,7 +1180,9 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
                 }}
               />
             ) : null}
-            {destinationError ? <Text style={styles.destinationError}>{destinationError}</Text> : null}
+            {destinationError ? (
+              <Text style={styles.destinationError}>{destinationError}</Text>
+            ) : null}
             <View style={styles.destinationModalActions}>
               <Pressable
                 style={styles.destinationCancelButton}
@@ -1279,8 +1210,6 @@ function RideRoom({ session, connectError, backgroundWarning, onLeave }: RideRoo
   );
 }
 
-/** Elapsed time since this rider joined the ride. Owns its own 1s tick so the rest of the
- * screen doesn't re-render every second. */
 function RideTimer() {
   const [startedAt] = useState(() => Date.now());
   const [now, setNow] = useState(startedAt);
@@ -1293,7 +1222,11 @@ function RideTimer() {
   const m = Math.floor((total % 3600) / 60);
   const s = total % 60;
   const pad = (n: number) => String(n).padStart(2, '0');
-  return <Text style={styles.timerText}>{h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}</Text>;
+  return (
+    <Text style={styles.timerText}>
+      {h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`}
+    </Text>
+  );
 }
 
 const SURFACE = 'rgba(17, 25, 35, 0.94)';
@@ -1313,7 +1246,13 @@ const styles = StyleSheet.create({
   },
   hudTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   hudTitleBlock: { flex: 1 },
-  hudTitle: { ...homeType.headlineSmall, fontSize: 18, lineHeight: 22, color: brand.textPrimary, letterSpacing: 1 },
+  hudTitle: {
+    ...homeType.headlineSmall,
+    fontSize: 18,
+    lineHeight: 22,
+    color: brand.textPrimary,
+    letterSpacing: 1,
+  },
   hudRoom: { ...homeType.labelSmall, color: brand.primary },
   timerPill: {
     minHeight: 32,

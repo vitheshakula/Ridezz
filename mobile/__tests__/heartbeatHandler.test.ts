@@ -21,9 +21,7 @@ import {
 } from '../src/connectivity/protocol/rideMessageCodec';
 import { createSeenMessageCache } from '../src/connectivity/protocol/seenMessageCache';
 
-/** Protocol (wall) clock: shared across devices. */
 const WALL = 1_700_000_000_000;
-/** Peer-freshness (monotonic) clock: local to B. */
 const MONO = 50_000;
 const RIDE = '12345';
 
@@ -31,7 +29,6 @@ function heartbeatFrom(originId: string, id = `hb-${originId}-1`, createdAt = WA
   return createHeartbeatMessage({ id, rideId: RIDE, originId, createdAt });
 }
 
-/** Node B's receive side: real ingress (wall clock) and a real PeerTable (monotonic clock). */
 function nodeB(peerTable: PeerTable = createPeerTable({ localNodeId: 'rider-b' })) {
   const ingress = createRideMessageIngress({
     rideId: RIDE,
@@ -54,7 +51,6 @@ describe('heartbeat handler: end to end', () => {
     const { peerTable, receive } = nodeB();
     const original = heartbeatFrom('rider-a');
 
-    // A sends the heartbeat exactly as created: hopCount 0, maxHops 0, no decideRelay.
     expect(original).toMatchObject({ hopCount: 0, maxHops: 0 });
     const accepted = receive(encodeRideMessage(original), { transportId: 'transport-x' });
     expect(accepted.message).toEqual(original);
@@ -67,9 +63,7 @@ describe('heartbeat handler: end to end', () => {
     });
     expect(peerTable.isDirectPeer('rider-a', MONO)).toBe(true);
 
-    // B cannot propagate A's heartbeat to C. maxHops 0 is checked before message type.
     expect(decideRelay(accepted.message, WALL)).toEqual({ relay: false, reason: 'hop_limit' });
-    // Even with hop budget, heartbeat type policy forbids relaying.
     const withBudget = createRideMessage({
       ...original,
       type: 'heartbeat',
@@ -145,8 +139,6 @@ describe('heartbeat handler: identity mapping', () => {
   });
 
   test('the SAME heartbeat over a second transport is deduplicated before presence', () => {
-    // Documents a current limitation: ingress collapses the copy, so transport-y is not learned
-    // from it. Per-transport presence needs a distinct heartbeat id per transport.
     const ingress = createRideMessageIngress({
       rideId: RIDE,
       localNodeId: 'rider-b',
@@ -200,8 +192,6 @@ describe('heartbeat handler: clock domains', () => {
 
 describe('heartbeat handler: directness', () => {
   test('a relayed heartbeat (hopCount > 0) is rejected and leaves the table unchanged', () => {
-    // Built from valid parts so it passes real ingress: a misbehaving node with hop budget
-    // relayed it. Production validation is not weakened to construct this case.
     const withBudget = createRideMessage({
       id: 'hb-relayed',
       rideId: RIDE,
@@ -250,28 +240,32 @@ describe('heartbeat handler: directness', () => {
 });
 
 describe('heartbeat handler: other message types', () => {
-  test.each<RideMessageType>(['sos', 'hazard', 'ack', 'location', 'ride_state', 'gateway_advertisement'])(
-    'an accepted direct %s does not refresh presence',
-    type => {
-      const m = createRideMessage({
-        id: `m-${type}`,
-        rideId: RIDE,
-        originId: 'rider-a',
-        type,
-        priority: 'normal',
-        payload: {},
-        ttlMs: 10_000,
-        maxHops: 3,
-        now: WALL,
-      });
-      const { peerTable, receive } = nodeB();
+  test.each<RideMessageType>([
+    'sos',
+    'hazard',
+    'ack',
+    'location',
+    'ride_state',
+    'gateway_advertisement',
+  ])('an accepted direct %s does not refresh presence', type => {
+    const m = createRideMessage({
+      id: `m-${type}`,
+      rideId: RIDE,
+      originId: 'rider-a',
+      type,
+      priority: 'normal',
+      payload: {},
+      ttlMs: 10_000,
+      maxHops: 3,
+      now: WALL,
+    });
+    const { peerTable, receive } = nodeB();
 
-      expect(
-        handleHeartbeat(receive(encodeRideMessage(m), { transportId: 'x' }), MONO, peerTable),
-      ).toEqual({ observed: false, reason: 'not_heartbeat' });
-      expect(peerTable.getPeers(MONO)).toEqual([]);
-    },
-  );
+    expect(
+      handleHeartbeat(receive(encodeRideMessage(m), { transportId: 'x' }), MONO, peerTable),
+    ).toEqual({ observed: false, reason: 'not_heartbeat' });
+    expect(peerTable.getPeers(MONO)).toEqual([]);
+  });
 });
 
 describe('heartbeat handler: PeerTable rejections', () => {
@@ -284,7 +278,6 @@ describe('heartbeat handler: PeerTable rejections', () => {
   }
 
   test('a heartbeat claiming the local node id is rejected by the table', () => {
-    // Ingress would drop this as local_origin; the table still guards independently.
     const peerTable = createPeerTable({ localNodeId: 'rider-b' });
 
     expect(handleHeartbeat(accepted(heartbeatFrom('rider-b')), MONO, peerTable)).toEqual({

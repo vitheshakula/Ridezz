@@ -36,26 +36,20 @@ import {
   type ReliableDeliveryEvent,
 } from './reliableDeliveryEngine';
 
-/** Matches the name bound used by the current Android Nearby endpoint name. */
 export const RIDE_CONNECTIVITY_MAX_RIDER_NAME_LENGTH = 24;
 
-/** Authentication is an application-layer precondition. Deliberately contains no token. */
 export interface RideConnectivityRideContext {
   readonly rideId: string;
   readonly riderName: string;
 }
 
-/** M1 routes application messages toward one discovered cloud gateway. */
 export interface RideConnectivityDestination {
   readonly kind: 'gateway';
-  /** Omit to use the best currently known gateway. This is an unauthenticated protocol node id. */
   readonly gatewayNodeId?: string;
 }
 
 export interface RideConnectivityMessageInput {
-  /** Must match the active ride, preventing a stale service from sending into a new session. */
   readonly rideId: string;
-  /** Heartbeats and gateway advertisements are runtime-owned and are rejected here. */
   readonly type: RideMessageType;
   readonly priority: RideMessagePriority;
   readonly payload: JsonValue;
@@ -64,8 +58,6 @@ export interface RideConnectivityMessageInput {
   readonly destination?: RideConnectivityDestination;
 }
 
-/** Public application view of a received RideMessage. Routing metadata is intentionally omitted.
- * `originId` is an unauthenticated per-ride protocol node id, never a verified rider identity. */
 export type RideConnectivityIncomingMessage = Readonly<
   Pick<
     RideMessage<JsonValue>,
@@ -74,7 +66,6 @@ export type RideConnectivityIncomingMessage = Readonly<
 >;
 
 export interface RideConnectivityMessageSubmission {
-  /** A valid locally generated protocol id. This confirms submission, not delivery. */
   readonly messageId: string;
 }
 
@@ -87,7 +78,6 @@ export type RideConnectivityDeliveryStatus =
   | (RideConnectivityDeliveryBase & { readonly state: 'queued' })
   | (RideConnectivityDeliveryBase & { readonly state: 'sending' })
   | (RideConnectivityDeliveryBase & {
-      /** The send operation resolved. This is not destination delivery. */
       readonly state: 'transport_accepted';
       readonly transportId: string;
     })
@@ -96,7 +86,6 @@ export type RideConnectivityDeliveryStatus =
       readonly nextAttemptAt: number;
     })
   | (RideConnectivityDeliveryBase & {
-      /** Reserved for a future verified ACK correlator; M1 never emits this state. */
       readonly state: 'destination_delivered';
       readonly acknowledgementMessageId: string;
     })
@@ -112,16 +101,13 @@ export type RideConnectivityDeliveryStatus =
         | 'queue_full'
         | 'retry_exhausted'
         | 'outbox_unavailable';
-      /** `unknown` means the operation timed out or threw after its actual outcome became unclear. */
       readonly outcome: 'not_sent' | 'unknown';
     })
   | (RideConnectivityDeliveryBase & {
-      /** The message TTL elapsed without valid destination acknowledgement evidence. */
       readonly state: 'expired';
       readonly expiresAt: number;
     });
 
-/** Transport state only. A direct peer count is not a count of authenticated Rideaze users. */
 export interface RideConnectivityPeerStatus {
   readonly transportId: string;
   readonly state: 'inactive' | 'starting' | 'active' | 'unavailable' | 'error';
@@ -137,7 +123,6 @@ export type RideConnectivityErrorCode =
   | 'runtime_error'
   | 'lifecycle_error';
 
-/** Sanitized structured error. It never contains payloads, tokens, endpoint ids, or raw errors. */
 export interface RideConnectivityErrorEvent {
   readonly code: RideConnectivityErrorCode;
   readonly operation: 'start' | 'stop' | 'send' | 'receive' | 'listener';
@@ -146,9 +131,7 @@ export interface RideConnectivityErrorEvent {
   readonly messageId?: string;
 }
 
-export type RideConnectivityMessageListener = (
-  message: RideConnectivityIncomingMessage,
-) => void;
+export type RideConnectivityMessageListener = (message: RideConnectivityIncomingMessage) => void;
 export type RideConnectivityPeerStatusListener = (status: RideConnectivityPeerStatus) => void;
 export type RideConnectivityDeliveryStatusListener = (
   status: RideConnectivityDeliveryStatus,
@@ -158,17 +141,13 @@ export type RideConnectivityErrorListener = (error: RideConnectivityErrorEvent) 
 export interface RideConnectivityDiagnosticEvent {
   readonly category: 'peer' | 'delivery' | 'error';
   readonly event: string;
-  /** Random protocol ID prefix only; payloads and transport endpoint IDs are never included. */
   readonly messageIdPrefix?: string;
   readonly peerCount?: number;
 }
 
 export interface RideConnectivityClient {
-  /** Starts one ride. Same-ride calls are idempotent; a different active ride is rejected. */
   start(rideContext: RideConnectivityRideContext): Promise<void>;
-  /** Stops the current generation and its internal subscriptions. Idempotent. */
   stop(): Promise<void>;
-  /** Validates and submits one gateway-routed message. The result is not a delivery receipt. */
   sendMessage(input: RideConnectivityMessageInput): Promise<RideConnectivityMessageSubmission>;
   onMessage(listener: RideConnectivityMessageListener): () => void;
   onPeerStatus(listener: RideConnectivityPeerStatusListener): () => void;
@@ -176,7 +155,6 @@ export interface RideConnectivityClient {
   onError(listener: RideConnectivityErrorListener): () => void;
 }
 
-/** Dependency seam used by the app composition root and deterministic tests. */
 export interface RideConnectivityClientAdapter {
   readonly transportId: string;
   readonly transport: Transport<string> & TargetedTransport<string>;
@@ -187,19 +165,15 @@ export interface RideConnectivityClientAdapter {
     readonly generateMessageId: () => string;
     readonly onApplicationMessage: (received: ConnectivityApplicationMessage) => void;
   }): RideConnectivityRuntime;
-  /** Optional backend-authorized verifier. Without it, ACKs fail closed and never confirm delivery. */
   readonly acknowledgementVerifier?: DeliveryAcknowledgementVerifier;
-  /** Optional application/cloud boundary for a node that is itself the selected gateway. */
   readonly handoffToGateway?: (
     message: RideMessage<JsonValue>,
   ) => Promise<
     | { readonly accepted: true; readonly transportId: string }
     | { readonly accepted: false; readonly reason: string }
   >;
-  /** Encrypted durable queue. When omitted, the client retains M1 in-memory behavior. */
   readonly outbox?: PersistentOutbox;
   readonly onDiagnostic?: (event: RideConnectivityDiagnosticEvent) => void;
-  /** Protocol wall clock. */
   readonly clock?: () => number;
 }
 
@@ -222,7 +196,6 @@ interface ActiveGeneration {
   readonly gatewayHandoffs: Set<string>;
   readonly deliveryEngine: ReliableDeliveryEngine | null;
   readonly unsubscribeTransport: readonly (() => void)[];
-  /** Guards a receive already in flight while this generation is being stopped. */
   readonly receiveGate: { open: boolean };
 }
 
@@ -251,10 +224,7 @@ function validDestination(value: unknown): value is RideConnectivityDestination 
   return (
     destination.kind === 'gateway' &&
     (destination.gatewayNodeId === undefined ||
-      isValidRideMessageIdentifier(
-        destination.gatewayNodeId,
-        RIDE_MESSAGE_MAX_ORIGIN_ID_LENGTH,
-      ))
+      isValidRideMessageIdentifier(destination.gatewayNodeId, RIDE_MESSAGE_MAX_ORIGIN_ID_LENGTH))
   );
 }
 
@@ -280,7 +250,6 @@ const TERMINAL_DELIVERY_STATES: ReadonlySet<RideConnectivityDeliveryStatus['stat
   'expired',
 ]);
 
-/** Creates one lifecycle owner. Only one instance should own a concrete transport at a time. */
 export function createRideConnectivityClient({
   transportId,
   transport,
@@ -314,9 +283,7 @@ export function createRideConnectivityClient({
   const reportDiagnostic = (event: RideConnectivityDiagnosticEvent): void => {
     try {
       onDiagnostic?.(Object.freeze({ ...event }));
-    } catch {
-      // Diagnostics must never affect protocol behavior.
-    }
+    } catch {}
   };
 
   const enqueue = <T>(operation: () => Promise<T>): Promise<T> => {
@@ -338,9 +305,7 @@ export function createRideConnectivityClient({
     for (const listener of [...errorListeners]) {
       try {
         listener(safeEvent);
-      } catch {
-        // Error listeners are the final reporting boundary and cannot recursively report failure.
-      }
+      } catch {}
     }
   };
 
@@ -367,9 +332,7 @@ export function createRideConnectivityClient({
     }
   };
 
-  const updatePeerStatus = (
-    next: Omit<RideConnectivityPeerStatus, 'transportId'>,
-  ): void => {
+  const updatePeerStatus = (next: Omit<RideConnectivityPeerStatus, 'transportId'>): void => {
     const normalized: RideConnectivityPeerStatus = Object.freeze({ transportId, ...next });
     if (
       normalized.state === peerStatus.state &&
@@ -476,12 +439,13 @@ export function createRideConnectivityClient({
     const unsubscribeTransport: (() => void)[] = [];
     const receiveGate = { open: true };
     let runtime: RideConnectivityRuntime | null = null;
-      let outboxReady = false;
+    let outboxReady = false;
     let transportStarted = false;
     try {
       unsubscribeTransport.push(
         transport.onStatus(status => {
-          const peerCount = Number.isSafeInteger(status.peers) && status.peers >= 0 ? status.peers : 0;
+          const peerCount =
+            Number.isSafeInteger(status.peers) && status.peers >= 0 ? status.peers : 0;
           updatePeerStatus({
             state: status.error ? 'error' : status.active ? 'active' : 'inactive',
             transportAvailable: status.error ? status.active : true,
@@ -564,7 +528,9 @@ export function createRideConnectivityClient({
                   return;
                 }
                 if (result.accepted) {
-                  active?.deliveryEngine?.acknowledge(result.originalMessageId).catch(() => undefined);
+                  active?.deliveryEngine
+                    ?.acknowledge(result.originalMessageId)
+                    .catch(() => undefined);
                   emitDelivery({
                     state: 'destination_delivered',
                     messageId: result.originalMessageId,
@@ -637,10 +603,7 @@ export function createRideConnectivityClient({
           originalOriginId: message.originId,
           expiresAt: message.expiresAt,
         });
-        const result = await generation.runtime.sendToGateway(
-          message,
-          record.destinationGatewayId,
-        );
+        const result = await generation.runtime.sendToGateway(message, record.destinationGatewayId);
         if (result.status === 'sent') {
           generation.acknowledgements.bindDestination(message.id, result.route.gatewayNodeId);
           emitDelivery({
@@ -660,9 +623,7 @@ export function createRideConnectivityClient({
                 transportId: handoff.transportId,
               });
             }
-          } catch {
-            // The engine will retry; raw failure details are deliberately discarded.
-          }
+          } catch {}
         }
         return { state: 'retry' as const, reason: result.status };
       };
@@ -905,8 +866,6 @@ export function createRideConnectivityClient({
       now,
     });
     try {
-      // Validate both the base envelope and a worst-case final routed envelope. The latter ensures
-      // gateway metadata cannot make a boundary-accepted packet exceed the wire-size limit.
       serializeRideMessage(message);
       serializeRideMessage(
         withGatewayRouting(message, {
@@ -939,10 +898,7 @@ export function createRideConnectivityClient({
     }
     switch (result.status) {
       case 'sent':
-        generation.acknowledgements.bindDestination(
-          message.id,
-          result.route.gatewayNodeId,
-        );
+        generation.acknowledgements.bindDestination(message.id, result.route.gatewayNodeId);
         emitDelivery({
           state: 'transport_accepted',
           messageId: message.id,
@@ -1006,9 +962,7 @@ export function createRideConnectivityClient({
             scheduleExpiry(message);
             return;
           }
-        } catch {
-          // Sanitized below.
-        }
+        } catch {}
         generation.acknowledgements.reject(message.id);
         emitError({
           code: 'runtime_error',

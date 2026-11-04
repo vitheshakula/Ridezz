@@ -46,7 +46,6 @@ export const SignupPage = ({ navigation }: any) => {
 
     setIsLoading(true);
     try {
-      // The server signs the new rider in as part of registering, so no second trip to Sign In.
       const result = await register(riderName, email, password);
       await login(result.token, result.user);
       navigation?.navigate('JoinScreen');
@@ -152,7 +151,9 @@ export const SignupPage = ({ navigation }: any) => {
             }}
             onSubmitEditing={handleSignup}
           />
-          {errors.confirmPassword ? <Text style={styles.fieldError}>{errors.confirmPassword}</Text> : null}
+          {errors.confirmPassword ? (
+            <Text style={styles.fieldError}>{errors.confirmPassword}</Text>
+          ) : null}
 
           {formError ? <Text style={styles.formError}>{formError}</Text> : null}
 

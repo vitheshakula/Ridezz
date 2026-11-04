@@ -1,10 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { DevSettings } from 'react-native';
-import {
-  crashNative,
-  isCrashDetectionAvailable,
-  subscribeToCrashEvents,
-} from './crashNative';
+import { crashNative, isCrashDetectionAvailable, subscribeToCrashEvents } from './crashNative';
 import {
   describeDecision,
   type CrashCalibrationResult,
@@ -19,15 +15,7 @@ export type CrashSensorStatus = 'off' | 'starting' | 'active' | 'unsupported' | 
 
 export interface UseCrashDetectionOptions {
   enabled: boolean;
-  /**
-   * Called once per alert when a countdown runs out (or the rider skips it). Dispatch the SOS to
-   * the group from here: the payload carries timestamp, position, speed before impact and severity.
-   */
   onSos: (sos: CrashSos) => void;
-  /**
-   * Speaks a line through the app's audio path. RideScreen supplies one wrapped in its echo guard
-   * so the always-on speech recogniser does not hear the phone's own announcement.
-   */
   announce?: (text: string) => Promise<void> | void;
 }
 
@@ -35,18 +23,13 @@ export interface UseCrashDetectionResult {
   state: CrashState;
   status: CrashSensorStatus;
   statusDetail: string | null;
-  /** "I'm OK": cancels a running countdown. Also the hook for a voice override. */
   cancel(): void;
   sendNow(): void;
   acknowledge(): void;
-  /** Pins the riding reference to the phone's current attitude. */
   calibrate(): Promise<CrashCalibrationResult>;
-  /** Starts a countdown without any sensor evidence (debug builds only). */
   simulate(): void;
 }
 
-// Dev menu entries can only be added, never removed, so register once and route to whichever
-// hook instance is currently mounted.
 let devSimulate: (() => void) | null = null;
 let devMenuRegistered = false;
 function registerDevMenu(): void {
@@ -57,7 +40,6 @@ function registerDevMenu(): void {
   DevSettings.addMenuItem('Rideaze: simulate crash', () => devSimulate?.());
 }
 
-/** Mirrors the native crash pipeline into React state and hands finished alerts to [onSos]. */
 export function useCrashDetection({
   enabled,
   onSos,
@@ -74,7 +56,6 @@ export function useCrashDetection({
   const countdownEndsAtRef = useRef(0);
   const handledSosIds = useRef(new Set<string>());
 
-  // Native monitoring + event mirror.
   useEffect(() => {
     if (!enabled) {
       return;
@@ -87,7 +68,6 @@ export function useCrashDetection({
     let cancelled = false;
     setStatus('starting');
 
-    // An alert is delivered at most once, whether it arrives by event or by recovery.
     const deliver = (sos: CrashSos) => {
       if (handledSosIds.current.has(sos.sosId)) {
         return;
@@ -122,7 +102,6 @@ export function useCrashDetection({
         deliver(sos);
       },
       onStateChanged: phase => {
-        // 'countdown', 'cancelled' and 'sos' are set with their details by the handlers above.
         if (phase === 'idle') {
           setState({ phase: 'idle' });
         }
@@ -144,8 +123,9 @@ export function useCrashDetection({
           return;
         }
         const detail =
-          `accel ±${info.accelMaxRangeG.toFixed(1)} g, gyro ${info.hasGyroscope ? 'yes' : 'none'}, ` +
-          `gravity ${info.hasGravity ? 'yes' : 'none'}, gnss ${info.gnss}`;
+          `accel ±${info.accelMaxRangeG.toFixed(1)} g, gyro ${
+            info.hasGyroscope ? 'yes' : 'none'
+          }, ` + `gravity ${info.hasGravity ? 'yes' : 'none'}, gnss ${info.gnss}`;
         logDiagnosticEvent('crash_sensors', `monitoring started: ${detail}`);
         if (!info.foregroundServiceActive) {
           logDiagnosticEvent(
@@ -155,7 +135,6 @@ export function useCrashDetection({
         }
         setStatus('active');
         setStatusDetail(detail);
-        // Recover an alert that fired while no JS listener was attached.
         return crashNative.consumePendingSos().then(pending => {
           if (pending && !cancelled) {
             deliver(pending);
@@ -181,8 +160,6 @@ export function useCrashDetection({
     };
   }, [enabled]);
 
-  // Spoken reminders while a countdown runs (the escalating vibration lives in CrashAlertModal).
-  // The wording avoids the app's hazard words ("crash", "accident", "help") so nothing hears itself.
   useEffect(() => {
     if (state.phase !== 'countdown') {
       return;

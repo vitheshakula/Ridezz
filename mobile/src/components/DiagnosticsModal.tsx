@@ -17,11 +17,10 @@ function formatTime(timestamp: number): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-/** Plain-text rendering of the whole log, oldest first (so a pasted copy reads chronologically,
- * unlike the on-screen newest-first list) -- for pasting into a bug report from a device with no
- * adb attached. */
 function formatLogForCopy(events: DiagnosticEvent[]): string {
-  return events.map(e => `${new Date(e.timestamp).toISOString()}  ${e.type}  ${e.message}`).join('\n');
+  return events
+    .map(e => `${new Date(e.timestamp).toISOString()}  ${e.type}  ${e.message}`)
+    .join('\n');
 }
 
 function renderItem({ item }: { item: DiagnosticEvent }) {
@@ -33,8 +32,6 @@ function renderItem({ item }: { item: DiagnosticEvent }) {
   );
 }
 
-/** Read-only view of the in-memory session diagnostics log -- what a rider
- * needs to glance at during/after a road test without adb. Newest event first. */
 export default function DiagnosticsModal({ visible, onClose }: DiagnosticsModalProps) {
   const events = useDiagnosticsLog();
   const reversed = [...events].reverse();
@@ -49,7 +46,12 @@ export default function DiagnosticsModal({ visible, onClose }: DiagnosticsModalP
 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
-      <View style={[styles.container, { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom }]}>
+      <View
+        style={[
+          styles.container,
+          { paddingTop: insets.top + spacing.xl, paddingBottom: insets.bottom },
+        ]}
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Diagnostics</Text>
           <View style={styles.headerActions}>

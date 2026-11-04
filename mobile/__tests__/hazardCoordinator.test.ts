@@ -18,10 +18,7 @@ const CAPABILITIES: Readonly<TransportCapabilities> = {
   deliveryAck: false,
 };
 
-function createFakeTransport<Payload extends string | Uint8Array>(
-  name: string,
-  order: string[],
-) {
+function createFakeTransport<Payload extends string | Uint8Array>(name: string, order: string[]) {
   const listeners = new Set<(payload: Payload) => void>();
   const unsubscribes: jest.Mock[] = [];
   const broadcast = jest.fn((_payload: Payload): Promise<void> => {
@@ -150,9 +147,7 @@ describe('HazardCoordinator', () => {
 
       expect(state.nearby.broadcast).toHaveBeenCalledTimes(1);
       expect(state.liveKit.broadcast).not.toHaveBeenCalled();
-      expect(state.onLocalSendResult).toHaveBeenCalledWith(local, [
-        { channel: 'mesh', ok: true },
-      ]);
+      expect(state.onLocalSendResult).toHaveBeenCalledWith(local, [{ channel: 'mesh', ok: true }]);
     });
 
     test('reads current online state without recreating the coordinator', () => {

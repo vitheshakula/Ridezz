@@ -5,10 +5,6 @@ import ProfileScreen from '../src/screens/ProfileScreen';
 import { COPIED_FEEDBACK_MS } from '../src/components/RoomCodeCard';
 import { fetchProfile } from '../src/services/AuthService';
 
-/**
- * The rider's permanent room code on the Profile screen: shown large, copied on tap, and fetched
- * from the server for an account whose saved profile predates room codes.
- */
 const mockUpdateUser = jest.fn();
 const mockLogout = jest.fn();
 let mockAuth: {
@@ -37,9 +33,10 @@ async function render() {
 
 const screenText = () => JSON.stringify(renderer.toJSON());
 
-/** The tappable code card, found by its accessibility label. */
 const card = (root: ReactTestInstance, label: string) =>
-  root.findAll(node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function')[0];
+  root.findAll(
+    node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function',
+  )[0];
 
 const tap = (node: ReactTestInstance) =>
   ReactTestRenderer.act(() => {
@@ -113,7 +110,12 @@ describe('ProfileScreen room code', () => {
     });
 
     it('fetches the code once and saves it on the account', async () => {
-      profile.mockResolvedValue({ id: 'u1', email: 'alex@gmail.com', name: 'Alex', roomCode: '27182' });
+      profile.mockResolvedValue({
+        id: 'u1',
+        email: 'alex@gmail.com',
+        name: 'Alex',
+        roomCode: '27182',
+      });
       await render();
 
       expect(profile).toHaveBeenCalledTimes(1);
@@ -139,7 +141,12 @@ describe('ProfileScreen room code', () => {
       const root = await render();
       expect(screenText()).toContain("Couldn't load your room code");
 
-      profile.mockResolvedValue({ id: 'u1', email: 'alex@gmail.com', name: 'Alex', roomCode: '27182' });
+      profile.mockResolvedValue({
+        id: 'u1',
+        email: 'alex@gmail.com',
+        name: 'Alex',
+        roomCode: '27182',
+      });
       await ReactTestRenderer.act(async () => {
         card(root, 'Could not load your room code. Tap to retry').props.onPress();
       });
@@ -150,7 +157,12 @@ describe('ProfileScreen room code', () => {
     });
 
     it('treats a reply without a valid code as a failure', async () => {
-      profile.mockResolvedValue({ id: 'u1', email: 'alex@gmail.com', name: 'Alex', roomCode: null });
+      profile.mockResolvedValue({
+        id: 'u1',
+        email: 'alex@gmail.com',
+        name: 'Alex',
+        roomCode: null,
+      });
       await render();
 
       expect(mockUpdateUser).not.toHaveBeenCalled();

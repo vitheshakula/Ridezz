@@ -13,43 +13,16 @@ import type { GeoPoint, RiderNode } from '../types/telemetry';
 type LngLat = [number, number];
 
 export interface OfflineRiderMapProps {
-  /** Every rider meshSyncManager currently knows a position for -- pass its getKnownRiders(), kept
-   * in the parent's own state and refreshed from the manager's onRidersChanged callback. This
-   * component only renders what it's given; it doesn't own or talk to the mesh manager itself. */
   riders: RiderNode[];
-  /** Point this at the exact same style URL used to download an offline pack (see
-   * offlineMapManager.ts and RiderMap's exported MAPTILER_STYLE_URL). MapLibre serves that pack's
-   * cached tiles for a matching style with no connectivity and no special code here. */
   mapStyleUrl: string;
   initialCenter?: GeoPoint;
   initialZoom?: number;
-  /** Space the floating HUD / bottom panel occupy, so the control buttons stay clear of them --
-   * same purpose as RiderMap's identically-named props. */
   topInset?: number;
   bottomInset?: number;
-  /** This device's own riderId, so its own marker is never drawn from a stray echo. `riders` never
-   * actually contains self (meshSyncManager only tracks other riders), so this is a defensive
-   * filter, not the normal path. */
   selfRiderId?: string;
-  /** This device's current GPS fix, if any -- drives each rider's "how far from me" label, the
-   * straight-line fallback route to `destination`, and what "Center Me" / "Group Me" use. Omit
-   * while no fix is available yet. Unlike RiderMap's own Center Me, this component never fetches a
-   * fresh fix itself (it has no location access of its own) -- it re-centers on whatever this prop
-   * most recently carried, which the parent is already refreshing continuously. */
   selfLocation?: GeoPoint | null;
-  /** The active ride destination, carried over from the online map so it doesn't vanish the
-   * moment the app falls back to mesh-only. */
   destination?: RideDestination | null;
-  /** A cached road-route geometry (e.g. RiderMap's last successful OSRM fetch) to keep showing
-   * while offline -- this component never fetches a route itself, since there's no connectivity to
-   * assume. Falls back to a straight ("as the crow flies") line from selfLocation to destination
-   * when omitted. Off-route detection (below) only runs against a real route here, never the
-   * straight-line fallback -- a rider is trivially "off" a pure point-to-point line at all times,
-   * so checking against it would do nothing but false-positive. */
   routeGeometry?: GeoJSON.LineString | null;
-  /** Fires once per on-route/off-route transition (not on every fix) -- the parent decides what to
-   * do with it (RideScreen speaks an alert). This component only detects and reports; it has no
-   * TTS/audio access of its own, consistent with it only ever rendering what it's given. */
   onOffRouteChange?: (isOffRoute: boolean) => void;
 }
 
@@ -69,7 +42,12 @@ function toLngLat(point: GeoPoint): LngLat {
 function getPointsBounds(points: LngLat[]): [number, number, number, number] {
   const longitudes = points.map(p => p[0]);
   const latitudes = points.map(p => p[1]);
-  return [Math.min(...longitudes), Math.min(...latitudes), Math.max(...longitudes), Math.max(...latitudes)];
+  return [
+    Math.min(...longitudes),
+    Math.min(...latitudes),
+    Math.max(...longitudes),
+    Math.max(...latitudes),
+  ];
 }
 
 function getBoundsCenter(bounds: [number, number, number, number]): LngLat {
@@ -82,20 +60,6 @@ function areBoundsTooTight(bounds: [number, number, number, number]): boolean {
   return Math.abs(east - west) < 0.0001 && Math.abs(north - south) < 0.0001;
 }
 
-/**
- * Offline-first rider map: plots whoever meshSyncManager currently has a position for, plus the
- * active destination and route, from pure props -- no mesh/location access of its own. "Offline"
- * describes the map tiles (via mapStyleUrl pointing at an OfflineManager-downloaded pack) and the
- * data source (the mesh, not LiveKit), not a claim that this component does its own offline
- * detection.
- *
- * Markers deliberately mirror RiderMap's avatar + name-pill look (same colours, sizes and theme
- * tokens via colorForRider/brand/font) so switching between the cloud and offline map mid-ride
- * doesn't also switch the visual language. Unlike RiderMap, a rider's name is never a raw id or
- * hash: `riderName` is carried on the wire precisely so this map never has to show one. The zoom /
- * center / group map controls are the same RiderMap behaviours, reimplemented against this
- * component's own camera ref since the two maps are never mounted at the same time.
- */
 export default function OfflineRiderMap({
   riders,
   mapStyleUrl,
@@ -111,10 +75,6 @@ export default function OfflineRiderMap({
 }: OfflineRiderMapProps) {
   const cameraRef = useRef<ElementRef<typeof Camera>>(null);
   const zoomRef = useRef(initialZoom);
-  // Follows this device's live position as selfLocation updates -- the initial placement is
-  // handled declaratively by Camera's initialViewState below, so this only re-centers on fixes
-  // after that. Any manual map gesture switches it off (same behaviour as RiderMap's own
-  // auto-follow); "Center Me" is the only thing that switches it back on.
   const autoFollowRef = useRef(true);
 
   const shown = useMemo(
@@ -127,9 +87,6 @@ export default function OfflineRiderMap({
     [destination],
   );
 
-  // A real road route is shown when the parent hands one over (carried from the online map);
-  // otherwise fall back to a straight guide line, same as RiderMap does while its own route hasn't
-  // loaded yet -- this component has no connectivity to fetch one itself.
   const routeFeature = useMemo((): GeoJSON.Feature<GeoJSON.LineString> | null => {
     if (routeGeometry) {
       return { type: 'Feature', properties: {}, geometry: routeGeometry };
@@ -150,9 +107,6 @@ export default function OfflineRiderMap({
     }
   }, [selfLocation]);
 
-  // Off-route detection: debounced (OffRouteTracker) so one stray GPS fix can't trigger a false
-  // "off route" alert, and reset whenever the destination itself changes so a genuinely new route
-  // starts its own debounce window instead of inheriting the old route's streak.
   const offRouteTrackerRef = useRef(new OffRouteTracker());
   const [offRouteState, setOffRouteState] = useState<OffRouteState | null>(null);
   useEffect(() => {
@@ -164,7 +118,10 @@ export default function OfflineRiderMap({
     if (!selfLocation || !routeGeometry) {
       return;
     }
-    const routePoints: GeoPoint[] = routeGeometry.coordinates.map(([longitude, latitude]) => ({ latitude, longitude }));
+    const routePoints: GeoPoint[] = routeGeometry.coordinates.map(([longitude, latitude]) => ({
+      latitude,
+      longitude,
+    }));
     const state = offRouteTrackerRef.current.update(selfLocation, routePoints);
     setOffRouteState(state);
     if (state.justChanged) {
@@ -172,10 +129,6 @@ export default function OfflineRiderMap({
     }
   }, [selfLocation, routeGeometry, onOffRouteChange]);
 
-  // A dashed guide from the rider's current position back to the nearest point on the cached
-  // route -- the "snap-to-nearest-corridor" rejoin guidance: there's no offline routing engine
-  // packaged in this app to calculate a genuinely new path, so this points at getting back onto
-  // the one already cached rather than pretending to replace it.
   const rejoinGuidanceFeature = useMemo((): GeoJSON.Feature<GeoJSON.LineString> | null => {
     if (!offRouteState?.isOffRoute || !offRouteState.nearestPoint || !selfLocation) {
       return null;
@@ -183,7 +136,10 @@ export default function OfflineRiderMap({
     return {
       type: 'Feature',
       properties: {},
-      geometry: { type: 'LineString', coordinates: [toLngLat(selfLocation), toLngLat(offRouteState.nearestPoint)] },
+      geometry: {
+        type: 'LineString',
+        coordinates: [toLngLat(selfLocation), toLngLat(offRouteState.nearestPoint)],
+      },
     };
   }, [offRouteState, selfLocation]);
 
@@ -199,7 +155,11 @@ export default function OfflineRiderMap({
     if (!selfLocation) {
       return;
     }
-    cameraRef.current?.easeTo({ center: toLngLat(selfLocation), zoom: CENTER_ME_ZOOM, duration: CAMERA_ANIMATION_MS });
+    cameraRef.current?.easeTo({
+      center: toLngLat(selfLocation),
+      zoom: CENTER_ME_ZOOM,
+      duration: CAMERA_ANIMATION_MS,
+    });
   }, [selfLocation]);
 
   const handleGroupMe = useCallback(() => {
@@ -210,7 +170,11 @@ export default function OfflineRiderMap({
     }
     const bounds = getPointsBounds(points);
     if (points.length === 1 || areBoundsTooTight(bounds)) {
-      cameraRef.current?.easeTo({ center: getBoundsCenter(bounds), zoom: FIT_GROUP_SINGLE_ZOOM, duration: CAMERA_ANIMATION_MS });
+      cameraRef.current?.easeTo({
+        center: getBoundsCenter(bounds),
+        zoom: FIT_GROUP_SINGLE_ZOOM,
+        duration: CAMERA_ANIMATION_MS,
+      });
       return;
     }
     cameraRef.current?.fitBounds(bounds, {
@@ -230,8 +194,6 @@ export default function OfflineRiderMap({
         style={styles.map}
         mapStyle={mapStyleUrl}
         onRegionWillChange={event => {
-          // Switch auto-follow off the instant a drag/pinch/rotate starts -- not onRegionDidChange,
-          // which only fires once the gesture has already finished moving the camera around.
           if (event.nativeEvent.userInteraction) {
             autoFollowRef.current = false;
           }
@@ -243,9 +205,7 @@ export default function OfflineRiderMap({
         <Camera
           ref={cameraRef}
           initialViewState={
-            initialCenter
-              ? { center: toLngLat(initialCenter), zoom: initialZoom }
-              : { zoom: 2 }
+            initialCenter ? { center: toLngLat(initialCenter), zoom: initialZoom } : { zoom: 2 }
           }
         />
 
@@ -255,9 +215,6 @@ export default function OfflineRiderMap({
               id="offlineRouteLine"
               type="line"
               layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-              // Two full paint objects, never one with an `undefined` property -- Fabric's typed
-              // native props can reject an explicit undefined/null where a value (or the key's
-              // plain absence) is expected, unlike the old bridge which just dropped it silently.
               paint={
                 routeGeometry
                   ? { 'line-color': brand.primary, 'line-width': 4 }
@@ -282,7 +239,11 @@ export default function OfflineRiderMap({
           const distance = selfLocation ? haversineDistanceMeters(selfLocation, rider) : null;
           return (
             <Marker key={rider.riderId} id={rider.riderId} lngLat={toLngLat(rider)} anchor="bottom">
-              <OfflineRiderMarker rider={rider} color={colorForRider(rider.riderId)} distance={distance} />
+              <OfflineRiderMarker
+                rider={rider}
+                color={colorForRider(rider.riderId)}
+                distance={distance}
+              />
             </Marker>
           );
         })}
@@ -331,7 +292,11 @@ function MapControl({
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.controlButton, disabled && styles.controlButtonDisabled, pressed && styles.controlPressed]}
+      style={({ pressed }) => [
+        styles.controlButton,
+        disabled && styles.controlButtonDisabled,
+        pressed && styles.controlPressed,
+      ]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -342,20 +307,9 @@ function MapControl({
   );
 }
 
-// The label (namePill) is a normal in-flow sibling stacked above markerBox, not an
-// absolutely-positioned overlay inside it -- a label floating outside its parent's own bounds
-// inside a native marker-annotation host view is what caused both an earlier truncation bug and,
-// once numberOfLines was removed to stop that, letters wrapping one-per-line instead. Normal flow
-// layout has no such edge case. Markers use anchor="bottom" (not "center") to compensate for the
-// stack now being taller than just the avatar -- matches RiderMap's own marker structure.
-
-/** This device's own position -- unlike peers in `riders` (which meshSyncManager never includes
- * self in), self has to be drawn explicitly. Mirrors RiderMap's own "You" marker: the app logo in
- * place of an initial letter, the primary brand colour as the ring, same pill label underneath. */
 function OfflineSelfMarker() {
   return (
     <View style={styles.markerStack}>
-      {/* No numberOfLines here deliberately -- see the comment above this component. */}
       <View style={styles.namePill}>
         <Text style={styles.namePillText}>You</Text>
       </View>
@@ -377,7 +331,6 @@ function OfflineRiderMarker({
   color: string;
   distance: number | null;
 }) {
-  // Never the raw riderId: it's a random per-session token, not an identity anyone should see.
   const displayName = rider.riderName?.trim() || 'Rider';
   const initial = displayName.charAt(0).toUpperCase() || '?';
 
@@ -416,8 +369,6 @@ function OfflineDestinationMarker({ name }: { name: string | null }) {
 const styles = StyleSheet.create({
   container: { flex: 1 },
   map: { flex: 1 },
-  // Plain column flow, sized to its content -- deliberately not position:'absolute' anywhere
-  // inside it; see the comment above OfflineSelfMarker.
   markerStack: {
     alignItems: 'center',
   },
@@ -451,8 +402,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  // flexShrink: 0 -- the label is never squeezed smaller by anything sharing this row; the pill
-  // grows (up to maxWidth above) to fit it instead.
   namePillText: { ...homeType.labelMedium, color: brand.textPrimary, flexShrink: 0 },
   destinationWrap: { alignItems: 'center', maxWidth: 180 },
   destinationPin: {

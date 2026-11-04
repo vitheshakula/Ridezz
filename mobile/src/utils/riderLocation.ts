@@ -1,39 +1,15 @@
-/**
- * Location sharing wire format + state model. Kept as pure functions so the
- * validation/distance/freshness/state-update logic is testable without any
- * LiveKit or GPS mocking (see __tests__/riderLocation.test.ts).
- */
-
-/** Dedicated LiveKit data-channel topic for location packets, sent lossy (not
- * reliable) -- only the newest fix matters, and we don't want a retransmission
- * backlog delaying fresh updates during poor mobile coverage. */
 export const LOCATION_TOPIC = 'ridezz.location';
 
-/** Dedicated topic for "resend your current location now" broadcasts. No payload needed -- the
- * topic alone is the signal. Sent by a rider right after their own ConnectionStateChanged ->
- * Connected transition (fresh join or reconnect): LiveKit's data channel is lossy and push-only,
- * so a rider who just (re)joined has no way to pull everyone else's current position and must
- * otherwise wait for each peer's own next organic broadcast. Confirmed on-device: after a long
- * outage, LiveKit does a full rejoin (new participant SID, not a resumed session) rather than a
- * lightweight reconnect, and other riders have no reason to single out a freshly (re)joined peer
- * for an extra broadcast -- this request closes that gap instead of waiting out each peer's own
- * REBROADCAST_INTERVAL_MS. */
 export const LOCATION_REQUEST_TOPIC = 'ridezz.location.request';
 
 export const LOCATION_PAYLOAD_VERSION = 1;
 
-/** Wire format published over LiveKit data. Deliberately small. */
 export interface LocationPayload {
   v: number;
   lat: number;
   lng: number;
   accuracy?: number;
-  /** Ground speed in meters/second, straight from the GPS fix. Omitted (not 0)
-   * when the OS doesn't report it -- a stationary/no-signal rider is different
-   * from a rider genuinely standing still, and we don't want to imply the latter. */
   speed?: number;
-  /** True compass heading in degrees [0, 360), straight from the GPS fix. Most
-   * providers only populate this while actually moving -- absent otherwise. */
   heading?: number;
   timestamp: number;
 }
@@ -46,28 +22,21 @@ export interface RiderLocation {
   accuracy?: number;
   speed?: number;
   heading?: number;
-  /** Sender's own clock at the moment of the GPS fix (ms since epoch). */
   timestamp: number;
-  /** False once the rider's ParticipantDisconnected has fired -- the last known
-   * position is kept (not erased) so mounted riders retain "last seen" awareness. */
   connected: boolean;
 }
 
-/** Keyed by participant identity. Plain object (not Map) for simple, structural
- * equality in tests and easy immutable updates. */
 export type RiderLocationState = Record<string, RiderLocation>;
 
-export function encodeLocationPayload(payload: Omit<LocationPayload, 'v'>): Uint8Array<ArrayBuffer> {
+export function encodeLocationPayload(
+  payload: Omit<LocationPayload, 'v'>,
+): Uint8Array<ArrayBuffer> {
   const full: LocationPayload = { v: LOCATION_PAYLOAD_VERSION, ...payload };
   return new TextEncoder().encode(JSON.stringify(full));
 }
 
 const MAX_CLOCK_SKEW_MS = 5 * 60 * 1000;
 
-/** Decodes + validates an incoming location packet. Returns null (never throws)
- * for malformed JSON, an unsupported version, out-of-range lat/lng, or a missing/
- * absurd timestamp -- callers should silently drop invalid packets rather than
- * let one bad/malicious payload crash the ride. */
 export function decodeLocationPayload(
   bytes: Uint8Array,
   now: number = Date.now(),
@@ -111,8 +80,6 @@ export function decodeLocationPayload(
   return { v: p.v, lat: p.lat, lng: p.lng, accuracy, speed, heading, timestamp: p.timestamp };
 }
 
-/** Replaces (or adds) a rider's location, marking them connected. Immutable --
- * returns a new state object. */
 export function upsertRiderLocation(
   state: RiderLocationState,
   update: { identity: string; name: string; payload: LocationPayload },
@@ -133,8 +100,6 @@ export function upsertRiderLocation(
   };
 }
 
-/** Marks a rider disconnected without erasing their last known position -- a
- * no-op if we never had a location for them. Immutable. */
 export function markRiderDisconnected(
   state: RiderLocationState,
   identity: string,
@@ -151,8 +116,6 @@ export type Freshness = 'live' | 'stale' | 'offline';
 const LIVE_THRESHOLD_MS = 10_000;
 const STALE_THRESHOLD_MS = 60_000;
 
-/** Live: updated <10s ago. Stale: 10-60s ago. Offline: rider disconnected, or
- * their last fix is over 60s old even while still connected (e.g. GPS lost). */
 export function classifyFreshness(location: RiderLocation, nowMs: number): Freshness {
   if (!location.connected) {
     return 'offline';
@@ -169,7 +132,6 @@ export function classifyFreshness(location: RiderLocation, nowMs: number): Fresh
 
 const EARTH_RADIUS_METERS = 6371000;
 
-/** Standard haversine great-circle distance in meters. */
 export function haversineDistanceMeters(
   a: { latitude: number; longitude: number },
   b: { latitude: number; longitude: number },
@@ -185,9 +147,6 @@ export function haversineDistanceMeters(
   return EARTH_RADIUS_METERS * c;
 }
 
-/** Simple average-position centroid of the group -- not a route midpoint, just
- * "roughly where everyone currently is," used to flag a rider who's drifted
- * far from the pack. Returns null for an empty group. */
 export function computeCentroid(
   locations: Array<{ latitude: number; longitude: number }>,
 ): { latitude: number; longitude: number } | null {
@@ -199,9 +158,6 @@ export function computeCentroid(
   return { latitude, longitude };
 }
 
-/** Distance from the group centroid beyond which a rider is flagged as falling
- * behind. Loose on purpose -- riders naturally spread out in traffic/turns;
- * this is meant to catch someone genuinely dropped off, not normal spacing. */
 export const FALLING_BEHIND_METERS = 500;
 
 export function isFallingBehind(
@@ -215,8 +171,6 @@ export function isFallingBehind(
   return haversineDistanceMeters(location, centroid) > thresholdMeters;
 }
 
-/** "820 m away" / "1.2 km away". Deliberately no ahead/behind claim -- we have
- * no route or heading model to support that inference. */
 export function formatDistance(meters: number): string {
   if (meters < 1000) {
     return `${Math.round(meters)} m away`;
@@ -224,7 +178,6 @@ export function formatDistance(meters: number): string {
   return `${(meters / 1000).toFixed(1)} km away`;
 }
 
-/** "Updated 4s ago" / "Updated 2m ago". */
 export function formatUpdatedAgo(ageMs: number): string {
   const seconds = Math.max(0, Math.round(ageMs / 1000));
   if (seconds < 60) {
@@ -234,9 +187,6 @@ export function formatUpdatedAgo(ageMs: number): string {
   return `Updated ${minutes}m ago`;
 }
 
-/** GPS speed comes in meters/second; km/h is what a rider actually reads on a
- * motorcycle. Below ~1 km/h is rounded down to "Stopped" rather than showing
- * a meaningless "0 km/h" or "1 km/h" from GPS jitter on a parked bike. */
 export function formatSpeed(metersPerSecond: number): string {
   const kmh = metersPerSecond * 3.6;
   if (kmh < 1) {

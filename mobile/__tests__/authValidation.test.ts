@@ -15,12 +15,15 @@ describe('normalizeEmail', () => {
 });
 
 describe('validateEmail', () => {
-  it.each(['alex@gmail.com', 'alex.rider99@gmail.com', 'a@gmail.com', '  ALEX@Gmail.com  ', `${'a'.repeat(30)}@gmail.com`])(
-    'accepts %s',
-    email => {
-      expect(validateEmail(email)).toBeNull();
-    },
-  );
+  it.each([
+    'alex@gmail.com',
+    'alex.rider99@gmail.com',
+    'a@gmail.com',
+    '  ALEX@Gmail.com  ',
+    `${'a'.repeat(30)}@gmail.com`,
+  ])('accepts %s', email => {
+    expect(validateEmail(email)).toBeNull();
+  });
 
   it.each([
     ['a non-Gmail domain', 'alex@yahoo.com'],
@@ -96,7 +99,6 @@ describe('validateRegistration', () => {
     expect(validateRegistration('Alex', 'alex@gmail.com', 'longenough1', 'different1')).toEqual({
       confirmPassword: 'Passwords do not match',
     });
-    // A too-short password is the more useful thing to fix first.
     expect(validateRegistration('Alex', 'alex@gmail.com', 'short', 'other')).toEqual({
       password: 'Password must be at least 8 characters',
     });

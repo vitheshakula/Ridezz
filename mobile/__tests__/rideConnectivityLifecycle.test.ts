@@ -177,7 +177,6 @@ describe('app integration lifecycle (RideScreen effect sequence, real runtime)',
 
   const listeners = () => DeviceEventEmitter.listenerCount(PAYLOAD_EVENT);
 
-  /** Mirrors RideScreen's mesh effect: one controller per effect run. */
   function effectRun(roomCode: string, identityRef: { current: unknown }) {
     const connectivity = service.createNearbyRideConnectivity({
       roomCode,
@@ -194,16 +193,13 @@ describe('app integration lifecycle (RideScreen effect sequence, real runtime)',
     const identityRef: { current: unknown } = { current: null };
     const connectivity = effectRun('12345', identityRef);
 
-    // First Nearby start fails: no runtime.
     expect(connectivity.runtime).toBeNull();
-    // Retry succeeds.
     connectivity.transportStarted();
     expect(connectivity.runtime?.running).toBe(true);
     expect(listeners()).toBe(before + 1);
 
-    connectivity.dispose(); // cleanup, before nearbyTransport.stop()
+    connectivity.dispose();
     expect(listeners()).toBe(before);
-    // The in-flight heartbeat cycle settles by design (not cancelled); then nothing remains.
     await jest.advanceTimersByTimeAsync(0);
     expect(jest.getTimerCount()).toBe(0);
     await jest.advanceTimersByTimeAsync(60_000);
@@ -250,8 +246,8 @@ describe('app integration lifecycle (RideScreen effect sequence, real runtime)',
     const before = listeners();
     const connectivity = effectRun('12345', { current: null });
 
-    connectivity.dispose(); // unmount while nearbyTransport.start() is pending
-    connectivity.transportStarted(); // the start then resolves
+    connectivity.dispose();
+    connectivity.transportStarted();
 
     expect(connectivity.runtime).toBeNull();
     expect(listeners()).toBe(before);
@@ -276,7 +272,6 @@ describe('cloud reachability and the device-test override', () => {
 
   test('the dev-menu item is registered once and toggles this phone only', () => {
     jest.isolateModules(() => {
-      // Spy on the isolated registry's DevSettings: the one the isolated service will use.
       const isolatedDevSettings: typeof DevSettings = require('react-native').DevSettings;
       const addMenuItem = jest
         .spyOn(isolatedDevSettings, 'addMenuItem')
@@ -339,7 +334,7 @@ describe('connectivity diagnostics', () => {
   test('logs cycle outcomes only when they change, and stays quiet when healthy', () => {
     const { lines, onEvent } = diagnostics();
     const cycle = (status: string): RideConnectivityEvent =>
-      ({ kind: 'gateway_advertisement_cycle', outcome: { ok: true, value: { status } } }) as never;
+      ({ kind: 'gateway_advertisement_cycle', outcome: { ok: true, value: { status } } } as never);
     onEvent(cycle('not_reachable'));
     onEvent(cycle('not_reachable'));
     onEvent(cycle('sent'));

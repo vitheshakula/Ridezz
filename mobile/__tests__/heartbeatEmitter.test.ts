@@ -37,7 +37,6 @@ function fakeTransport(
   return { transport: { id, payload, broadcast } as HeartbeatTransport, broadcast, sent };
 }
 
-/** Real UUID construction over deterministic bytes: the nth call yields bytes filled with n. */
 function deterministicIds() {
   let n = 0;
   const source = jest.fn((array: Uint8Array) => array.fill(++n));
@@ -144,7 +143,6 @@ describe('heartbeat emitter: single cycle', () => {
     const { emitter: e } = emitter({ getActiveTransports: () => [x.transport, y.transport] });
     await e.emitHeartbeatCycle();
 
-    // Receiver B: real ingress (wall clock), real handler and PeerTable (monotonic clock).
     const ingress = createRideMessageIngress({
       rideId: RIDE,
       localNodeId: 'rider-b',
@@ -423,17 +421,20 @@ describe('heartbeat emitter: wall clock', () => {
     }
   });
 
-  test.each([NaN, -1, 1.5, Infinity])('an invalid wall clock %p fails the cycle closed', async t => {
-    const x = fakeTransport('transport-x');
-    const { emitter: e, ids } = emitter({
-      getActiveTransports: () => [x.transport],
-      wallClock: () => t,
-    });
+  test.each([NaN, -1, 1.5, Infinity])(
+    'an invalid wall clock %p fails the cycle closed',
+    async t => {
+      const x = fakeTransport('transport-x');
+      const { emitter: e, ids } = emitter({
+        getActiveTransports: () => [x.transport],
+        wallClock: () => t,
+      });
 
-    expect(await e.emitHeartbeatCycle()).toEqual({ ok: false, reason: 'invalid_clock' });
-    expect(ids.generate).not.toHaveBeenCalled();
-    expect(x.broadcast).not.toHaveBeenCalled();
-  });
+      expect(await e.emitHeartbeatCycle()).toEqual({ ok: false, reason: 'invalid_clock' });
+      expect(ids.generate).not.toHaveBeenCalled();
+      expect(x.broadcast).not.toHaveBeenCalled();
+    },
+  );
 
   test('a throwing wall clock fails the cycle closed', async () => {
     const { emitter: e } = emitter({

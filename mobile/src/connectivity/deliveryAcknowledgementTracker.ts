@@ -7,7 +7,11 @@ import type { JsonValue } from './protocol/jsonValue';
 import type { RideMessage } from './protocol/rideMessage';
 
 export type DeliveryAcknowledgementResult =
-  | { readonly accepted: true; readonly originalMessageId: string; readonly acknowledgementId: string }
+  | {
+      readonly accepted: true;
+      readonly originalMessageId: string;
+      readonly acknowledgementId: string;
+    }
   | {
       readonly accepted: false;
       readonly reason:
@@ -78,7 +82,10 @@ export function createDeliveryAcknowledgementTracker({
       if (acknowledgement.rideId !== expectation.rideId || acknowledgement.rideId !== rideId) {
         return { accepted: false, reason: 'wrong_ride' };
       }
-      if (payload.originalOriginId !== expectation.originalOriginId || payload.originalOriginId !== localNodeId) {
+      if (
+        payload.originalOriginId !== expectation.originalOriginId ||
+        payload.originalOriginId !== localNodeId
+      ) {
         return { accepted: false, reason: 'wrong_origin' };
       }
       if (

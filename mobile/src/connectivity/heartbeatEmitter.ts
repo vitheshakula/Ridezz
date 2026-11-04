@@ -1,14 +1,3 @@
-/**
- * Origin side of heartbeats: each cycle sends one independent heartbeat over every currently
- * active heartbeat-capable transport. Every transmission gets its own freshly generated secure id,
- * so a receiver's id-based dedup lets each direct link through as a separate observation:
- * X -> H1, Y -> H2, never the same id on two transports.
- *
- * Heartbeats are sent exactly as created (hopCount 0, maxHops 0); relay policy is never
- * consulted for an origin transmission. Only the wall clock is used: heartbeat expiry is judged
- * on other devices. Peer freshness (monotonic) is a receive-side concern.
- */
-
 import { createCycleScheduler, type CycleOutcome, type CycleScheduler } from './cycleScheduler';
 import { HEARTBEAT_INTERVAL_MS, createHeartbeatMessage } from './protocol/heartbeat';
 import {
@@ -20,10 +9,6 @@ import {
 import { encodeRideMessage, serializeRideMessage } from './protocol/rideMessageCodec';
 import type { BroadcastTransport } from '../transports/Transport';
 
-/**
- * The minimum a transport must offer to carry heartbeats: an opaque local id and the existing
- * BroadcastTransport.broadcast, in whichever payload form that transport takes.
- */
 export type HeartbeatTransport =
   | ({ readonly id: string; readonly payload: 'string' } & Pick<
       BroadcastTransport<string>,
@@ -36,9 +21,7 @@ export type HeartbeatTransport =
 
 export type HeartbeatTransmissionResult =
   | { transportId: string; ok: true; messageId: string }
-  /** Local failure before sending: id generation, message construction or encoding. */
   | { transportId: string; ok: false; stage: 'message'; error: string }
-  /** The transport rejected or threw while sending this heartbeat. */
   | {
       transportId: string;
       ok: false;
@@ -47,12 +30,8 @@ export type HeartbeatTransmissionResult =
       reason: 'error';
       error: string;
     }
-  /** broadcast() did not settle within the send timeout. The heartbeat is abandoned, not retried
-   * and not cancelled: the native send may still complete later. */
   | { transportId: string; ok: false; stage: 'transport'; messageId: string; reason: 'timeout' }
-  /** Two active transports share this id; none of them is sent on this cycle. */
   | { transportId: string; ok: false; stage: 'duplicate_transport' }
-  /** Not a usable HeartbeatTransport (bad id, payload form or broadcast). */
   | { transportId: string | null; ok: false; stage: 'invalid_transport' };
 
 export type HeartbeatCycleResult =
@@ -62,32 +41,16 @@ export type HeartbeatCycleResult =
 export interface HeartbeatEmitterOptions {
   rideId: string;
   localNodeId: string;
-  /** Queried at the start of every cycle, so transports may come and go between cycles. */
   getActiveTransports: () => readonly HeartbeatTransport[];
-  /** Secure id source (createRideMessageIdGenerator). Called once per transmission attempt. */
   generateMessageId: () => string;
-  /** Wall clock, epoch ms. Read once per cycle that has transports. */
   wallClock: () => number;
-  /** Local bound on each broadcast(); defaults to HEARTBEAT_SEND_TIMEOUT_MS. */
   sendTimeoutMs?: number;
 }
 
-/**
- * Local operational bound on one transport.broadcast() call, so a hung transport cannot stall the
- * cycle or the scheduler. Not a TTL, ACK, retry or delivery bound. Sends race their timeouts
- * concurrently, so a cycle settles within about one timeout however many transports hang, and the
- * worst scheduled period is about HEARTBEAT_SEND_TIMEOUT_MS + HEARTBEAT_INTERVAL_MS (7 s), which
- * must stay below receivers' peer freshness (15 s).
- */
 export const HEARTBEAT_SEND_TIMEOUT_MS = 2_000;
 
 type SendOutcome = { ok: true } | { ok: false; error: unknown } | { ok: false; timedOut: true };
 
-/**
- * Starts `send` and settles with whichever comes first: its outcome or the timeout. When the
- * timeout wins, the send keeps running in the background (it cannot be cancelled); its eventual
- * resolve or reject is absorbed here, so it is neither reported twice nor left unhandled.
- */
 function sendWithTimeout(send: () => Promise<void>, timeoutMs: number): Promise<SendOutcome> {
   return new Promise<SendOutcome>(resolve => {
     const timer = setTimeout(() => resolve({ ok: false, timedOut: true }), timeoutMs);
@@ -111,7 +74,6 @@ function sendWithTimeout(send: () => Promise<void>, timeoutMs: number): Promise<
 }
 
 export interface HeartbeatEmitter {
-  /** One cycle. Never rejects: every failure is reported in the result. */
   emitHeartbeatCycle(): Promise<HeartbeatCycleResult>;
 }
 
@@ -158,7 +120,6 @@ export function createHeartbeatEmitter({
     throw new RangeError('Heartbeat emitter sendTimeoutMs must be a positive integer');
   }
 
-  /** Builds and sends one heartbeat; resolves with its result, never rejects. */
   const transmit = async (
     transport: HeartbeatTransport,
     createdAt: number,
@@ -167,7 +128,6 @@ export function createHeartbeatEmitter({
     let messageId: string;
     let send: () => Promise<void>;
     try {
-      // A failing generator throws here: no fallback id is ever produced.
       messageId = generateMessageId();
       const heartbeat = createHeartbeatMessage({
         id: messageId,
@@ -231,8 +191,6 @@ export function createHeartbeatEmitter({
         }
       }
 
-      // Ids are generated and messages built synchronously in transport order (deterministic);
-      // the sends then run concurrently so a slow transport does not delay the others.
       type Attempt = HeartbeatTransmissionResult | Promise<HeartbeatTransmissionResult>;
       const attempts = transports.map((t): Attempt => {
         if (!isUsableTransport(t)) {
@@ -258,8 +216,6 @@ export interface HeartbeatSchedulerOptions {
   onCycleSettled?: (outcome: CycleOutcome<HeartbeatCycleResult>) => void;
 }
 
-/** Heartbeat cycles every HEARTBEAT_INTERVAL_MS (after the previous cycle settles), with an
- * immediate first cycle on start so a joining rider becomes discoverable quickly. */
 export function createHeartbeatScheduler(
   emitter: HeartbeatEmitter,
   { intervalMs = HEARTBEAT_INTERVAL_MS, onCycleSettled }: HeartbeatSchedulerOptions = {},

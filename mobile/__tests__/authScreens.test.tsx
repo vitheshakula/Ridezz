@@ -27,12 +27,13 @@ function render(element: React.ReactElement) {
   return renderer.root;
 }
 
-/** The host TextInput / button with this testID (not the wrapper components that share the prop). */
 function byTestId(root: ReactTestInstance, testID: string) {
   return root.find(node => node.props.testID === testID && typeof node.type === 'string');
 }
 function pressable(root: ReactTestInstance, testID: string) {
-  return root.find(node => node.props.testID === testID && typeof node.props.onPress === 'function');
+  return root.find(
+    node => node.props.testID === testID && typeof node.props.onPress === 'function',
+  );
 }
 
 const type = (root: ReactTestInstance, testID: string, value: string) =>
@@ -114,7 +115,10 @@ describe('LoginPage', () => {
 });
 
 describe('SignupPage', () => {
-  const fill = (root: ReactTestInstance, over: Partial<Record<'name' | 'email' | 'password' | 'confirm', string>> = {}) => {
+  const fill = (
+    root: ReactTestInstance,
+    over: Partial<Record<'name' | 'email' | 'password' | 'confirm', string>> = {},
+  ) => {
     type(root, 'signup-name', over.name ?? 'Alex');
     type(root, 'signup-email', over.email ?? 'alex@gmail.com');
     type(root, 'signup-password', over.password ?? 'longenough1');
@@ -159,7 +163,9 @@ describe('SignupPage', () => {
   });
 
   it('tells the rider when the address is already taken', async () => {
-    service.register.mockRejectedValue(axiosFailure(409, 'An account with this email already exists.'));
+    service.register.mockRejectedValue(
+      axiosFailure(409, 'An account with this email already exists.'),
+    );
     const root = render(<SignupPage navigation={navigation} />);
     fill(root);
     await press(pressable(root, 'signup-submit'));
@@ -171,7 +177,9 @@ describe('SignupPage', () => {
 
 describe('GoogleSignInButton', () => {
   const button = (root: ReactTestInstance, label: string) =>
-    root.find(node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function');
+    root.find(
+      node => node.props.accessibilityLabel === label && typeof node.props.onPress === 'function',
+    );
 
   it('labels itself for what it does', () => {
     const login = render(<GoogleSignInButton mode="login" navigation={navigation} />);
@@ -213,18 +221,26 @@ describe('GoogleSignInButton', () => {
   });
 
   it("reports the server's reason when Google sign-in is refused", async () => {
-    service.loginWithGoogle.mockRejectedValue(axiosFailure(403, 'Only Gmail accounts are supported.'));
+    service.loginWithGoogle.mockRejectedValue(
+      axiosFailure(403, 'Only Gmail accounts are supported.'),
+    );
     const alert = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
     const root = render(<GoogleSignInButton mode="login" navigation={navigation} />);
     await press(button(root, 'Sign in with Google'));
 
-    expect(alert).toHaveBeenCalledWith('Google Sign-In Failed', 'Only Gmail accounts are supported.');
+    expect(alert).toHaveBeenCalledWith(
+      'Google Sign-In Failed',
+      'Only Gmail accounts are supported.',
+    );
     expect(mockSignIn).not.toHaveBeenCalled();
   });
 
   describe('when the Google account has never registered', () => {
     const notFound = () => {
-      const failure = axiosFailure(404, 'No account found for this Google account. Create an account first.');
+      const failure = axiosFailure(
+        404,
+        'No account found for this Google account. Create an account first.',
+      );
       (failure as any).response.data.code = 'ACCOUNT_NOT_FOUND';
       return failure;
     };

@@ -9,22 +9,13 @@ import {
   type HardBrakingDetected,
 } from './brakingEvents';
 
-/** How long the brake flasher stays up after the latest alert from a rider ahead. */
 export const PEER_BRAKE_FLASH_MS = 4000;
 
 export interface UseHardBrakingOptions {
-  /** Hand this rider's own braking alert to the mesh (see createBrakeCoordinator). */
   onLocalBraking: (event: HardBrakingDetected) => void;
-  /** Speaks a short line through the app's echo-guarded audio path. */
   announce?: (text: string) => Promise<void> | void;
 }
 
-/**
- * Local side of the hard-braking feature: when the native detector raises an alert, send it to the
- * group first, then give the rider a short haptic tick and a spoken confirmation. The native
- * detector runs inside the shared sensor monitor that useCrashDetection starts, so this hook only
- * listens; it does not start or stop any sensors.
- */
 export function useHardBraking({ onLocalBraking, announce }: UseHardBrakingOptions): void {
   const onLocalRef = useRef(onLocalBraking);
   onLocalRef.current = onLocalBraking;
@@ -35,7 +26,6 @@ export function useHardBraking({ onLocalBraking, announce }: UseHardBrakingOptio
     () =>
       subscribeToBrakingEvents({
         onHardBraking: event => {
-          // Transmit before any presentation work: this is the latency-critical step.
           onLocalRef.current(event);
           logDiagnosticEvent(
             'braking',
@@ -55,10 +45,6 @@ export interface UsePeerBrakingOptions {
   announce?: (text: string) => Promise<void> | void;
 }
 
-/**
- * Rider-behind side: the latest braking alert from another rider while it is still fresh, for the
- * brake flasher. Raises a strong vibration and a spoken warning for each new alert.
- */
 export function usePeerBraking({ announce }: UsePeerBrakingOptions = {}): BrakeAlert | null {
   const [alert, setAlert] = useState<BrakeAlert | null>(null);
   const announceRef = useRef(announce);

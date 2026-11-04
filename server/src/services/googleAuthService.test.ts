@@ -124,7 +124,12 @@ describe('reconcileGoogleAccount', () => {
       },
     } as unknown as PrismaClient;
 
-    const result = await reconcileGoogleAccount(prisma, signupIdentity, signupIdentity.email, 'signup');
+    const result = await reconcileGoogleAccount(
+      prisma,
+      signupIdentity,
+      signupIdentity.email,
+      'signup',
+    );
 
     assert.equal(result.kind, 'ok');
     assert.match(createArgs.data.roomCode, /^[1-9]\d{4}$/);

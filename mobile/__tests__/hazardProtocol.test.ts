@@ -65,7 +65,14 @@ describe('hazard protocol v1', () => {
 
   describe("'info' packets (dictated voice notes, see JarvisVoiceService)", () => {
     test('createHazardPacket carries the message through, additive like sos', () => {
-      const created = createHazardPacket('info', 'rider', 'Sam', NOW, undefined, 'Taking a fuel break');
+      const created = createHazardPacket(
+        'info',
+        'rider',
+        'Sam',
+        NOW,
+        undefined,
+        'Taking a fuel break',
+      );
       expect(created).toEqual({
         v: 1,
         id: `rider-${NOW}-info`,
@@ -83,20 +90,35 @@ describe('hazard protocol v1', () => {
     });
 
     test('roundtrips a message through serialize/parse', () => {
-      const created = createHazardPacket('info', 'rider', 'Sam', NOW, undefined, 'Taking a fuel break');
+      const created = createHazardPacket(
+        'info',
+        'rider',
+        'Sam',
+        NOW,
+        undefined,
+        'Taking a fuel break',
+      );
       expect(parseHazardPacket(serializeHazardPacket(created), NOW)).toEqual(created);
     });
 
     test('caps an overlong message on both the create and parse side', () => {
       const long = 'm'.repeat(300);
-      expect(createHazardPacket('info', 'rider', 'Sam', NOW, undefined, long).message).toHaveLength(200);
+      expect(createHazardPacket('info', 'rider', 'Sam', NOW, undefined, long).message).toHaveLength(
+        200,
+      );
 
-      const parsed = parseHazardPacket(JSON.stringify({ ...packet({ hazard: 'info' }), message: long }), NOW);
+      const parsed = parseHazardPacket(
+        JSON.stringify({ ...packet({ hazard: 'info' }), message: long }),
+        NOW,
+      );
       expect(parsed?.message).toHaveLength(200);
     });
 
     test('drops a non-string message field rather than rejecting the whole packet', () => {
-      const parsed = parseHazardPacket(JSON.stringify({ ...packet({ hazard: 'info' }), message: 42 }), NOW);
+      const parsed = parseHazardPacket(
+        JSON.stringify({ ...packet({ hazard: 'info' }), message: 42 }),
+        NOW,
+      );
       expect(parsed).not.toBeNull();
       expect(parsed).not.toHaveProperty('message');
     });

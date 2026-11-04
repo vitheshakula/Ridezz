@@ -15,7 +15,10 @@ import type {
   RideConnectivitySendResult,
 } from '../src/connectivity/rideConnectivityRuntime';
 import type { TransportStatus } from '../src/transports/Transport';
-import { createPersistentOutbox, type PersistentOutboxStore } from '../src/connectivity/persistentOutbox';
+import {
+  createPersistentOutbox,
+  type PersistentOutboxStore,
+} from '../src/connectivity/persistentOutbox';
 
 const NOW = 1_700_000_000_000;
 const RIDE = 'RIDE1';
@@ -37,7 +40,7 @@ const acceptedResult = (): RideConnectivitySendResult =>
     message: {},
     route: { gatewayNodeId: 'gateway-1' },
     endpointId: 'endpoint-B',
-  }) as RideConnectivitySendResult;
+  } as RideConnectivitySendResult);
 
 const validInput = (overrides: Partial<RideConnectivityMessageInput> = {}) => ({
   rideId: RIDE,
@@ -62,7 +65,10 @@ function harness(adapterOverrides: Partial<RideConnectivityClientAdapter> = {}) 
     RideConnectivityRuntime & {
       start: jest.Mock;
       stop: jest.Mock;
-      sendToGateway: jest.Mock<Promise<RideConnectivitySendResult>, [RideMessage<unknown>, string?]>;
+      sendToGateway: jest.Mock<
+        Promise<RideConnectivitySendResult>,
+        [RideMessage<unknown>, string?]
+      >;
     }
   > = [];
   const sendResults: RideConnectivitySendResult[] = [];
@@ -120,7 +126,10 @@ function harness(adapterOverrides: Partial<RideConnectivityClientAdapter> = {}) 
           Promise.resolve(sendResults.shift() ?? acceptedResult()),
         ),
         sendAcknowledgement: jest.fn(() =>
-          Promise.resolve({ status: 'not_forwarded' as const, reason: 'unknown_return_route' as const }),
+          Promise.resolve({
+            status: 'not_forwarded' as const,
+            reason: 'unknown_return_route' as const,
+          }),
         ),
         getGatewayRoute: jest.fn(() => ({ ok: false as const, reason: 'no_route' as const })),
       };
@@ -413,7 +422,9 @@ describe('RideConnectivityClient message submission and delivery status', () => 
     await h.client.start(CONTEXT);
     h.runtimes[0].sendToGateway.mockRejectedValueOnce(new Error('unexpected runtime failure'));
 
-    await h.client.sendMessage(validInput({ destination: { kind: 'gateway', gatewayNodeId: 'gw' } }));
+    await h.client.sendMessage(
+      validInput({ destination: { kind: 'gateway', gatewayNodeId: 'gw' } }),
+    );
 
     expect(h.runtimes[0].sendToGateway).toHaveBeenCalledTimes(1);
     expect(h.runtimes[0].sendToGateway).toHaveBeenCalledWith(expect.any(Object), 'gw');

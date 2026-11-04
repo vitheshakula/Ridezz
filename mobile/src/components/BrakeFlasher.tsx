@@ -6,10 +6,6 @@ interface BrakeFlasherProps {
   visible: boolean;
 }
 
-/**
- * Pulsing red frame and "BRAKE" banner shown when a rider ahead brakes hard. It never intercepts
- * touches, so the map and controls stay usable, and the pulse is slow enough to read at a glance.
- */
 export default function BrakeFlasher({ visible }: BrakeFlasherProps) {
   const pulse = useRef(new Animated.Value(0)).current;
 
@@ -20,8 +16,18 @@ export default function BrakeFlasher({ visible }: BrakeFlasherProps) {
     }
     const loop = Animated.loop(
       Animated.sequence([
-        Animated.timing(pulse, { toValue: 1, duration: 180, easing: Easing.out(Easing.quad), useNativeDriver: true }),
-        Animated.timing(pulse, { toValue: 0.25, duration: 180, easing: Easing.in(Easing.quad), useNativeDriver: true }),
+        Animated.timing(pulse, {
+          toValue: 1,
+          duration: 180,
+          easing: Easing.out(Easing.quad),
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulse, {
+          toValue: 0.25,
+          duration: 180,
+          easing: Easing.in(Easing.quad),
+          useNativeDriver: true,
+        }),
       ]),
     );
     loop.start();

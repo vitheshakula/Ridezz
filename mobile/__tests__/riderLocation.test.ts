@@ -18,7 +18,12 @@ import {
 describe('encodeLocationPayload / decodeLocationPayload', () => {
   test('a valid payload round-trips', () => {
     const now = 1_700_000_000_000;
-    const bytes = encodeLocationPayload({ lat: 17.123456, lng: 78.123456, accuracy: 8.2, timestamp: now });
+    const bytes = encodeLocationPayload({
+      lat: 17.123456,
+      lng: 78.123456,
+      accuracy: 8.2,
+      timestamp: now,
+    });
     const decoded = decodeLocationPayload(bytes, now);
     expect(decoded).toEqual({
       v: LOCATION_PAYLOAD_VERSION,
@@ -87,8 +92,16 @@ describe('encodeLocationPayload / decodeLocationPayload', () => {
 
   test('accuracy is optional', () => {
     const now = 1_700_000_000_000;
-    const bytes = new TextEncoder().encode(JSON.stringify({ v: 1, lat: 1, lng: 1, timestamp: now }));
-    expect(decodeLocationPayload(bytes, now)).toEqual({ v: 1, lat: 1, lng: 1, accuracy: undefined, timestamp: now });
+    const bytes = new TextEncoder().encode(
+      JSON.stringify({ v: 1, lat: 1, lng: 1, timestamp: now }),
+    );
+    expect(decodeLocationPayload(bytes, now)).toEqual({
+      v: 1,
+      lat: 1,
+      lng: 1,
+      accuracy: undefined,
+      timestamp: now,
+    });
   });
 
   test('speed and heading round-trip', () => {
@@ -216,7 +229,9 @@ describe('classifyFreshness', () => {
   });
 
   test('disconnected is offline even with a fresh timestamp', () => {
-    expect(classifyFreshness(location({ timestamp: 100_000, connected: false }), 100_500)).toBe('offline');
+    expect(classifyFreshness(location({ timestamp: 100_000, connected: false }), 100_500)).toBe(
+      'offline',
+    );
   });
 });
 
@@ -293,14 +308,11 @@ describe('isFallingBehind', () => {
   });
 
   test('true for a rider well past the threshold', () => {
-    // ~0.01 degrees of latitude is roughly 1.1km, comfortably over FALLING_BEHIND_METERS.
     expect(isFallingBehind({ latitude: 17.41, longitude: 78.4 }, centroid)).toBe(true);
   });
 
   test('respects a custom threshold', () => {
-    expect(
-      isFallingBehind({ latitude: 17.4001, longitude: 78.4001 }, centroid, 1),
-    ).toBe(true);
+    expect(isFallingBehind({ latitude: 17.4001, longitude: 78.4001 }, centroid, 1)).toBe(true);
   });
 });
 

@@ -1,7 +1,4 @@
-import {
-  HAZARD_THROTTLE_MS,
-  createHazardPolicy,
-} from '../src/protocol/hazardPolicy';
+import { HAZARD_THROTTLE_MS, createHazardPolicy } from '../src/protocol/hazardPolicy';
 import {
   HAZARD_PACKET_MAX_AGE_MS,
   createHazardPacket,
@@ -94,7 +91,9 @@ describe('hazard policy', () => {
       const receivedFirst = setup();
       receivedFirst.policy.decideIncoming(makePacket('remote-first'), 'livekit', true);
       receivedFirst.advanceTo(NOW + 1);
-      expect(receivedFirst.policy.decideLocalSend(makePacket('local-after-receive'), true)).toMatchObject({
+      expect(
+        receivedFirst.policy.decideLocalSend(makePacket('local-after-receive'), true),
+      ).toMatchObject({
         accepted: false,
         reason: 'recently_received_type',
       });
@@ -102,9 +101,9 @@ describe('hazard policy', () => {
       const sentFirst = setup();
       sentFirst.policy.decideLocalSend(makePacket('local-first'), true);
       sentFirst.advanceTo(NOW + 1);
-      expect(sentFirst.policy.decideIncoming(makePacket('remote-after-send'), 'livekit', true).accepted).toBe(
-        true,
-      );
+      expect(
+        sentFirst.policy.decideIncoming(makePacket('remote-after-send'), 'livekit', true).accepted,
+      ).toBe(true);
     });
   });
 

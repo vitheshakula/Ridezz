@@ -12,16 +12,12 @@ export const keepAwake = {
     if (Platform.OS !== 'android' || !nativeModule) {
       return;
     }
-    nativeModule.enable().catch(() => {
-      // Non-essential -- the ride continues either way.
-    });
+    nativeModule.enable().catch(() => {});
   },
   disable(): void {
     if (Platform.OS !== 'android' || !nativeModule) {
       return;
     }
-    nativeModule.disable().catch(() => {
-      // Non-essential -- the ride continues either way.
-    });
+    nativeModule.disable().catch(() => {});
   },
 };

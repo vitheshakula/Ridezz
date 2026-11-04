@@ -37,7 +37,6 @@ describe('nearbyTransport', () => {
   });
 
   test('reports only the capabilities implemented by Nearby', () => {
-    // targeted/peerIdentity became true with the endpoint-aware interface (sendTo/onPayloadFrom).
     expect(transport.capabilities).toEqual({
       broadcast: true,
       targeted: true,
@@ -58,9 +57,7 @@ describe('nearbyTransport', () => {
   });
 
   test('forwards raw payloads strictly one at a time and in order', async () => {
-    const packetJson = serializeHazardPacket(
-      createHazardPacket('pothole', 'local', 'Alex', NOW),
-    );
+    const packetJson = serializeHazardPacket(createHazardPacket('pothole', 'local', 'Alex', NOW));
     const first$ = transport.broadcast(packetJson);
     const second$ = transport.broadcast('not-json');
 
@@ -96,10 +93,7 @@ describe('nearbyTransport', () => {
     DeviceEventEmitter.emit('onHazardReceived', '{"anything":true}');
     DeviceEventEmitter.emit('onHazardReceived', 42);
 
-    expect(onPayload.mock.calls.map(call => call[0])).toEqual([
-      'not-json',
-      '{"anything":true}',
-    ]);
+    expect(onPayload.mock.calls.map(call => call[0])).toEqual(['not-json', '{"anything":true}']);
 
     unsubscribe();
     DeviceEventEmitter.emit('onHazardReceived', 'after-cleanup');

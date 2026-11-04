@@ -46,7 +46,6 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-/** Unwraps a positive decision, failing the test otherwise. */
 function relayed<P, T extends RideMessageType>(decision: RelayDecision<P, T>): RideMessage<P, T> {
   if (!decision.relay) {
     throw new Error(`expected relay, got ${decision.reason}`);
@@ -212,7 +211,6 @@ describe('relay policy: message types', () => {
 
 describe('relay policy: multi-hop', () => {
   test('SOS-123 travels A→B→C→D and stops at the hop limit', () => {
-    // A creates SOS-123 (hopCount 0, maxHops 3). Each node forwards the copy it received.
     const atA = message({
       id: 'SOS-123',
       originId: 'node-a',
@@ -233,7 +231,6 @@ describe('relay policy: multi-hop', () => {
       expect(m.payload).toBe(atA.payload);
     }
 
-    // The hopCount-3 copy can still be delivered locally by whoever receives it...
     const ingress = createRideMessageIngress({
       rideId: '12345',
       localNodeId: 'node-e',
@@ -244,13 +241,10 @@ describe('relay policy: multi-hop', () => {
       accepted: true,
       message: { id: 'SOS-123', hopCount: 3 },
     });
-    // ...but may not travel further.
     expect(decideRelay(fromD, NOW + 400)).toEqual({ relay: false, reason: 'hop_limit' });
   });
 
   test('paths A→B→D and A→C→D converge on equivalent copies of the same message', () => {
-    // B and C each legitimately relay the same id. D's ingress dedup (tested elsewhere) collapses
-    // whichever copy arrives second; the relay policy itself performs no dedup.
     const atA = message({ id: 'SOS-123', type: 'sos', priority: 'critical', maxHops: 3 });
     const fromB = relayed(decideRelay(atA, NOW + 100));
     const fromC = relayed(decideRelay(atA, NOW + 150));

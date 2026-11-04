@@ -105,7 +105,6 @@ describe('PeerTable: observe', () => {
 
 describe('PeerTable: direct-only topology', () => {
   test('A observes B and B observes C: A holds B only', () => {
-    // A ↔ B ↔ C. Each table records only what its own device directly observed.
     const a = createPeerTable({ localNodeId: 'node-a' });
     const b = createPeerTable({ localNodeId: 'node-b' });
     a.observe('node-b', 'transport-x', T0);
@@ -118,7 +117,6 @@ describe('PeerTable: direct-only topology', () => {
   });
 
   test('the only way to add a peer is a direct observation', () => {
-    // No API accepts another node's view (neighbour lists, routes, gateways, hop distances).
     const a = table();
     expect(Object.keys(a).sort()).toEqual([
       'getPeer',
@@ -181,7 +179,6 @@ describe('PeerTable: pruning', () => {
 
     peers.prune(T0 + FRESH);
 
-    // Querying "back in time" proves removal: an un-pruned x would still look fresh here.
     expect(peers.getPeer('node-b', T0 + 1)?.transports.map(t => t.transportId)).toEqual([
       'transport-y',
     ]);
@@ -303,7 +300,6 @@ describe('PeerTable: immutability of returned data', () => {
     expect(Object.isFrozen(peer.transports[0])).toBe(true);
     expect(() => (list as unknown[]).push({})).toThrow(TypeError);
     expect(() => (peer.transports as unknown[]).pop()).toThrow(TypeError);
-    // A write to a frozen property is ignored outside strict mode and throws inside it.
     try {
       (peer.transports[0] as { lastSeenAt: number }).lastSeenAt = 0;
     } catch {}

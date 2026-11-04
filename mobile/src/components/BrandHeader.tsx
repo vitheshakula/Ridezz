@@ -9,7 +9,6 @@ interface BrandHeaderProps {
   right?: React.ReactNode;
 }
 
-/** Top bar shared by the Home screens: logo mark, RIDEAZE wordmark, screen name, optional action. */
 export function BrandHeader({ subtitle, right }: BrandHeaderProps) {
   return (
     <View style={styles.header}>

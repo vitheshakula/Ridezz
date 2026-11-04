@@ -1,8 +1,4 @@
-import {
-  HAZARD_PACKET_MAX_AGE_MS,
-  type HazardPacket,
-  type HazardType,
-} from './hazardProtocol';
+import { HAZARD_PACKET_MAX_AGE_MS, type HazardPacket, type HazardType } from './hazardProtocol';
 
 export const HAZARD_THROTTLE_MS = 4000;
 
@@ -51,11 +47,9 @@ export interface HazardPolicy {
     ingress: HazardIngress,
     isOnline: boolean,
   ): IncomingHazardDecision;
-  /** Claims one packet id for spoken playback. Exposed so the independent TTS gate is testable. */
   claimAnnouncement(packetId: string): boolean;
 }
 
-/** True when a hazard of this type was already recorded within HAZARD_THROTTLE_MS. */
 export function isWithinHazardWindow(
   recent: Map<HazardType, number>,
   hazard: HazardType,
@@ -65,7 +59,6 @@ export function isWithinHazardWindow(
   return last !== undefined && now - last < HAZARD_THROTTLE_MS;
 }
 
-/** Records a hazard type when its current suppression window is free. */
 export function claimHazardWindow(
   recent: Map<HazardType, number>,
   hazard: HazardType,
@@ -78,8 +71,6 @@ export function claimHazardWindow(
   return true;
 }
 
-/** Records an id once, pruning entries only when another check occurs and only after they are
- * strictly older than the packet validity window. */
 export function rememberHazardOnce(
   remembered: Map<string, number>,
   id: string,
@@ -97,10 +88,6 @@ export function rememberHazardOnce(
   return true;
 }
 
-/**
- * Owns the current Phase 1 dedupe and relay decisions. The injected clock exists for deterministic
- * tests; production uses Date.now at each decision point, matching the former RideScreen helpers.
- */
 export function createHazardPolicy(
   localSenderId: string,
   clock: () => number = Date.now,
@@ -115,8 +102,6 @@ export function createHazardPolicy(
 
   return {
     decideLocalSend(packet: HazardPacket, isOnline: boolean): LocalHazardDecision {
-      // Deliberately remember before type suppression. Existing Phase 1 behavior depends on this
-      // ordering, even though a packet rejected below may never be transmitted.
       rememberHazardOnce(seenPacketIds, packet.id, clock());
 
       if (isWithinHazardWindow(recentlyReceivedHazards, packet.hazard, clock())) {
@@ -150,7 +135,6 @@ export function createHazardPolicy(
       ingress: HazardIngress,
       isOnline: boolean,
     ): IncomingHazardDecision {
-      // Local bounces are rejected before touching either id store, as they were in RideScreen.
       if (packet.senderId === localSenderId) {
         return {
           accepted: false,

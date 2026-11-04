@@ -76,8 +76,7 @@ async function requestAllRidePermissions(): Promise<boolean> {
     const statuses = await PermissionsAndroid.requestMultiple(permissionsToRequest);
 
     const micGranted =
-      statuses[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] ===
-      PermissionsAndroid.RESULTS.GRANTED;
+      statuses[PermissionsAndroid.PERMISSIONS.RECORD_AUDIO] === PermissionsAndroid.RESULTS.GRANTED;
 
     return micGranted;
   } catch (err) {
@@ -89,16 +88,12 @@ async function requestAllRidePermissions(): Promise<boolean> {
 export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, token, logout } = useAuth();
-  // The rider's own permanent code -- the room a "Create ride" starts (the server uses it as the
-  // room code), shown on the Create tab so they know what to tell the group.
   const { roomCode: hostCode, status: hostCodeStatus } = useRoomCode();
 
   const [mode, setMode] = useState<'join' | 'create'>('join');
   const [riderName, setRiderName] = useState(user?.name || '');
   const [roomCode, setRoomCode] = useState('');
   const [destination, setDestination] = useState('');
-  // The suggestion the rider tapped, kept until they edit the text again so the ride uses
-  // exactly that place instead of re-geocoding its name.
   const [pickedDestination, setPickedDestination] = useState<RideDestination | null>(null);
   const destinationSuggestions = useDestinationSuggestions(destination, pickedDestination === null);
   const [isLoading, setIsLoading] = useState(false);
@@ -149,7 +144,7 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
         Alert.alert(
           'Microphone Required',
           'Rideaze cannot start the voice intercom without microphone permission. Please allow it in the prompt.',
-          [{ text: 'OK' }]
+          [{ text: 'OK' }],
         );
         setIsLoading(false);
         return;
@@ -208,7 +203,18 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
     } finally {
       setIsLoading(false);
     }
-  }, [isLoading, riderName, roomCode, destination, pickedDestination, mode, token, onJoined, logout, navigation]);
+  }, [
+    isLoading,
+    riderName,
+    roomCode,
+    destination,
+    pickedDestination,
+    mode,
+    token,
+    onJoined,
+    logout,
+    navigation,
+  ]);
 
   const isCreate = mode === 'create';
   const initial = (user?.name || 'R').trim().charAt(0).toUpperCase() || 'R';
@@ -269,7 +275,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
             activeOpacity={0.85}
           >
             <PersonIcon size={16} color={!isCreate ? brand.onPrimary : brand.textSecondary} />
-            <Text style={[styles.segmentText, !isCreate && styles.segmentTextActive]}>JOIN RIDE</Text>
+            <Text style={[styles.segmentText, !isCreate && styles.segmentTextActive]}>
+              JOIN RIDE
+            </Text>
           </TouchableOpacity>
           <TouchableOpacity
             style={[styles.segment, isCreate && styles.segmentActive]}
@@ -277,7 +285,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
             activeOpacity={0.85}
           >
             <PlusIcon size={16} color={isCreate ? brand.onPrimary : brand.textSecondary} />
-            <Text style={[styles.segmentText, isCreate && styles.segmentTextActive]}>CREATE RIDE</Text>
+            <Text style={[styles.segmentText, isCreate && styles.segmentTextActive]}>
+              CREATE RIDE
+            </Text>
           </TouchableOpacity>
         </View>
 
@@ -331,7 +341,9 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
               <View style={styles.hostCode}>
                 <Text
                   style={styles.hostCodeDigits}
-                  accessibilityLabel={hostCode ? `Your room code: ${hostCode}` : 'Your room code is not loaded yet'}
+                  accessibilityLabel={
+                    hostCode ? `Your room code: ${hostCode}` : 'Your room code is not loaded yet'
+                  }
                 >
                   {hostCode ?? (hostCodeStatus === 'loading' ? '· · · · ·' : '—')}
                 </Text>
@@ -398,8 +410,8 @@ export default function JoinScreen({ onJoined, navigation }: JoinScreenProps) {
                   ? 'CREATING RIDE...'
                   : 'JOINING RIDE...'
                 : isCreate
-                  ? 'CREATE RIDE'
-                  : 'JOIN RIDE'}
+                ? 'CREATE RIDE'
+                : 'JOIN RIDE'}
             </Text>
           </Pressable>
 
@@ -499,7 +511,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: spacing.sm },
+  cardHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: spacing.sm,
+  },
   cardTitle: { ...homeType.headlineSmall, color: brand.textPrimary, flexShrink: 1 },
   chip: {
     paddingHorizontal: spacing.sm + 2,
@@ -512,7 +529,12 @@ const styles = StyleSheet.create({
   chipText: { ...homeType.labelSmall, color: brand.primary },
   cardDescription: { ...homeType.bodyMedium, color: brand.textSecondary, marginTop: spacing.sm },
 
-  fieldLabel: { ...homeType.labelSmall, color: brand.outline, marginTop: spacing.lg, marginBottom: spacing.sm },
+  fieldLabel: {
+    ...homeType.labelSmall,
+    color: brand.outline,
+    marginTop: spacing.lg,
+    marginBottom: spacing.sm,
+  },
   input: {
     minHeight: 52,
     backgroundColor: brand.darkest,
@@ -553,7 +575,12 @@ const styles = StyleSheet.create({
     borderRadius: homeRadius.input,
     paddingHorizontal: spacing.lg,
   },
-  inputRowText: { flex: 1, ...homeType.bodyLarge, color: brand.textPrimary, paddingVertical: spacing.md },
+  inputRowText: {
+    flex: 1,
+    ...homeType.bodyLarge,
+    color: brand.textPrimary,
+    paddingVertical: spacing.md,
+  },
 
   errorBox: {
     marginTop: spacing.lg,
@@ -580,10 +607,26 @@ const styles = StyleSheet.create({
   buttonDisabled: { opacity: 0.6 },
   buttonPressed: { opacity: 0.85 },
 
-  privacyRow: { flexDirection: 'row', alignItems: 'center', gap: spacing.sm, marginTop: spacing.md },
-  privacyText: { flex: 1, fontSize: 11, lineHeight: 15, fontFamily: font.body, color: brand.textSecondary },
+  privacyRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    marginTop: spacing.md,
+  },
+  privacyText: {
+    flex: 1,
+    fontSize: 11,
+    lineHeight: 15,
+    fontFamily: font.body,
+    color: brand.textSecondary,
+  },
 
-  recentHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: spacing.sm },
+  recentHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: spacing.sm,
+  },
   recentTitle: { ...homeType.headlineSmall, color: brand.textPrimary },
   emptyCard: {
     alignItems: 'center',

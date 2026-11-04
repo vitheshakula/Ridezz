@@ -12,12 +12,10 @@ import {
 export type BrakeIngress = 'livekit' | 'nearby';
 
 export interface BrakeCoordinatorOptions {
-  /** This rider's id; must match the id the alerts are sent under. */
   senderId: string;
   nearbyTransport: BroadcastTransport<string>;
   liveKitTransport: BroadcastTransport<Uint8Array<ArrayBuffer>>;
   isOnline: () => boolean;
-  /** A braking alert from another rider, delivered once. */
   onPeerBraking: (alert: BrakeAlert, ingress: BrakeIngress) => void;
   clock?: () => number;
 }
@@ -28,19 +26,12 @@ export interface BrakeSendOutcome {
 }
 
 export interface BrakeCoordinator {
-  /** Broadcasts this rider's own braking alert immediately. The detector owns the cooldown. */
   submitLocal(alert: Omit<BrakeAlert, 'senderId'>): Promise<BrakeSendOutcome[]>;
-  /** Subscribes to both transports; repeated calls share one subscription set. */
   subscribe(): () => void;
 }
 
 const REMEMBER_MS = 30_000;
 
-/**
- * Routes the compact braking alert over the same two transports as hazards: Nearby first (always),
- * then LiveKit when online. Received alerts are deduplicated by sender+sequence, dropped when stale,
- * and re-broadcast a limited number of hops so riders out of direct radio range still hear it.
- */
 export function createBrakeCoordinator({
   senderId,
   nearbyTransport,

@@ -4,9 +4,6 @@ import { MIN_SUGGESTION_QUERY_LENGTH, searchDestinations } from '../services/des
 
 const DEBOUNCE_MS = 350;
 
-/** Destination suggestions for what the rider is typing. Waits for a pause in typing before
- * asking, and ignores answers that arrive after the text has moved on. Pass `enabled: false`
- * (e.g. once a suggestion was picked) to clear the list and stop asking. */
 export function useDestinationSuggestions(query: string, enabled: boolean): RideDestination[] {
   const [suggestions, setSuggestions] = useState<RideDestination[]>([]);
 

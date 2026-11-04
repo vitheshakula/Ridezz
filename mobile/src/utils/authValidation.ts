@@ -1,9 +1,3 @@
-/**
- * Instant, client-side form checks. The server (server/src/auth/validation.ts) enforces the same
- * rules and is the authority -- this copy only exists to give feedback before a network round
- * trip, so keep the two in step.
- */
-
 export const ALLOWED_EMAIL_DOMAIN = 'gmail.com';
 export const PASSWORD_MIN_LENGTH = 8;
 export const NAME_MIN_LENGTH = 2;
@@ -15,10 +9,8 @@ export function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
-/** Letters, digits and single dots; no leading/trailing/doubled dot; 1-30 chars. */
 const GMAIL_LOCAL_PART = /^(?!.*\.\.)[a-z0-9](?:[a-z0-9.]{0,28}[a-z0-9])?$/;
 
-/** Returns a message to show under the field, or null when the address is acceptable. */
 export function validateEmail(raw: string): string | null {
   const email = normalizeEmail(raw);
   if (!email) {
@@ -31,7 +23,6 @@ export function validateEmail(raw: string): string | null {
   return GMAIL_LOCAL_PART.test(email.slice(0, -suffix.length)) ? null : INVALID_GMAIL;
 }
 
-/** For choosing a NEW password (sign-up). */
 export function validateNewPassword(password: string): string | null {
   return password.length >= PASSWORD_MIN_LENGTH
     ? null
@@ -51,8 +42,6 @@ export interface SignInErrors {
   password?: string;
 }
 
-/** Sign-in only asks that a password was entered: length rules belong to choosing one, and
- * enforcing them here could lock out an older account whose password predates them. */
 export function validateSignIn(email: string, password: string): SignInErrors {
   const errors: SignInErrors = {};
   const emailProblem = validateEmail(email);

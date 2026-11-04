@@ -22,11 +22,8 @@ const MONO = 50_000;
 const RIDE = '12345';
 const GW = 'rider-c';
 
-/** Each node's view: routes to gateways as [gateway, via, hopCount]. */
 type Routes = readonly (readonly [string, string, number])[];
 
-/** A node with real GatewayState, DirectLinkIdentityMap and ingress. Links exist to `neighbours`
- * as (nearby, endpoint-<id>), so previous hops resolve through the identity map. */
 function makeNode(id: string, neighbours: readonly string[], routes: Routes) {
   const gatewayState = createGatewayState({ localNodeId: id });
   const linkIdentities = createDirectLinkIdentityMap({ localNodeId: id });
@@ -67,7 +64,6 @@ function cloudBound(originId: string, id = `cloud-${originId}`) {
   });
 }
 
-/** X's cloud-bound message already carrying routing toward C. */
 function routedFromX(forwarderDistance: number) {
   return withGatewayRouting(cloudBound('rider-x'), { targetGatewayId: GW, forwarderDistance });
 }
@@ -83,11 +79,6 @@ interface Trace {
   stop: string;
 }
 
-/**
- * Originates a routed message at `start` and carries it hop by hop: encode → receiver's real
- * ingress (dedup, local origin) → previous hop resolved through the receiver's link map →
- * decideGatewayForward. Records the metadata each node sends on.
- */
 function route(nodes: Record<string, Node>, start: string, gateway?: string): Trace {
   const origin = originateGatewayRouted(cloudBound(start), nodes[start].context, gateway);
   if (!origin.ok) {
@@ -140,7 +131,6 @@ function route(nodes: Record<string, Node>, start: string, gateway?: string): Tr
   throw new Error('routed message did not terminate');
 }
 
-/** X → A → B → C, distances 3, 2, 1. */
 function chain() {
   return {
     'rider-x': makeNode('rider-x', ['rider-a'], [[GW, 'rider-a', 2]]),
@@ -193,7 +183,6 @@ describe('origin', () => {
 });
 
 describe('origin hop budget', () => {
-  /** X with a single route to C at the given distance (via C itself when distance is 1). */
   function originWithDistance(distance: number) {
     const via = distance === 1 ? GW : 'rider-a';
     return makeNode('rider-x', [via], [[GW, via, distance - 1]]);
@@ -277,7 +266,7 @@ describe('forward', () => {
   });
 
   test('the target gateway recognises itself without any route lookup', () => {
-    const c = makeNode(GW, [], []); // no routes at all
+    const c = makeNode(GW, [], []);
     expect(receivedAt(c, 'rider-b', 1, 2)).toEqual({
       outcome: 'gateway_reached',
       targetGatewayId: GW,
@@ -285,10 +274,14 @@ describe('forward', () => {
   });
 
   test('no route with distance below the received bound fails closed', () => {
-    const a = makeNode('rider-a', ['rider-x', 'rider-b', 'rider-d'], [
-      [GW, 'rider-b', 1],
-      [GW, 'rider-d', 2],
-    ]);
+    const a = makeNode(
+      'rider-a',
+      ['rider-x', 'rider-b', 'rider-d'],
+      [
+        [GW, 'rider-b', 1],
+        [GW, 'rider-d', 2],
+      ],
+    );
     expect(receivedAt(a, 'rider-x', 2)).toEqual({ outcome: 'failed', reason: 'no_progress' });
   });
 
@@ -354,15 +347,18 @@ describe('end to end through codec and ingress', () => {
 
   test('target stays fixed even when a relay knows a closer gateway', () => {
     const nodes = chain();
-    // B also knows gateway gw-e directly. It ties with C on distance and sorts first, so an
-    // untargeted choice at B would pick it; the packet still goes to its target C.
-    nodes['rider-b'] = makeNode('rider-b', ['rider-a', GW, 'gw-e'], [
-      [GW, GW, 0],
-      ['gw-e', 'gw-e', 0],
-    ]);
-    expect(
-      originateGatewayRouted(cloudBound('rider-b'), nodes['rider-b'].context),
-    ).toMatchObject({ ok: true, route: { gatewayNodeId: 'gw-e' } });
+    nodes['rider-b'] = makeNode(
+      'rider-b',
+      ['rider-a', GW, 'gw-e'],
+      [
+        [GW, GW, 0],
+        ['gw-e', 'gw-e', 0],
+      ],
+    );
+    expect(originateGatewayRouted(cloudBound('rider-b'), nodes['rider-b'].context)).toMatchObject({
+      ok: true,
+      route: { gatewayNodeId: 'gw-e' },
+    });
 
     const trace = route(nodes, 'rider-x');
     expect(trace.stop).toBe(`gateway_reached:${GW}`);
@@ -393,7 +389,6 @@ describe('loop safety with real routed metadata', () => {
     });
 
     expect(route(cycle(1, 1, 1), 'rider-a').stop).toBe('rider-b:no_progress');
-    // Skewed stale hop counts let the packet travel further, but never back into A's forwarding.
     expect(route(cycle(3, 2, 1), 'rider-a')).toEqual({
       hops: [
         { node: 'rider-a', hopCount: 0, forwarderDistance: 4 },

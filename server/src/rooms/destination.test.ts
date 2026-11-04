@@ -20,15 +20,22 @@ describe('cleanDestinationName', () => {
 
 describe('parseDestination', () => {
   it('reads a valid destination', () => {
-    assert.deepEqual(parseDestination({ destinationName: 'Fort', destinationLat: 17.38, destinationLng: 78.4 }), {
-      name: 'Fort',
-      lat: 17.38,
-      lng: 78.4,
-    });
+    assert.deepEqual(
+      parseDestination({ destinationName: 'Fort', destinationLat: 17.38, destinationLng: 78.4 }),
+      {
+        name: 'Fort',
+        lat: 17.38,
+        lng: 78.4,
+      },
+    );
   });
 
   it('allows a destination with no name', () => {
-    assert.deepEqual(parseDestination({ destinationLat: 0, destinationLng: 0 }), { name: null, lat: 0, lng: 0 });
+    assert.deepEqual(parseDestination({ destinationLat: 0, destinationLng: 0 }), {
+      name: null,
+      lat: 0,
+      lng: 0,
+    });
   });
 
   it('accepts the edges of the valid range', () => {

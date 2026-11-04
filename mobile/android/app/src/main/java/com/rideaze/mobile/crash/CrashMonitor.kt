@@ -2,21 +2,11 @@ package com.rideaze.mobile.crash
 
 import android.content.Context
 
-/**
- * Wires the sensor foundation, GNSS speed and the detector together and owns their lifecycle.
- * Free of React Native types, so it can be started from a bridge module today and from a service
- * tomorrow.
- *
- * Threading: the detector runs on the sensor thread. Public control methods may be called from any
- * thread; they hop onto the sensor thread and report their result through a callback.
- */
 class CrashMonitor(
   context: Context,
   private val listener: Listener,
 ) {
-
   interface Listener : CrashDetectorListener, HardBrakingListener {
-    /** Sensor stall / GNSS availability changed. May be called from the sensor thread. */
     fun onMonitorStatus(status: MonitorStatus)
   }
 
@@ -24,7 +14,6 @@ class CrashMonitor(
 
   data class StartInfo(val capabilities: SensorCapabilities, val gnss: GnssStatus)
 
-  /** Thrown by [start] when crash detection cannot run on this phone. [code] is JS-facing. */
   class UnsupportedDeviceException(val code: String, message: String) : Exception(message)
 
   private val appContext = context.applicationContext
@@ -35,7 +24,6 @@ class CrashMonitor(
   private var sensors: RiderSensorManager? = null
   private var gnssProvider: GnssSpeedProvider? = null
   private var stalled = false
-  // While a simulated ride is replayed, live samples must not reach the braking detector.
   @Volatile private var simulatedUntil = 0L
   private var gnssStatus = GnssStatus.STOPPED
 
@@ -52,7 +40,6 @@ class CrashMonitor(
     if (!caps.hasAccelerometer) {
       throw UnsupportedDeviceException("crash_no_accelerometer", "This phone has no accelerometer")
     }
-    // A sensor that saturates below the impact threshold could never see a crash.
     val minRange = config.impactG * STANDARD_GRAVITY * 1.1
     if (caps.accelMaxRange < minRange) {
       throw UnsupportedDeviceException(
@@ -68,7 +55,6 @@ class CrashMonitor(
     val clk = EpochClock()
     val detector = CrashDetectorCore(config, listener)
     detector.setGyroAvailable(caps.hasGyroscope)
-    // Braking shares the same streams and thread; a phone too weak for it still runs crash detection.
     val brake = if (brakingEnabled) HardBrakingDetector(brakingConfig, listener) else null
     stalled = false
 
@@ -117,7 +103,6 @@ class CrashMonitor(
           publishStatus()
         },
       )
-    // Registered with the sensor thread's looper so GNSS and IMU share one thread.
     gnssStatus = manager.looper?.let { gnss.start(it) } ?: GnssStatus.UNAVAILABLE
 
     clock = clk
@@ -145,7 +130,6 @@ class CrashMonitor(
 
   private fun publishStatus() = listener.onMonitorStatus(status())
 
-  /** Runs [block] on the sensor thread and passes its result to [done]; false if not running. */
   private fun <T> onSensorThread(fallback: T, done: (T) -> Unit, block: (CrashDetectorCore, Long) -> T) {
     val manager: RiderSensorManager?
     val detector: CrashDetectorCore?
@@ -170,14 +154,12 @@ class CrashMonitor(
   fun acknowledge(done: (Boolean) -> Unit) =
     onSensorThread(false, done) { c, now -> c.acknowledge(now) }
 
-  /** Dev/demo only: starts a countdown with no sensor evidence. */
   fun simulate(done: (Boolean) -> Unit) =
     onSensorThread(false, done) { c, now ->
       c.simulate(now)
       true
     }
 
-  /** The result arrives via [CrashDetectorListener.onCalibration]. */
   fun calibrate(done: (Boolean) -> Unit) =
     onSensorThread(false, done) { c, now ->
       c.startCalibration(now)
@@ -192,7 +174,6 @@ class CrashMonitor(
 
   private fun simulating() = android.os.SystemClock.elapsedRealtime() < simulatedUntil
 
-  /** Dev/demo only: replays cruise (default 30) -> final (default 5) km/h through the real braking detector. */
   fun simulateBraking(cruiseKmh: Double = 30.0, finalKmh: Double = 5.0, done: (Boolean) -> Unit) {
     val manager: RiderSensorManager?
     val detector: HardBrakingDetector?
@@ -218,7 +199,6 @@ class CrashMonitor(
     }
   }
 
-  /** Forgets the learned braking axis (the phone was re-mounted). */
   fun resetBrakingMount(done: (Boolean) -> Unit) {
     val manager: RiderSensorManager?
     val detector: HardBrakingDetector?

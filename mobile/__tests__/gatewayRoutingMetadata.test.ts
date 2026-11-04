@@ -15,9 +15,7 @@ import {
   serializeRideMessage,
 } from '../src/connectivity/protocol/rideMessageCodec';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 
 const WALL = 1_700_000_000_000;
 
@@ -39,7 +37,6 @@ function routed(targetGatewayId = 'rider-c', forwarderDistance = 3) {
   return withGatewayRouting(message(), { targetGatewayId, forwarderDistance });
 }
 
-/** Raw wire text with an arbitrary gatewayRouting value, bypassing the serializer. */
 function rawWithRouting(gatewayRouting: unknown, type: RideMessageType = 'ride_state'): string {
   const wire = JSON.parse(serializeRideMessage(message(type)));
   return JSON.stringify({ ...wire, gatewayRouting });
@@ -146,8 +143,9 @@ describe('gateway routing metadata: strict validation', () => {
   });
 
   test('withGatewayRouting and the serializer refuse invalid routing', () => {
-    expect(() => withGatewayRouting(message(), { targetGatewayId: '', forwarderDistance: 2 }))
-      .toThrow(RangeError);
+    expect(() =>
+      withGatewayRouting(message(), { targetGatewayId: '', forwarderDistance: 2 }),
+    ).toThrow(RangeError);
     expect(() =>
       withGatewayRouting(message(), { targetGatewayId: 'rider-c', forwarderDistance: 0 }),
     ).toThrow(RangeError);

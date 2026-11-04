@@ -21,10 +21,7 @@ export type ReliableDeliveryEvent =
 export interface ReliableDeliveryEngine {
   start(): Promise<void>;
   stop(): void;
-  submit(
-    message: RideMessage,
-    destinationGatewayId?: string,
-  ): Promise<OutboxEnqueueResult>;
+  submit(message: RideMessage, destinationGatewayId?: string): Promise<OutboxEnqueueResult>;
   acknowledge(messageId: string): Promise<boolean>;
   connectivityAvailable(): void;
   readonly running: boolean;
@@ -53,9 +50,7 @@ export function createReliableDeliveryEngine({
   const report = (event: ReliableDeliveryEvent): void => {
     try {
       onEvent?.(Object.freeze({ ...event }));
-    } catch {
-      // Diagnostics cannot affect delivery.
-    }
+    } catch {}
   };
 
   const clearTimer = (): void => {

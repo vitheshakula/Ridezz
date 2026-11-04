@@ -28,16 +28,18 @@ describe('loadEnv', () => {
   });
 
   it('reads the configured values', () => {
-    const result = loadEnv(env({
-      PORT: '4321',
-      GOOGLE_CLIENT_ID: ' my-client-id ',
-      CORS_ORIGINS: ' https://app.example,https://admin.example ',
-      AUTH_RATE_LIMIT_WINDOW_MS: '60000',
-      AUTH_RATE_LIMIT_MAX: '25',
-      LIVEKIT_API_KEY: ' k ',
-      LIVEKIT_API_SECRET: ' s ',
-      LIVEKIT_URL: ' wss://x.example ',
-    }));
+    const result = loadEnv(
+      env({
+        PORT: '4321',
+        GOOGLE_CLIENT_ID: ' my-client-id ',
+        CORS_ORIGINS: ' https://app.example,https://admin.example ',
+        AUTH_RATE_LIMIT_WINDOW_MS: '60000',
+        AUTH_RATE_LIMIT_MAX: '25',
+        LIVEKIT_API_KEY: ' k ',
+        LIVEKIT_API_SECRET: ' s ',
+        LIVEKIT_URL: ' wss://x.example ',
+      }),
+    );
     assert.equal(result.port, 4321);
     assert.equal(result.jwtSecret, SECRET);
     assert.equal(result.googleClientId, 'my-client-id');
@@ -67,7 +69,10 @@ describe('HTTP security configuration', () => {
   it('treats blank CORS origins as permissive and parses comma-separated exact origins', () => {
     assert.equal(loadEnv(env({ CORS_ORIGINS: '  ' })).corsOrigins, null);
     assert.deepEqual(
-      [...(loadEnv(env({ CORS_ORIGINS: 'https://one.example, https://two.example' })).corsOrigins ?? [])],
+      [
+        ...(loadEnv(env({ CORS_ORIGINS: 'https://one.example, https://two.example' }))
+          .corsOrigins ?? []),
+      ],
       ['https://one.example', 'https://two.example'],
     );
   });
@@ -105,7 +110,10 @@ describe('DATABASE_URL', () => {
     const privateValue = 'mysql://private-user:private-password@localhost/ridezz';
     assert.throws(
       () => loadEnv(env({ DATABASE_URL: privateValue })),
-      error => error instanceof Error && /valid PostgreSQL URL/.test(error.message) && !error.message.includes(privateValue),
+      error =>
+        error instanceof Error &&
+        /valid PostgreSQL URL/.test(error.message) &&
+        !error.message.includes(privateValue),
     );
     assert.throws(() => loadEnv(env({ DATABASE_URL: 'postgresql://' })), /valid PostgreSQL URL/);
   });
@@ -115,8 +123,14 @@ describe('LiveKit configuration', () => {
   it('requires the API key, API secret and URL', () => {
     assert.throws(() => loadEnv(env({ LIVEKIT_API_KEY: undefined })), /LIVEKIT_API_KEY is not set/);
     assert.throws(() => loadEnv(env({ LIVEKIT_API_KEY: '  ' })), /LIVEKIT_API_KEY is not set/);
-    assert.throws(() => loadEnv(env({ LIVEKIT_API_SECRET: undefined })), /LIVEKIT_API_SECRET is not set/);
-    assert.throws(() => loadEnv(env({ LIVEKIT_API_SECRET: '  ' })), /LIVEKIT_API_SECRET is not set/);
+    assert.throws(
+      () => loadEnv(env({ LIVEKIT_API_SECRET: undefined })),
+      /LIVEKIT_API_SECRET is not set/,
+    );
+    assert.throws(
+      () => loadEnv(env({ LIVEKIT_API_SECRET: '  ' })),
+      /LIVEKIT_API_SECRET is not set/,
+    );
     assert.throws(() => loadEnv(env({ LIVEKIT_URL: undefined })), /LIVEKIT_URL is not set/);
     assert.throws(() => loadEnv(env({ LIVEKIT_URL: '  ' })), /LIVEKIT_URL is not set/);
   });
@@ -130,7 +144,10 @@ describe('LiveKit configuration', () => {
     const privateValue = 'https://private-livekit.example';
     assert.throws(
       () => loadEnv(env({ LIVEKIT_URL: privateValue })),
-      error => error instanceof Error && /valid WebSocket URL/.test(error.message) && !error.message.includes(privateValue),
+      error =>
+        error instanceof Error &&
+        /valid WebSocket URL/.test(error.message) &&
+        !error.message.includes(privateValue),
     );
     assert.throws(() => loadEnv(env({ LIVEKIT_URL: 'not-a-url' })), /valid WebSocket URL/);
   });
@@ -144,7 +161,10 @@ describe('PORT', () => {
 
   it('rejects non-integers, non-numbers and values outside the valid range', () => {
     for (const port of ['0', '65536', '-1', '1.5', 'NaN', 'not-a-number']) {
-      assert.throws(() => loadEnv(env({ PORT: port })), /PORT must be an integer between 1 and 65535/);
+      assert.throws(
+        () => loadEnv(env({ PORT: port })),
+        /PORT must be an integer between 1 and 65535/,
+      );
     }
   });
 });
@@ -157,14 +177,24 @@ describe('ALLOWED_EMAILS', () => {
   });
 
   it('accepts commas, semicolons, spaces and newlines, in any case', () => {
-    const result = loadEnv(env({ ALLOWED_EMAILS: ' A@gmail.com,b@gmail.com;\nC@GMAIL.com  d@gmail.com ' }));
-    assert.deepEqual([...(result.allowedEmails ?? [])].sort(), ['a@gmail.com', 'b@gmail.com', 'c@gmail.com', 'd@gmail.com']);
+    const result = loadEnv(
+      env({ ALLOWED_EMAILS: ' A@gmail.com,b@gmail.com;\nC@GMAIL.com  d@gmail.com ' }),
+    );
+    assert.deepEqual([...(result.allowedEmails ?? [])].sort(), [
+      'a@gmail.com',
+      'b@gmail.com',
+      'c@gmail.com',
+      'd@gmail.com',
+    ]);
   });
 });
 
 describe('ALLOWED_EMAILS (regression)', () => {
   it('does not split addresses on the letter "s" or other characters that are part of them', () => {
     const result = loadEnv(env({ ALLOWED_EMAILS: 'mike.smith@gmail.com, ross.stevens@gmail.com' }));
-    assert.deepEqual([...(result.allowedEmails ?? [])].sort(), ['mike.smith@gmail.com', 'ross.stevens@gmail.com']);
+    assert.deepEqual([...(result.allowedEmails ?? [])].sort(), [
+      'mike.smith@gmail.com',
+      'ross.stevens@gmail.com',
+    ]);
   });
 });

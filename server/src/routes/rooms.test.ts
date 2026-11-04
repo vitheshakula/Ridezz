@@ -41,7 +41,12 @@ async function withServer<T>(app: Express, run: (baseUrl: string) => Promise<T>)
   }
 }
 
-async function request(baseUrl: string, method: string, path: string, body: unknown): Promise<Reply> {
+async function request(
+  baseUrl: string,
+  method: string,
+  path: string,
+  body: unknown,
+): Promise<Reply> {
   const response = await fetch(`${baseUrl}${path}`, {
     method,
     headers: { 'content-type': 'application/json' },
@@ -100,7 +105,12 @@ describe('room-code validation', () => {
 
     await withServer(app, async baseUrl => {
       for (const roomCode of ['abcde', '1234', '123456', '12%2034', '%20%20%20']) {
-        const reply = await request(baseUrl, 'PATCH', `/api/rooms/${roomCode}/destination`, destination);
+        const reply = await request(
+          baseUrl,
+          'PATCH',
+          `/api/rooms/${roomCode}/destination`,
+          destination,
+        );
         assert.equal(reply.status, 400, roomCode);
         assert.deepEqual(reply.body, { message: 'Invalid room code.' });
       }
@@ -130,7 +140,7 @@ describe('room-code validation', () => {
     assert.deepEqual(lookedUpCodes, ['12345', '12345']);
   });
 
-  it('preserves each room operation\'s existing 500 response', async () => {
+  it("preserves each room operation's existing 500 response", async () => {
     const app = roomApp(async () => {
       throw new Error('private database detail');
     });

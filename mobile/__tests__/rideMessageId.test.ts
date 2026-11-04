@@ -19,7 +19,6 @@ import { createPeerTable } from '../src/connectivity/peerTable';
 
 const ASCENDING = Uint8Array.from({ length: 16 }, (_, i) => i);
 
-/** A deterministic stand-in for crypto.getRandomValues, yielding the given blocks in order. */
 function sequenceSource(...blocks: number[][]) {
   let next = 0;
   return jest.fn<Uint8Array, [Uint8Array]>(array => {
@@ -161,8 +160,6 @@ describe('RideMessage id generator', () => {
   });
 
   test('two calls give two independent heartbeat ids for transports X and Y', () => {
-    // The future scheduler sends a separate heartbeat per transport. Ids are not transport
-    // specific: they are simply two independently generated ids.
     const generate = createRideMessageIdGenerator(
       sequenceSource(
         bytes(() => 0x01),
@@ -258,7 +255,6 @@ describe('runtime RideMessage id generator', () => {
   });
 
   test('defaults to globalThis.crypto', () => {
-    // Jest runs on Node, whose built-in Web Crypto stands in for the device polyfill here.
     expect(createRuntimeRideMessageIdGenerator()()).toMatch(RIDE_MESSAGE_ID_PATTERN);
   });
 });

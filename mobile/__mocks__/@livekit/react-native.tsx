@@ -1,9 +1,3 @@
-// Manual Jest mock for @livekit/react-native.
-//
-// The real package pulls in native modules (WebRTCModule, LiveKitReactNative, etc.)
-// that don't exist under Jest, so component tests would crash on import. Our code only
-// uses a small slice of this SDK's surface (see RideScreen.tsx / index.js), so this mock
-// stubs exactly that slice rather than the whole native bridge.
 import type { PropsWithChildren } from 'react';
 
 export const AudioSession = {

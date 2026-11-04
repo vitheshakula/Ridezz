@@ -11,16 +11,9 @@ model User {
   id            String   @id @default(uuid())
   riderName     String
   email         String   @unique
-  // bcrypt hash. Null for accounts that only ever signed in with Google.
   password      String?
-  // Google account id ("sub") once the account has signed in with Google.
   googleId      String?  @unique
-  // True only when Google has vouched for the address (Google sign-in). Accounts created with
-  // email + password are unverified: the address was typed, not proven.
   emailVerified Boolean  @default(false)
-  // The rider's permanent 5-digit code ("10000".."99999"). Assigned once -- at sign-up, or the next
-  // time an account that predates the feature signs in or hosts -- and never changed. When this
-  // rider hosts a ride, it IS the room's code. Text, not a number, so it round-trips exactly.
   roomCode      String?  @unique
   createdAt     DateTime @default(now())
   rooms         Room[]

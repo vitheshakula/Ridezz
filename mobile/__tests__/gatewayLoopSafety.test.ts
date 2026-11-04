@@ -18,9 +18,7 @@ import {
   createRideMessageIngress,
   type RideMessageIngressSource,
 } from '../src/connectivity/rideMessageIngress';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
 import { createRideMessage, type RideMessage } from '../src/connectivity/protocol/rideMessage';
 import { encodeRideMessage } from '../src/connectivity/protocol/rideMessageCodec';
@@ -48,11 +46,6 @@ interface Walk {
   stop: 'delivered' | Extract<GatewayForwardingDecision, { ok: false }>['reason'];
 }
 
-/**
- * Simulates one cloud-bound packet: the origin chooses with no forwarding context; every later
- * node is given its direct previous hop and the bound (previous forwarder's distance) that the
- * packet would carry. Stops when a decision fails or the next hop is the gateway.
- */
 function walk(topology: Topology, start: string, gatewayNodeId?: string): Walk {
   const path = [start];
   const distances: number[] = [];
@@ -83,8 +76,6 @@ function expectStrictlyDecreasing(distances: number[]) {
 
 describe('hop and distance semantics', () => {
   test('hopCount is the next hop’s distance; this node’s distance is hopCount + 1', () => {
-    // Verified against the real stack in the end-to-end test below: B receives C's advert at
-    // hop 0 (B is 1 link from C); A receives B's relay at hop 1 (A is 2 links from C).
     expect(gatewayRouteDistance(route(GW, 0))).toBe(1);
     expect(gatewayRouteDistance(route('rider-b', 1))).toBe(2);
     expect(gatewayRouteDistance(route('rider-d', 3))).toBe(4);
@@ -190,7 +181,6 @@ describe('split horizon', () => {
     const links = createDirectLinkIdentityMap({ localNodeId: 'rider-a' });
     links.observe('nearby', 'endpoint-B', 'rider-b', MONO);
 
-    // A packet created by rider-x, handed over by B.
     expect(resolvePreviousHop({ transportId: 'nearby', peerId: 'endpoint-B' }, links, MONO)).toBe(
       'rider-b',
     );
@@ -235,7 +225,6 @@ describe('loop prevention', () => {
   });
 
   test('stale mutual routes (A via B, B via A) never complete a loop from either side', () => {
-    // B has lost C, but stale observations remain: A believes C via B; B believes C via A.
     const topology: Topology = {
       'rider-a': [route('rider-b', 1)],
       'rider-b': [route('rider-a', 1)],
@@ -251,7 +240,6 @@ describe('loop prevention', () => {
       stop: 'previous_hop_only',
     });
 
-    // Strict progress blocks it independently of split horizon.
     expect(
       selectGatewayForwardingRoute(topology['rider-b'], {
         received: { fromNodeId: 'someone-else', distanceBound: 2 },
@@ -271,7 +259,6 @@ describe('loop prevention', () => {
       expect(result.path).toHaveLength(2);
     }
 
-    // Even with "descending" stale hop counts the bound runs out before returning to A.
     const skewed: Topology = {
       'rider-a': [route('rider-b', 3)],
       'rider-b': [route('rider-d', 2)],
@@ -283,15 +270,12 @@ describe('loop prevention', () => {
       distances: [4, 3, 2],
       stop: 'no_progress',
     });
-    // The packet reaches A's id-dedup again, but A cannot forward it: its only route (distance 4)
-    // does not beat the bound of 2. No complete forwarding cycle exists.
   });
 
   test('every three-node stale configuration terminates with strictly decreasing distance', () => {
     const nodes = ['rider-a', 'rider-b', 'rider-d'];
     const hops = [1, 2, 3];
     let walks = 0;
-    // Each node has a stale route via each of the other two, with every hop combination.
     for (let combo = 0; combo < hops.length ** 6; combo++) {
       const pick = (i: number) => hops[Math.floor(combo / hops.length ** i) % hops.length];
       const topology: Topology = {};
@@ -311,7 +295,6 @@ describe('loop prevention', () => {
   });
 
   test('equal-cost paths are fine at one node but not across an edge', () => {
-    // A: C via B (distance 2) or via D (distance 2). B and D each reach C directly.
     const healthy: Topology = {
       'rider-a': [route('rider-d', 1), route('rider-b', 1)],
       'rider-b': [route(GW, 0)],
@@ -323,7 +306,6 @@ describe('loop prevention', () => {
       stop: 'delivered',
     });
 
-    // If B's only remaining route is also distance 2, forwarding A -> B is not progress.
     const flat: Topology = { ...healthy, 'rider-b': [route('rider-e', 1)] };
     expect(walk(flat, 'rider-a')).toMatchObject({
       path: ['rider-a', 'rider-b'],
@@ -341,7 +323,6 @@ describe('loop prevention', () => {
   });
 });
 
-/** One node's receive side built from the real stack. */
 function node(localNodeId: string) {
   const ingress = createRideMessageIngress({
     rideId: RIDE,
@@ -373,7 +354,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
     const a = node('rider-a');
     const b = node('rider-b');
 
-    // Direct heartbeats: B ↔ A and C → B.
     handleHeartbeat(
       a.receive(heartbeatFrom('rider-b'), { transportId: 'nearby', peerId: 'endpoint-B' }),
       MONO,
@@ -392,7 +372,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
       b.peers,
       b.links,
     );
-    // C advertises: B observes hop 0, relays; A observes hop 1.
     const atB = b.receive(
       createGatewayAdvertisementMessage({
         id: 'gw-1',
@@ -412,7 +391,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
     expect(atA.message.hopCount).toBe(1);
     handleGatewayAdvertisement(atA, MONO, a.gateways, a.links);
 
-    // A originates a cloud-bound packet.
     const atAChoice = selectGatewayForwardingRoute(a.candidates(MONO), { gatewayNodeId: GW });
     expect(atAChoice).toMatchObject({
       ok: true,
@@ -420,7 +398,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
       distance: 2,
     });
 
-    // B receives it from A (resolved via B's link map) with A's distance as the bound.
     const cloudBound = createRideMessage({
       id: 'cloud-1',
       rideId: RIDE,
@@ -451,9 +428,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
       distance: 1,
     });
 
-    // B cannot reconstruct A's distance from its own state: it never observed C via A, because
-    // A's relayed copy of the advertisement would be a duplicate at B. Hence the bound must be
-    // supplied with the packet; without it, forwarding fails closed.
     expect(b.gateways.getGateway(GW, MONO)?.observations.map(o => o.viaNodeId)).toEqual([GW]);
     expect(
       selectGatewayForwardingRoute(b.candidates(MONO), {
@@ -466,7 +440,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
   test('stale mutual state in real structures: neither A nor B completes a loop', () => {
     const a = node('rider-a');
     const b = node('rider-b');
-    // A: link to B and stale C via B (hop 1). B: link to A, stale C via A (hop 1); B lost C.
     a.links.observe('nearby', 'endpoint-B', 'rider-b', MONO);
     a.gateways.observe(GW, 'nearby', 1, MONO, 'rider-b');
     b.links.observe('nearby', 'endpoint-A', 'rider-a', MONO);
@@ -481,7 +454,6 @@ describe('end to end with real state: A ↔ B ↔ C', () => {
       }),
     ).toEqual({ ok: false, reason: 'previous_hop_only' });
 
-    // Discovery is unaffected: C is still a known gateway at both nodes.
     expect(a.gateways.isKnownGateway(GW, MONO)).toBe(true);
     expect(b.gateways.isKnownGateway(GW, MONO)).toBe(true);
   });

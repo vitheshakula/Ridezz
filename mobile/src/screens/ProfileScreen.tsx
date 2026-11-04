@@ -13,9 +13,6 @@ interface ProfileScreenProps {
   navigation?: { navigate: (screen: 'JoinScreen' | 'ProfileScreen' | 'LoginPage') => void };
 }
 
-/** Rider profile. Shows only what the app actually knows about the signed-in rider
- * (name, email, whether Google verified the address) plus the existing Log Out action.
- * Hardware / mesh / SOS preferences from the design are not shown: no such settings exist yet. */
 export default function ProfileScreen({ navigation }: ProfileScreenProps) {
   const insets = useSafeAreaInsets();
   const { user, logout } = useAuth();
@@ -149,7 +146,12 @@ const styles = StyleSheet.create({
     backgroundColor: brand.surfaceLow,
   },
   rowLabel: { ...homeType.labelLarge, color: brand.textPrimary },
-  rowValue: { ...homeType.bodyMedium, color: brand.textSecondary, flexShrink: 1, textAlign: 'right' },
+  rowValue: {
+    ...homeType.bodyMedium,
+    color: brand.textSecondary,
+    flexShrink: 1,
+    textAlign: 'right',
+  },
 
   danger: {
     backgroundColor: brand.dangerMuted,

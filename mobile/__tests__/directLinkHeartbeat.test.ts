@@ -8,9 +8,7 @@ import {
   createRideMessageIngress,
   type RideMessageIngressSource,
 } from '../src/connectivity/rideMessageIngress';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
 import {
   createRideMessage,
@@ -30,7 +28,6 @@ function heartbeatFrom(originId: string) {
   return createHeartbeatMessage({ id: `hb-${++ids}`, rideId: RIDE, originId, createdAt: WALL });
 }
 
-/** One node's receive side: real ingress plus its local state structures. */
 function node(localNodeId: string) {
   const ingress = createRideMessageIngress({
     rideId: RIDE,
@@ -70,7 +67,6 @@ describe('heartbeat → PeerTable + DirectLinkIdentityMap', () => {
       { transportId: 'nearby', lastSeenAt: MONO },
     ]);
     expect(a.links.resolve('nearby', 'endpoint-7291', MONO)).toBe('rider-b');
-    // PeerTable stores no transport peer ids, and the endpoint never becomes a node.
     expect(JSON.stringify(a.peers.getPeers(MONO))).not.toContain('endpoint-7291');
     expect(a.peers.isDirectPeer('endpoint-7291', MONO)).toBe(false);
   });
@@ -174,32 +170,29 @@ describe('heartbeat → PeerTable + DirectLinkIdentityMap', () => {
     'ack',
     'ride_state',
   ];
-  test.each(nonHeartbeatTypes)(
-    'a direct %s establishes no link',
-    type => {
-      const a = node('rider-a');
-      const m = createRideMessage({
-        id: `m-${type}`,
-        rideId: RIDE,
-        originId: 'rider-b',
-        type,
-        priority: 'normal',
-        payload: {},
-        ttlMs: 10_000,
-        maxHops: 3,
-        now: WALL,
-      });
-      const accepted = a.receive(m, { transportId: 'nearby', peerId: 'endpoint-B' });
+  test.each(nonHeartbeatTypes)('a direct %s establishes no link', type => {
+    const a = node('rider-a');
+    const m = createRideMessage({
+      id: `m-${type}`,
+      rideId: RIDE,
+      originId: 'rider-b',
+      type,
+      priority: 'normal',
+      payload: {},
+      ttlMs: 10_000,
+      maxHops: 3,
+      now: WALL,
+    });
+    const accepted = a.receive(m, { transportId: 'nearby', peerId: 'endpoint-B' });
 
-      expect(handleHeartbeat(accepted, MONO, a.peers, a.links)).toMatchObject({
-        reason: 'not_heartbeat',
-      });
-      if (type === 'gateway_advertisement') {
-        handleGatewayAdvertisement(accepted, MONO, a.gateways);
-      }
-      expect(a.links.resolve('nearby', 'endpoint-B', MONO)).toBeUndefined();
-    },
-  );
+    expect(handleHeartbeat(accepted, MONO, a.peers, a.links)).toMatchObject({
+      reason: 'not_heartbeat',
+    });
+    if (type === 'gateway_advertisement') {
+      handleGatewayAdvertisement(accepted, MONO, a.gateways);
+    }
+    expect(a.links.resolve('nearby', 'endpoint-B', MONO)).toBeUndefined();
+  });
 
   test('an endpoint reassigned by a newer heartbeat resolves to the new node', () => {
     const a = node('rider-a');
@@ -225,11 +218,9 @@ describe('A ↔ B ↔ C: the information routing needs now exists', () => {
     const a = node('rider-a');
     const b = node('rider-b');
 
-    // Step 1: B's direct heartbeat reaches A over nearby, from endpoint-B.
     const hb = a.receive(heartbeatFrom('rider-b'), { transportId: 'nearby', peerId: 'endpoint-B' });
     expect(handleHeartbeat(hb, MONO, a.peers, a.links)).toMatchObject({ observed: true });
 
-    // Step 2: C advertises; B accepts and relays it; A receives B's hop-1 copy from endpoint-B.
     const atB = b.receive(
       createGatewayAdvertisementMessage({
         id: 'gw-c-1',
@@ -248,20 +239,14 @@ describe('A ↔ B ↔ C: the information routing needs now exists', () => {
       observed: true,
     });
 
-    // Origin (who created the advertisement) vs direct sender (who handed this copy to A).
     const origin = atA.message.originId;
-    const directSender = a.links.resolve(
-      atA.source.transportId,
-      atA.source.peerId!,
-      MONO + 100,
-    );
+    const directSender = a.links.resolve(atA.source.transportId, atA.source.peerId!, MONO + 100);
     expect(origin).toBe('rider-c');
     expect(directSender).toBe('rider-b');
     expect(directSender).not.toBe(origin);
     expect(atA.message.hopCount).toBe(1);
     expect(atA.source.transportId).toBe('nearby');
 
-    // Each structure holds only what it is responsible for.
     expect(a.gateways.getGateways(MONO + 100)).toEqual([
       {
         nodeId: 'rider-c',

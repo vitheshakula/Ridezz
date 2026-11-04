@@ -20,7 +20,6 @@ function nativeModule(): SecureOutboxNativeModule {
   return module as SecureOutboxNativeModule;
 }
 
-/** Android Keystore-backed store. Serialized records never enter AsyncStorage in plaintext. */
 export function createSecureOutboxStore(): PersistentOutboxStore {
   return {
     load: () => nativeModule().load(),

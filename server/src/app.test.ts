@@ -14,8 +14,6 @@ import { createUserWithRoomCode, ensureRoomCode, RoomCodeUnavailableError } from
 const JWT_SECRET = 'test-secret-'.padEnd(48, 'x');
 const GOOGLE_CLIENT_ID = 'test-client-id.apps.googleusercontent.com';
 
-// Tests below can use `prisma` only after the before hook succeeds. The separate optional handle
-// lets teardown disconnect a client created before a later setup step failed.
 let prisma: PrismaClient;
 let prismaForTeardown: PrismaClient | undefined;
 let server: Server | undefined;
@@ -53,20 +51,24 @@ function requireTestDatabaseConfig(source: NodeJS.ProcessEnv = process.env): Tes
   } catch {
     throw new Error('TEST_DATABASE_URL contains an invalid encoded database name.');
   }
-  if (!databaseName || databaseName.includes('/') || !databaseName.startsWith(TEST_DATABASE_PREFIX)) {
+  if (
+    !databaseName ||
+    databaseName.includes('/') ||
+    !databaseName.startsWith(TEST_DATABASE_PREFIX)
+  ) {
     throw new Error(`TEST_DATABASE_URL database name must begin with "${TEST_DATABASE_PREFIX}".`);
   }
 
   const applicationUrl = source.DATABASE_URL?.trim();
   if (applicationUrl && rawUrl === applicationUrl) {
-    throw new Error('TEST_DATABASE_URL must not equal DATABASE_URL; use a dedicated isolated test database.');
+    throw new Error(
+      'TEST_DATABASE_URL must not equal DATABASE_URL; use a dedicated isolated test database.',
+    );
   }
 
   return { url: rawUrl, databaseName };
 }
 
-// Google is the one thing we can't run for real here (no genuine token can be minted), so the
-// verifier is faked: it "verifies" tokens registered in this map and rejects everything else.
 const googleTokens = new Map<string, GoogleIdentity>();
 const fakeVerifier: GoogleVerifier = async idToken => {
   const identity = googleTokens.get(idToken);
@@ -99,7 +101,6 @@ async function call(method: string, path: string, body?: unknown, token?: string
 const post = (path: string, body?: unknown, token?: string) => call('POST', path, body, token);
 const get = (path: string, token?: string) => call('GET', path, undefined, token);
 
-/** Registers a fresh email + password account and returns its token and details. */
 async function register(overrides: Record<string, unknown> = {}) {
   const email = nextEmail();
   const password = 'correct horse battery';
@@ -108,7 +109,6 @@ async function register(overrides: Record<string, unknown> = {}) {
   return { email, password, token: res.body.token as string, user: res.body.user };
 }
 
-/** A syntactically valid code that does not currently identify a hosted room. */
 async function unusedRoomCode(): Promise<string> {
   for (let code = 10000; code <= 99999; code++) {
     const value = String(code);
@@ -142,15 +142,11 @@ before(async () => {
     );
   }
 
-  // Build the test database from the committed migration history. `--no-install` guarantees this
-  // uses the repository's pinned Prisma CLI rather than downloading a different version.
   execSync('npx --no-install prisma migrate deploy', {
     env: { ...process.env, DATABASE_URL: testDatabase.url },
     stdio: 'pipe',
   });
 
-  // The URL and the server-reported identity have both been verified. Delete only application
-  // rows, in foreign-key-safe order; migration metadata and unrelated tables are untouched.
   await prisma.room.deleteMany();
   await prisma.user.deleteMany();
   applicationTablesReady = true;
@@ -237,26 +233,46 @@ describe('POST /api/auth/register', () => {
   });
 
   it('rejects a non-Gmail address', async () => {
-    const res = await post('/api/auth/register', { name: 'Alex', email: 'alex@yahoo.com', password: 'longenough1' });
+    const res = await post('/api/auth/register', {
+      name: 'Alex',
+      email: 'alex@yahoo.com',
+      password: 'longenough1',
+    });
     assert.equal(res.status, 400);
     assert.equal(res.body.message, 'Invalid Gmail format');
   });
 
   it('rejects a short password', async () => {
-    const res = await post('/api/auth/register', { name: 'Alex', email: nextEmail(), password: 'short' });
+    const res = await post('/api/auth/register', {
+      name: 'Alex',
+      email: nextEmail(),
+      password: 'short',
+    });
     assert.equal(res.status, 400);
     assert.equal(res.body.message, 'Password must be at least 8 characters');
   });
 
   it('rejects a bad name', async () => {
-    const res = await post('/api/auth/register', { name: 'A', email: nextEmail(), password: 'longenough1' });
+    const res = await post('/api/auth/register', {
+      name: 'A',
+      email: nextEmail(),
+      password: 'longenough1',
+    });
     assert.equal(res.status, 400);
   });
 
   it('rejects missing or non-string fields instead of crashing', async () => {
     assert.equal((await post('/api/auth/register', {})).status, 400);
-    assert.equal((await post('/api/auth/register', { name: 'Alex', email: 5, password: 'longenough1' })).status, 400);
-    assert.equal((await post('/api/auth/register', { name: 'Alex', email: nextEmail(), password: ['x'] })).status, 400);
+    assert.equal(
+      (await post('/api/auth/register', { name: 'Alex', email: 5, password: 'longenough1' }))
+        .status,
+      400,
+    );
+    assert.equal(
+      (await post('/api/auth/register', { name: 'Alex', email: nextEmail(), password: ['x'] }))
+        .status,
+      400,
+    );
     assert.equal((await post('/api/auth/register')).status, 400);
   });
 
@@ -267,7 +283,11 @@ describe('POST /api/auth/register', () => {
   });
 
   it('still answers on the legacy /signup path', async () => {
-    const res = await post('/api/auth/signup', { name: 'Alex', email: nextEmail(), password: 'longenough1' });
+    const res = await post('/api/auth/signup', {
+      name: 'Alex',
+      email: nextEmail(),
+      password: 'longenough1',
+    });
     assert.equal(res.status, 201);
   });
 });
@@ -284,7 +304,10 @@ describe('POST /api/auth/login', () => {
 
   it('is case-insensitive about the email', async () => {
     const { email, password } = await register();
-    assert.equal((await post('/api/auth/login', { email: email.toUpperCase(), password })).status, 200);
+    assert.equal(
+      (await post('/api/auth/login', { email: email.toUpperCase(), password })).status,
+      200,
+    );
   });
 
   it('rejects a wrong password', async () => {
@@ -297,7 +320,10 @@ describe('POST /api/auth/login', () => {
   it('gives an unknown email the same answer as a wrong password, so accounts cannot be probed', async () => {
     const { email } = await register();
     const wrongPassword = await post('/api/auth/login', { email, password: 'wrong password' });
-    const unknownEmail = await post('/api/auth/login', { email: nextEmail(), password: 'wrong password' });
+    const unknownEmail = await post('/api/auth/login', {
+      email: nextEmail(),
+      password: 'wrong password',
+    });
 
     assert.equal(unknownEmail.status, wrongPassword.status);
     assert.deepEqual(unknownEmail.body, wrongPassword.body);
@@ -344,7 +370,9 @@ describe('token protection (Passport JWT)', () => {
   it('rejects garbage, a wrong scheme, and an empty bearer', async () => {
     assert.equal((await get('/api/auth/me', 'not-a-jwt')).status, 401);
     const { token } = await register();
-    const basic = await fetch(`${base}/api/auth/me`, { headers: { authorization: `Basic ${token}` } });
+    const basic = await fetch(`${base}/api/auth/me`, {
+      headers: { authorization: `Basic ${token}` },
+    });
     assert.equal(basic.status, 401);
     const empty = await fetch(`${base}/api/auth/me`, { headers: { authorization: 'Bearer ' } });
     assert.equal(empty.status, 401);
@@ -352,7 +380,10 @@ describe('token protection (Passport JWT)', () => {
 
   it('rejects a token signed with a different secret', async () => {
     const { user } = await register();
-    const forged = jwt.sign({}, 'some-other-secret'.padEnd(40, 'z'), { subject: user.id, expiresIn: '1h' });
+    const forged = jwt.sign({}, 'some-other-secret'.padEnd(40, 'z'), {
+      subject: user.id,
+      expiresIn: '1h',
+    });
     assert.equal((await get('/api/auth/me', forged)).status, 401);
   });
 
@@ -385,7 +416,10 @@ describe('room routes require sign-in but otherwise behave as before', () => {
   it('rejects create and join without a token, and creates nothing', async () => {
     const before = await prisma.room.count();
     assert.equal((await post('/api/rooms/create', { riderName: 'Alex' })).status, 401);
-    assert.equal((await post('/api/rooms/join', { roomCode: 'ABC234', riderName: 'Alex' })).status, 401);
+    assert.equal(
+      (await post('/api/rooms/join', { roomCode: 'ABC234', riderName: 'Alex' })).status,
+      401,
+    );
     assert.equal(await prisma.room.count(), before);
   });
 
@@ -410,7 +444,11 @@ describe('room routes require sign-in but otherwise behave as before', () => {
   it('hosts the room as the token holder, ignoring a userId sent in the body', async () => {
     const attacker = await register();
     const victim = await register();
-    const res = await post('/api/rooms/create', { riderName: 'Alex', userId: victim.user.id }, attacker.token);
+    const res = await post(
+      '/api/rooms/create',
+      { riderName: 'Alex', userId: victim.user.id },
+      attacker.token,
+    );
 
     const room = await prisma.room.findUniqueOrThrow({ where: { code: res.body.roomCode } });
     assert.equal(room.hostId, attacker.user.id);
@@ -507,7 +545,10 @@ describe('Google sign-in', () => {
   it('signs the same Google account into the same rider each time', async () => {
     const id = identity();
     const first = await post('/api/auth/google', { idToken: withToken(id), mode: 'signup' });
-    const second = await post('/api/auth/google', { idToken: withToken(id, 'second-token'), mode: 'login' });
+    const second = await post('/api/auth/google', {
+      idToken: withToken(id, 'second-token'),
+      mode: 'login',
+    });
     assert.equal(second.body.user.id, first.body.user.id);
     assert.equal(await prisma.user.count({ where: { googleId: id.googleId } }), 1);
   });
@@ -559,7 +600,6 @@ describe('Google sign-in', () => {
     assert.equal(res.body.user.id, user.id, 'same account, not a duplicate');
     assert.equal(res.body.user.emailVerified, true);
 
-    // Whoever typed that password in never proved they own the mailbox -- it must stop working.
     const stale = await post('/api/auth/login', { email, password });
     assert.equal(stale.status, 401);
     assert.match(stale.body.message, /Google/);
@@ -594,7 +634,12 @@ describe('Google sign-in', () => {
       assert.equal(res.body.code, 'ACCOUNT_NOT_FOUND');
       assert.match(res.body.message, /Create an account first/);
       assert.equal(res.body.token, undefined);
-      assert.equal(await prisma.user.count({ where: { OR: [{ email: id.email }, { googleId: id.googleId }] } }), 0);
+      assert.equal(
+        await prisma.user.count({
+          where: { OR: [{ email: id.email }, { googleId: id.googleId }] },
+        }),
+        0,
+      );
     });
 
     it('is just as strict when no mode is sent -- login is the safe default', async () => {
@@ -672,7 +717,6 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
   let restrictedServer: Server;
 
   before(async () => {
-    // Deliberately messy: mixed case, stray spaces, and a mix of separators.
     const env = loadEnv({
       JWT_SECRET,
       DATABASE_URL: testDatabaseUrl,
@@ -696,28 +740,44 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
   async function ask(method: string, path: string, body?: unknown, token?: string): Promise<Reply> {
     const res = await fetch(`${restrictedBase}${path}`, {
       method,
-      headers: { 'content-type': 'application/json', ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      headers: {
+        'content-type': 'application/json',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     return { status: res.status, body: await res.json().catch(() => null) };
   }
 
   const googleToken = (email: string) => {
-    const identity: GoogleIdentity = { googleId: `allow-${counter++}-${email}`, email, emailVerified: true, name: 'Tester' };
+    const identity: GoogleIdentity = {
+      googleId: `allow-${counter++}-${email}`,
+      email,
+      emailVerified: true,
+      name: 'Tester',
+    };
     const token = `tok-${identity.googleId}`;
     googleTokens.set(token, identity);
     return token;
   };
 
   it('lets a listed address register, ignoring case and separators in the setting', async () => {
-    const res = await ask('POST', '/api/auth/register', { name: 'Alex', email: allowedOne, password: 'longenough1' });
+    const res = await ask('POST', '/api/auth/register', {
+      name: 'Alex',
+      email: allowedOne,
+      password: 'longenough1',
+    });
     assert.equal(res.status, 201);
     assert.equal((await ask('GET', '/api/auth/me', undefined, res.body.token)).status, 200);
   });
 
   it('turns away an address that is not listed, and creates nothing', async () => {
     const email = nextEmail();
-    const res = await ask('POST', '/api/auth/register', { name: 'Alex', email, password: 'longenough1' });
+    const res = await ask('POST', '/api/auth/register', {
+      name: 'Alex',
+      email,
+      password: 'longenough1',
+    });
 
     assert.equal(res.status, 403);
     assert.match(res.body.message, /private testing/);
@@ -744,7 +804,7 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
   });
 
   it('blocks password sign-in for an account that already exists but is not listed', async () => {
-    const { email, password } = await register(); // created on the open server
+    const { email, password } = await register();
     const res = await ask('POST', '/api/auth/login', { email, password });
     assert.equal(res.status, 403);
   });
@@ -753,13 +813,21 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
     const { token } = await register();
     assert.equal((await get('/api/auth/me', token)).status, 200, 'still fine on the open server');
     assert.equal((await ask('GET', '/api/auth/me', undefined, token)).status, 401);
-    assert.equal((await ask('POST', '/api/rooms/create', { riderName: 'Alex' }, token)).status, 401);
+    assert.equal(
+      (await ask('POST', '/api/rooms/create', { riderName: 'Alex' }, token)).status,
+      401,
+    );
   });
 });
 
 describe('ride destination, host and LiveKit metadata', () => {
-  const fort = { destinationName: 'Golconda Fort, Hyderabad', destinationLat: 17.3833, destinationLng: 78.4011 };
-  const patch = (code: string, body: unknown, token?: string) => call('PATCH', `/api/rooms/${code}/destination`, body, token);
+  const fort = {
+    destinationName: 'Golconda Fort, Hyderabad',
+    destinationLat: 17.3833,
+    destinationLng: 78.4011,
+  };
+  const patch = (code: string, body: unknown, token?: string) =>
+    call('PATCH', `/api/rooms/${code}/destination`, body, token);
   const claims = (livekitToken: string) => jwt.decode(livekitToken) as any;
 
   describe('creating a room', () => {
@@ -808,10 +876,18 @@ describe('ride destination, host and LiveKit metadata', () => {
 
     it('sanitises the destination name it stores', async () => {
       const { token } = await register();
-      const long = await post('/api/rooms/create', { ...fort, destinationName: `  ${'x'.repeat(500)}  ` }, token);
+      const long = await post(
+        '/api/rooms/create',
+        { ...fort, destinationName: `  ${'x'.repeat(500)}  ` },
+        token,
+      );
       assert.equal(long.body.destinationName.length, 200);
 
-      const odd = await post('/api/rooms/create', { ...fort, destinationName: { nested: 1 } }, token);
+      const odd = await post(
+        '/api/rooms/create',
+        { ...fort, destinationName: { nested: 1 } },
+        token,
+      );
       assert.equal(odd.status, 201);
       assert.equal(odd.body.destinationName, null);
       assert.equal(odd.body.destinationLat, fort.destinationLat, 'the valid coordinates are kept');
@@ -834,12 +910,22 @@ describe('ride destination, host and LiveKit metadata', () => {
       const created = await post('/api/rooms/create', fort, host.token);
 
       const asHost = await post('/api/rooms/join', { roomCode: created.body.roomCode }, host.token);
-      const asGuest = await post('/api/rooms/join', { roomCode: created.body.roomCode }, guest.token);
+      const asGuest = await post(
+        '/api/rooms/join',
+        { roomCode: created.body.roomCode },
+        guest.token,
+      );
 
       assert.equal(asHost.body.isHost, true);
       assert.equal(asGuest.body.isHost, false);
-      assert.deepEqual(JSON.parse(claims(asHost.body.token).metadata), { userId: host.user.id, isHost: true });
-      assert.deepEqual(JSON.parse(claims(asGuest.body.token).metadata), { userId: guest.user.id, isHost: false });
+      assert.deepEqual(JSON.parse(claims(asHost.body.token).metadata), {
+        userId: host.user.id,
+        isHost: true,
+      });
+      assert.deepEqual(JSON.parse(claims(asGuest.body.token).metadata), {
+        userId: guest.user.id,
+        isHost: false,
+      });
     });
 
     it('hands the guest the ride destination', async () => {
@@ -847,7 +933,11 @@ describe('ride destination, host and LiveKit metadata', () => {
       const guest = await register();
       const created = await post('/api/rooms/create', fort, host.token);
 
-      const joined = await post('/api/rooms/join', { roomCode: created.body.roomCode }, guest.token);
+      const joined = await post(
+        '/api/rooms/join',
+        { roomCode: created.body.roomCode },
+        guest.token,
+      );
       assert.equal(joined.body.destinationName, fort.destinationName);
       assert.equal(joined.body.destinationLat, fort.destinationLat);
       assert.equal(joined.body.destinationLng, fort.destinationLng);
@@ -884,7 +974,11 @@ describe('ride destination, host and LiveKit metadata', () => {
         host.token,
       );
       assert.equal(res.status, 200);
-      assert.deepEqual(res.body, { destinationName: 'Charminar', destinationLat: 17.3616, destinationLng: 78.4747 });
+      assert.deepEqual(res.body, {
+        destinationName: 'Charminar',
+        destinationLat: 17.3616,
+        destinationLng: 78.4747,
+      });
 
       const room = await prisma.room.findUniqueOrThrow({ where: { code: created.body.roomCode } });
       assert.equal(room.destinationName, 'Charminar');
@@ -944,7 +1038,11 @@ describe('ride destination, host and LiveKit metadata', () => {
         { destinationLat: 0, destinationLng: 181 },
         { destinationLat: '10', destinationLng: '10' },
       ]) {
-        assert.equal((await patch(created.body.roomCode, bad, host.token)).status, 400, JSON.stringify(bad));
+        assert.equal(
+          (await patch(created.body.roomCode, bad, host.token)).status,
+          400,
+          JSON.stringify(bad),
+        );
       }
       const room = await prisma.room.findUniqueOrThrow({ where: { code: created.body.roomCode } });
       assert.equal(room.destinationLat, fort.destinationLat);
@@ -961,11 +1059,23 @@ describe('ride destination, host and LiveKit metadata', () => {
       const host = await register();
       const created = await post('/api/rooms/create', fort, host.token);
 
-      const blank = await patch(created.body.roomCode, { ...fort, destinationName: '   ' }, host.token);
+      const blank = await patch(
+        created.body.roomCode,
+        { ...fort, destinationName: '   ' },
+        host.token,
+      );
       assert.equal(blank.body.destinationName, null);
-      const notText = await patch(created.body.roomCode, { ...fort, destinationName: 42 }, host.token);
+      const notText = await patch(
+        created.body.roomCode,
+        { ...fort, destinationName: 42 },
+        host.token,
+      );
       assert.equal(notText.body.destinationName, null);
-      const long = await patch(created.body.roomCode, { ...fort, destinationName: 'y'.repeat(999) }, host.token);
+      const long = await patch(
+        created.body.roomCode,
+        { ...fort, destinationName: 'y'.repeat(999) },
+        host.token,
+      );
       assert.equal(long.body.destinationName.length, 200);
     });
   });
@@ -975,7 +1085,6 @@ describe('permanent room codes', () => {
   const FIVE_DIGITS = /^[1-9]\d{4}$/;
   const claims = (livekitToken: string) => jwt.decode(livekitToken) as any;
 
-  /** A rider whose account predates room codes: created straight in the database with none. */
   async function legacyRider() {
     const email = nextEmail();
     const password = 'correct horse battery';
@@ -987,7 +1096,6 @@ describe('permanent room codes', () => {
     return { id: row.id, email, password, loginBody: login.body };
   }
 
-  /** A code no account has, so a test can use it without colliding with another test's rider. */
   async function freeCode(): Promise<number> {
     for (;;) {
       const n = 10000 + Math.floor(Math.random() * 90000);
@@ -997,7 +1105,6 @@ describe('permanent room codes', () => {
     }
   }
 
-  /** A stand-in RNG that returns the given values in order (then repeats the last), and counts draws. */
   const scripted = (...values: number[]) => {
     let draws = 0;
     return {
@@ -1009,7 +1116,11 @@ describe('permanent room codes', () => {
   describe('at sign-up', () => {
     it('gives a new rider a 5-digit code, in the response and in the database', async () => {
       const email = nextEmail();
-      const res = await post('/api/auth/register', { name: 'Alex', email, password: 'longenough1' });
+      const res = await post('/api/auth/register', {
+        name: 'Alex',
+        email,
+        password: 'longenough1',
+      });
 
       assert.equal(res.status, 201);
       assert.match(res.body.user.roomCode, FIVE_DIGITS);
@@ -1033,11 +1144,17 @@ describe('permanent room codes', () => {
         name: 'Google Rider',
       };
       googleTokens.set(`tok-${identity.googleId}`, identity);
-      const res = await post('/api/auth/google', { idToken: `tok-${identity.googleId}`, mode: 'signup' });
+      const res = await post('/api/auth/google', {
+        idToken: `tok-${identity.googleId}`,
+        mode: 'signup',
+      });
 
       assert.equal(res.status, 200);
       assert.match(res.body.user.roomCode, FIVE_DIGITS);
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { email: identity.email } })).roomCode, res.body.user.roomCode);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { email: identity.email } })).roomCode,
+        res.body.user.roomCode,
+      );
     });
 
     it('keeps the same code on every later sign-in', async () => {
@@ -1052,9 +1169,15 @@ describe('permanent room codes', () => {
       const rider = await legacyRider();
       const first = rider.loginBody.user.roomCode;
       assert.match(first, FIVE_DIGITS);
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, first);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode,
+        first,
+      );
 
-      const second = await post('/api/auth/login', { email: rider.email, password: rider.password });
+      const second = await post('/api/auth/login', {
+        email: rider.email,
+        password: rider.password,
+      });
       assert.equal(second.body.user.roomCode, first, 'the code is permanent');
     });
 
@@ -1067,7 +1190,10 @@ describe('permanent room codes', () => {
         name: 'Old Timer',
       };
       googleTokens.set(`tok-${identity.googleId}`, identity);
-      const res = await post('/api/auth/google', { idToken: `tok-${identity.googleId}`, mode: 'login' });
+      const res = await post('/api/auth/google', {
+        idToken: `tok-${identity.googleId}`,
+        mode: 'login',
+      });
 
       assert.equal(res.status, 200);
       assert.equal(res.body.user.id, rider.id);
@@ -1076,7 +1202,6 @@ describe('permanent room codes', () => {
 
     it('are given a code by /api/auth/me', async () => {
       const rider = await legacyRider();
-      // legacyRider's own login already assigned one, so clear it to test /me on its own.
       await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
 
       const me = await get('/api/auth/me', rider.loginBody.token);
@@ -1114,7 +1239,10 @@ describe('permanent room codes', () => {
       const second = await get('/api/user/profile', rider.loginBody.token);
       assert.match(first.body.user.roomCode, FIVE_DIGITS);
       assert.equal(second.body.user.roomCode, first.body.user.roomCode);
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, first.body.user.roomCode);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode,
+        first.body.user.roomCode,
+      );
     });
 
     it('agrees with itself when several first requests arrive at once', async () => {
@@ -1126,7 +1254,10 @@ describe('permanent room codes', () => {
       );
       const codes = new Set(replies.map(r => r.body.user.roomCode));
       assert.equal(codes.size, 1, [...codes].join(','));
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, [...codes][0]);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode,
+        [...codes][0],
+      );
     });
   });
 
@@ -1142,7 +1273,11 @@ describe('permanent room codes', () => {
 
       const free = await freeCode();
       const draws = scripted(taken, taken, free);
-      const next = await createUserWithRoomCode(prisma, { riderName: 'Next', email: nextEmail() }, draws.random);
+      const next = await createUserWithRoomCode(
+        prisma,
+        { riderName: 'Next', email: nextEmail() },
+        draws.random,
+      );
 
       assert.equal(next.roomCode, String(free));
       assert.equal(draws.draws(), 3, 'two collisions, then a free code');
@@ -1150,17 +1285,23 @@ describe('permanent room codes', () => {
 
     it('draws again when the database rejects a code the up-front check did not see (a race)', async () => {
       const taken = await freeCode();
-      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+      await createUserWithRoomCode(
+        prisma,
+        { riderName: 'Holder', email: nextEmail() },
+        scripted(taken).random,
+      );
 
-      // Blind to the pre-check, as if another sign-up claimed the code a moment after it ran, so
-      // only the unique index can catch the clash.
       const blind = {
         user: { findUnique: async () => null, create: (args: any) => prisma.user.create(args) },
       } as unknown as PrismaClient;
 
       const free = await freeCode();
       const draws = scripted(taken, free);
-      const next = await createUserWithRoomCode(blind, { riderName: 'Racer', email: nextEmail() }, draws.random);
+      const next = await createUserWithRoomCode(
+        blind,
+        { riderName: 'Racer', email: nextEmail() },
+        draws.random,
+      );
 
       assert.equal(next.roomCode, String(free));
       assert.equal(draws.draws(), 2);
@@ -1179,13 +1320,21 @@ describe('permanent room codes', () => {
 
     it('answers a duplicate-email sign-up with 409, as before', async () => {
       const existing = await register();
-      const res = await post('/api/auth/register', { name: 'Again', email: existing.email, password: 'longenough1' });
+      const res = await post('/api/auth/register', {
+        name: 'Again',
+        email: existing.email,
+        password: 'longenough1',
+      });
       assert.equal(res.status, 409);
     });
 
     it('gives up with a clear error rather than looping forever when no code is free', async () => {
       const taken = await freeCode();
-      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+      await createUserWithRoomCode(
+        prisma,
+        { riderName: 'Holder', email: nextEmail() },
+        scripted(taken).random,
+      );
 
       const stuck = scripted(taken);
       await assert.rejects(
@@ -1201,24 +1350,36 @@ describe('permanent room codes', () => {
 
       assert.equal(await ensureRoomCode(prisma, user.id, draws.random), user.roomCode);
       assert.equal(draws.draws(), 0, 'nothing was drawn');
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).roomCode, user.roomCode);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { id: user.id } })).roomCode,
+        user.roomCode,
+      );
     });
 
     it('ensureRoomCode skips a taken code when filling in an older account', async () => {
       const taken = await freeCode();
-      await createUserWithRoomCode(prisma, { riderName: 'Holder', email: nextEmail() }, scripted(taken).random);
+      await createUserWithRoomCode(
+        prisma,
+        { riderName: 'Holder', email: nextEmail() },
+        scripted(taken).random,
+      );
       const rider = await legacyRider();
       await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
 
       const free = await freeCode();
-      assert.equal(await ensureRoomCode(prisma, rider.id, scripted(taken, free).random), String(free));
+      assert.equal(
+        await ensureRoomCode(prisma, rider.id, scripted(taken, free).random),
+        String(free),
+      );
     });
 
     it('ensureRoomCode hands every concurrent caller the same code', async () => {
       const rider = await legacyRider();
       await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
 
-      const codes = await Promise.all(Array.from({ length: 10 }, () => ensureRoomCode(prisma, rider.id)));
+      const codes = await Promise.all(
+        Array.from({ length: 10 }, () => ensureRoomCode(prisma, rider.id)),
+      );
       assert.equal(new Set(codes).size, 1);
     });
 
@@ -1241,8 +1402,16 @@ describe('permanent room codes', () => {
 
     it('hosts the same room again, taking the new destination (or none)', async () => {
       const { token, user } = await register();
-      const fort = { destinationName: 'Golconda Fort', destinationLat: 17.3833, destinationLng: 78.4011 };
-      const charminar = { destinationName: 'Charminar', destinationLat: 17.3616, destinationLng: 78.4747 };
+      const fort = {
+        destinationName: 'Golconda Fort',
+        destinationLat: 17.3833,
+        destinationLng: 78.4011,
+      };
+      const charminar = {
+        destinationName: 'Charminar',
+        destinationLat: 17.3616,
+        destinationLng: 78.4747,
+      };
 
       const first = await post('/api/rooms/create', fort, token);
       assert.equal(first.body.destinationName, 'Golconda Fort');
@@ -1252,7 +1421,11 @@ describe('permanent room codes', () => {
       assert.equal(second.body.destinationName, 'Charminar');
 
       const third = await post('/api/rooms/create', {}, token);
-      assert.equal(third.body.destinationName, null, 'a ride with no destination clears the old one');
+      assert.equal(
+        third.body.destinationName,
+        null,
+        'a ride with no destination clears the old one',
+      );
 
       assert.equal(await prisma.room.count({ where: { hostId: user.id } }), 1, 'still one room');
     });
@@ -1261,10 +1434,17 @@ describe('permanent room codes', () => {
       const rider = await legacyRider();
       await prisma.user.update({ where: { id: rider.id }, data: { roomCode: null } });
 
-      const res = await post('/api/rooms/create', { riderName: 'Old Timer' }, rider.loginBody.token);
+      const res = await post(
+        '/api/rooms/create',
+        { riderName: 'Old Timer' },
+        rider.loginBody.token,
+      );
       assert.equal(res.status, 201);
       assert.match(res.body.roomCode, FIVE_DIGITS);
-      assert.equal((await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode, res.body.roomCode);
+      assert.equal(
+        (await prisma.user.findUniqueOrThrow({ where: { id: rider.id } })).roomCode,
+        res.body.roomCode,
+      );
     });
 
     it('lets others join with that code, and does not make them the host', async () => {
@@ -1272,13 +1452,17 @@ describe('permanent room codes', () => {
       const guest = await register();
       await post('/api/rooms/create', {}, host.token);
 
-      const joined = await post('/api/rooms/join', { roomCode: host.user.roomCode, riderName: 'Guest' }, guest.token);
+      const joined = await post(
+        '/api/rooms/join',
+        { roomCode: host.user.roomCode, riderName: 'Guest' },
+        guest.token,
+      );
       assert.equal(joined.status, 200);
       assert.equal(joined.body.roomCode, host.user.roomCode);
       assert.equal(joined.body.isHost, false);
     });
 
-    it('does not open a rider\'s room until they have hosted it', async () => {
+    it("does not open a rider's room until they have hosted it", async () => {
       const idle = await register();
       const guest = await register();
       const res = await post('/api/rooms/join', { roomCode: idle.user.roomCode }, guest.token);
@@ -1286,7 +1470,7 @@ describe('permanent room codes', () => {
       assert.match(res.body.message, /5-digit/);
     });
 
-    it("refuses to host on top of a room that belongs to someone else", async () => {
+    it('refuses to host on top of a room that belongs to someone else', async () => {
       const owner = await register();
       const rider = await register();
       await prisma.room.create({

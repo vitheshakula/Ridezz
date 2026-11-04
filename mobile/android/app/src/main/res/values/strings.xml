@@ -1,3 +1,2 @@
 <resources>
-    <!-- app_name is set per environment by the product flavors in android/app/build.gradle. -->
 </resources>

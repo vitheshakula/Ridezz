@@ -79,7 +79,12 @@ describe('crash bridge decoders', () => {
 
   test('decodes and validates a candidate', () => {
     expect(
-      decodeCrashCandidate({ countdownMs: 20000, confidence: 'high', severity: 'HIGH', path: 'crash' }),
+      decodeCrashCandidate({
+        countdownMs: 20000,
+        confidence: 'high',
+        severity: 'HIGH',
+        path: 'crash',
+      }),
     ).toEqual({ countdownMs: 20000, confidence: 'high', severity: 'HIGH', path: 'crash' });
     expect(
       decodeCrashCandidate({ countdownMs: 0, confidence: 'high', severity: 'HIGH' }),
@@ -131,7 +136,13 @@ describe('crash bridge decoders', () => {
 });
 
 describe('hazard protocol: crash alert details', () => {
-  const sos = { impactAt: NOW - 26_000, severity: 'HIGH' as const, lat: 10.5, lng: 20.5, speedKmh: 72 };
+  const sos = {
+    impactAt: NOW - 26_000,
+    severity: 'HIGH' as const,
+    lat: 10.5,
+    lng: 20.5,
+    speedKmh: 72,
+  };
 
   test('an ordinary packet is unchanged: no sos key at all', () => {
     const packet = createHazardPacket('accident', 'sender-1', 'Alex', NOW);
@@ -249,7 +260,6 @@ describe('useCrashDetection', () => {
 
     ReactTestRenderer.act(() => {
       DeviceEventEmitter.emit('onCountdownExpired', sosPayload());
-      // The same alert re-delivered must not be dispatched twice.
       DeviceEventEmitter.emit('onCountdownExpired', sosPayload());
     });
     await flush();

@@ -35,12 +35,16 @@ describe('extractHazards', () => {
   });
 
   it('is case-insensitive and ignores punctuation', () => {
-    expect(extractHazards('POTHOLE! Gravel, then police.')).toEqual(['pothole', 'gravel', 'police']);
+    expect(extractHazards('POTHOLE! Gravel, then police.')).toEqual([
+      'pothole',
+      'gravel',
+      'police',
+    ]);
   });
 
   it('matches whole words only', () => {
     expect(extractHazards('stopping slowly potholes')).toEqual([]);
-    expect(extractHazards('non-stop')).toEqual(['stop']); // "-" is a word boundary
+    expect(extractHazards('non-stop')).toEqual(['stop']);
   });
 
   it('returns each keyword once, in spoken order', () => {
@@ -141,7 +145,7 @@ describe('speakHazardAudio', () => {
     });
 
     await Promise.resolve();
-    expect(settled).toBe(false); // still "speaking"
+    expect(settled).toBe(false);
 
     resolveSpeak();
     await Promise.resolve();
@@ -159,7 +163,9 @@ describe('speakHazardAudio', () => {
 
   it('resolves (never rejects) when the native speak call fails', async () => {
     speak.mockImplementationOnce(() => Promise.reject(new Error('no tts engine')));
-    await expect(speakHazard(createHazardPacket('pothole', 'abc', 'Alex', NOW))).resolves.toBeUndefined();
+    await expect(
+      speakHazard(createHazardPacket('pothole', 'abc', 'Alex', NOW)),
+    ).resolves.toBeUndefined();
   });
 });
 
@@ -188,7 +194,7 @@ describe('createEchoGuard', () => {
     const guard = createEchoGuard();
     guard.begin();
     guard.begin();
-    guard.end(NOW); // first one done, second still playing
+    guard.end(NOW);
     expect(guard.isEchoLikely(NOW + TTS_ECHO_TAIL_MS + 5000)).toBe(true);
     guard.end(NOW + 6000);
     expect(guard.isEchoLikely(NOW + 6000 + TTS_ECHO_TAIL_MS - 1)).toBe(true);
@@ -199,7 +205,7 @@ describe('createEchoGuard', () => {
     const guard = createEchoGuard();
     guard.end(NOW);
     guard.begin();
-    expect(guard.isEchoLikely(NOW + TTS_ECHO_TAIL_MS + 1)).toBe(true); // playing
+    expect(guard.isEchoLikely(NOW + TTS_ECHO_TAIL_MS + 1)).toBe(true);
     guard.end(NOW + TTS_ECHO_TAIL_MS + 1);
     expect(guard.isEchoLikely(NOW + 2 * TTS_ECHO_TAIL_MS + 2)).toBe(false);
   });
@@ -226,7 +232,9 @@ describe('isAnnouncementEcho', () => {
 
   it('matches what buildHazardAnnouncement actually produces, for every hazard', () => {
     for (const rule of HAZARD_RULES) {
-      expect(isAnnouncementEcho(buildHazardAnnouncement(createHazardPacket(rule.id, 'x', 'Alex', NOW)))).toBe(true);
+      expect(
+        isAnnouncementEcho(buildHazardAnnouncement(createHazardPacket(rule.id, 'x', 'Alex', NOW))),
+      ).toBe(true);
     }
   });
 });
@@ -236,7 +244,7 @@ describe('isWithinHazardWindow', () => {
     const recent = new Map();
     expect(isWithinHazardWindow(recent, 'fuel', NOW)).toBe(false);
     expect(recent.size).toBe(0);
-    expect(claimHazardWindow(recent, 'fuel', NOW)).toBe(true); // still free to claim
+    expect(claimHazardWindow(recent, 'fuel', NOW)).toBe(true);
   });
 
   it('is true inside the window and false at its edge', () => {
@@ -244,7 +252,7 @@ describe('isWithinHazardWindow', () => {
     claimHazardWindow(recent, 'fuel', NOW);
     expect(isWithinHazardWindow(recent, 'fuel', NOW + HAZARD_THROTTLE_MS - 1)).toBe(true);
     expect(isWithinHazardWindow(recent, 'fuel', NOW + HAZARD_THROTTLE_MS)).toBe(false);
-    expect(isWithinHazardWindow(recent, 'police', NOW)).toBe(false); // other types unaffected
+    expect(isWithinHazardWindow(recent, 'police', NOW)).toBe(false);
   });
 });
 
@@ -270,9 +278,6 @@ describe('rememberHazardOnce', () => {
   });
 
   it('never evicts a still-valid id no matter how many other ids pile up -- the bug this replaces', () => {
-    // The old fixed-size (50 slot) cache would evict id "hot" here well before slot 200, making
-    // a still-circulating packet look brand new again -- the observed "loop" of repeated
-    // banners/TTS. Age-based pruning must not reproduce that.
     const remembered = new Map<string, number>();
     rememberHazardOnce(remembered, 'hot', NOW);
     for (let i = 0; i < 200; i++) {
@@ -310,7 +315,7 @@ describe('claimHazardWindow', () => {
   it('does not extend the window when a duplicate is blocked', () => {
     const recent = new Map();
     claimHazardWindow(recent, 'stop', NOW);
-    claimHazardWindow(recent, 'stop', NOW + 3000); // blocked, must not restart the clock
+    claimHazardWindow(recent, 'stop', NOW + 3000);
     expect(claimHazardWindow(recent, 'stop', NOW + HAZARD_THROTTLE_MS)).toBe(true);
   });
 });
@@ -381,7 +386,8 @@ describe('parseHazardPacket', () => {
   });
 
   it('rejects stale and far-future packets', () => {
-    const at = (timestamp: number) => parseHazardPacket(JSON.stringify({ ...packet, timestamp }), NOW);
+    const at = (timestamp: number) =>
+      parseHazardPacket(JSON.stringify({ ...packet, timestamp }), NOW);
 
     expect(at(NOW - 29_000)).not.toBeNull();
     expect(at(NOW - 31_000)).toBeNull();
@@ -391,7 +397,12 @@ describe('parseHazardPacket', () => {
 
   it('clamps oversized string fields from untrusted peers', () => {
     const parsed = parseHazardPacket(
-      JSON.stringify({ ...packet, id: 'i'.repeat(500), senderId: 's'.repeat(500), senderName: 'n'.repeat(500) }),
+      JSON.stringify({
+        ...packet,
+        id: 'i'.repeat(500),
+        senderId: 's'.repeat(500),
+        senderName: 'n'.repeat(500),
+      }),
       NOW,
     ) as HazardPacket;
     expect(parsed.id).toHaveLength(96);
@@ -412,8 +423,10 @@ describe('startSpeechHazardDetection', () => {
     startListening.mockClear();
     stopListening.mockClear();
     (Platform as { OS: string }).OS = 'android';
-    (NativeModules as Record<string, unknown>).VoiceHazardModule = { startListening, stopListening };
-    // The service captures the native module at import time, so load it fresh.
+    (NativeModules as Record<string, unknown>).VoiceHazardModule = {
+      startListening,
+      stopListening,
+    };
     jest.isolateModules(() => {
       start = require('../src/services/SpeechHazardService').startSpeechHazardDetection;
     });
@@ -426,7 +439,10 @@ describe('startSpeechHazardDetection', () => {
   });
 
   const speak = (text: string, kind: 'onSpeechResult' | 'onSpeechPartial' = 'onSpeechResult') =>
-    DeviceEventEmitter.emit(kind, JSON.stringify(kind === 'onSpeechResult' ? { text } : { partial: text }));
+    DeviceEventEmitter.emit(
+      kind,
+      JSON.stringify(kind === 'onSpeechResult' ? { text } : { partial: text }),
+    );
 
   it('starts native listening and raises a packet for a hazard word', () => {
     const onHazard = jest.fn();
@@ -457,7 +473,6 @@ describe('startSpeechHazardDetection', () => {
     const onHazard = jest.fn();
     const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
 
-    // Partial hypotheses change word while Vosk is still listening and gave false alerts.
     speak('gravel', 'onSpeechPartial');
     speak('police', 'onSpeechPartial');
     expect(onHazard).not.toHaveBeenCalled();
@@ -490,7 +505,12 @@ describe('startSpeechHazardDetection', () => {
     it('ignores a hazard word the restricted recognizer was unsure of', () => {
       const onHazard = jest.fn();
       const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
-      grammarResult(['my', 1], ['phone', 1], ['fallen', GRAMMAR_MIN_CONFIDENCE - 0.01], ['battery', 1]);
+      grammarResult(
+        ['my', 1],
+        ['phone', 1],
+        ['fallen', GRAMMAR_MIN_CONFIDENCE - 0.01],
+        ['battery', 1],
+      );
       expect(onHazard).not.toHaveBeenCalled();
       stop();
     });
@@ -508,9 +528,9 @@ describe('startSpeechHazardDetection', () => {
     it('does not trust the restricted recognizer with the single words it mixes up with common ones', () => {
       const onHazard = jest.fn();
       const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
-      grammarResult(['stop', 1], ['here', 1], ['police', 1]); // really "stop here please"
+      grammarResult(['stop', 1], ['here', 1], ['police', 1]);
       expect(onHazard.mock.calls.map(c => c[0].hazard)).toEqual(['stop']);
-      grammarResult(['a', 1], ['petrol', 1], ['bump', 1]); // really "a petrol pump"
+      grammarResult(['a', 1], ['petrol', 1], ['bump', 1]);
       expect(onHazard).toHaveBeenCalledTimes(1);
       stop();
     });
@@ -535,7 +555,7 @@ describe('startSpeechHazardDetection', () => {
     it('lets whichever recognizer caught it raise it when the other missed', () => {
       const onHazard = jest.fn();
       const stop = start({ senderId: 'me', senderName: 'Alex', onHazard });
-      speak('there is a boy told ahead'); // full vocabulary mixed it up
+      speak('there is a boy told ahead');
       grammarResult(['there', 1], ['is', 1], ['a', 1], ['pothole', 1], ['ahead', 1]);
       expect(onHazard.mock.calls.map(c => c[0].hazard)).toEqual(['pothole']);
       stop();
@@ -595,7 +615,12 @@ describe('startSpeechHazardDetection', () => {
   describe('acoustic echo of its own announcements', () => {
     it('raises nothing while the echo guard says the speaker is playing', () => {
       const onHazard = jest.fn();
-      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => true });
+      const stop = start({
+        senderId: 'me',
+        senderName: 'Alex',
+        onHazard,
+        isEchoLikely: () => true,
+      });
 
       speak('low fuel');
       speak('fuel');
@@ -606,7 +631,12 @@ describe('startSpeechHazardDetection', () => {
     it('raises normally once the guard releases', () => {
       let echo = true;
       const onHazard = jest.fn();
-      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => echo });
+      const stop = start({
+        senderId: 'me',
+        senderName: 'Alex',
+        onHazard,
+        isEchoLikely: () => echo,
+      });
 
       speak('low fuel');
       expect(onHazard).not.toHaveBeenCalled();
@@ -619,9 +649,14 @@ describe('startSpeechHazardDetection', () => {
 
     it('ignores the announcement wording even when this phone is not the one speaking', () => {
       const onHazard = jest.fn();
-      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => false });
+      const stop = start({
+        senderId: 'me',
+        senderName: 'Alex',
+        onHazard,
+        isEchoLikely: () => false,
+      });
 
-      speak('bob reported low fuel'); // another phone's speaker, heard through the air
+      speak('bob reported low fuel');
       speak('bob reported low');
       expect(onHazard).not.toHaveBeenCalled();
       stop();
@@ -630,12 +665,17 @@ describe('startSpeechHazardDetection', () => {
     it('does not burn the throttle, so a genuine command right after is not swallowed', () => {
       let echo = true;
       const onHazard = jest.fn();
-      const stop = start({ senderId: 'me', senderName: 'Alex', onHazard, isEchoLikely: () => echo });
+      const stop = start({
+        senderId: 'me',
+        senderName: 'Alex',
+        onHazard,
+        isEchoLikely: () => echo,
+      });
 
-      speak('low fuel'); // echo, ignored
+      speak('low fuel');
       echo = false;
-      jest.setSystemTime(NOW + 100); // well inside the 4s throttle window
-      speak('low fuel'); // the rider really says it
+      jest.setSystemTime(NOW + 100);
+      speak('low fuel');
       expect(onHazard).toHaveBeenCalledTimes(1);
       stop();
     });
@@ -741,12 +781,25 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
           phrase,
           hazards: [hazard],
         });
-        expect({ phrase, hazards: extractHazards(phrase.toUpperCase()) }).toEqual({ phrase, hazards: [hazard] });
+        expect({ phrase, hazards: extractHazards(phrase.toUpperCase()) }).toEqual({
+          phrase,
+          hazards: [hazard],
+        });
       }
     });
 
     it('needs the whole phrase: half of one does not raise it', () => {
-      for (const partial of ['sharp', 'turn', 'curve', 'blind', 'hairpin', 'vehicle', 'reduce', 'puncturing', 'brakes']) {
+      for (const partial of [
+        'sharp',
+        'turn',
+        'curve',
+        'blind',
+        'hairpin',
+        'vehicle',
+        'reduce',
+        'puncturing',
+        'brakes',
+      ]) {
         expect({ partial, hazards: extractHazards(partial) }).toEqual({ partial, hazards: [] });
       }
     });
@@ -756,7 +809,10 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
     });
 
     it('still counts a genuine "stop" said elsewhere in the same sentence', () => {
-      expect(extractHazards('emergency stop then everybody stop')).toEqual(['vehicle_stopped', 'stop']);
+      expect(extractHazards('emergency stop then everybody stop')).toEqual([
+        'vehicle_stopped',
+        'stop',
+      ]);
     });
 
     it('keeps plain "stop" and its other phrases as the generic Stop hazard', () => {
@@ -771,7 +827,10 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
     });
 
     it('reports several new hazards in the order they were spoken', () => {
-      expect(extractHazards('slow down there is a sharp turn ahead')).toEqual(['slow', 'sharp_turn']);
+      expect(extractHazards('slow down there is a sharp turn ahead')).toEqual([
+        'slow',
+        'sharp_turn',
+      ]);
       expect(extractHazards('puncture and fuel empty')).toEqual(['vehicle_stopped', 'fuel']);
     });
 
@@ -784,14 +843,18 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
     it('raises exactly its own hazard for every phrase in the whole table', () => {
       for (const rule of HAZARD_RULES) {
         for (const phrase of rule.phrases) {
-          expect({ phrase, hazards: extractHazards(phrase) }).toEqual({ phrase, hazards: [rule.id] });
+          expect({ phrase, hazards: extractHazards(phrase) }).toEqual({
+            phrase,
+            hazards: [rule.id],
+          });
         }
       }
     });
   });
 
   describe('spoken alerts', () => {
-    const packetFor = (hazard: HazardPacket['hazard']) => createHazardPacket(hazard, 'abc', 'Alex', NOW);
+    const packetFor = (hazard: HazardPacket['hazard']) =>
+      createHazardPacket(hazard, 'abc', 'Alex', NOW);
 
     it.each([
       ['fuel', 'Rider reported low fuel. Fuel stop needed.'],
@@ -804,7 +867,9 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
 
     it('does not put the sender name into these fixed announcements', () => {
       for (const hazard of Object.values(HAZARD_TYPES)) {
-        expect(buildHazardAnnouncement(createHazardPacket(hazard, 'abc', 'Zorro', NOW))).not.toContain('Zorro');
+        expect(
+          buildHazardAnnouncement(createHazardPacket(hazard, 'abc', 'Zorro', NOW)),
+        ).not.toContain('Zorro');
       }
     });
 
@@ -823,27 +888,41 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
     });
 
     it('does not mistake a rider calling the hazard out for an announcement', () => {
-      for (const said of ['slow down', 'caution', 'sharp turn', 'sharp turn ahead', 'curve ahead', 'puncture', 'low fuel', 'fuel empty']) {
+      for (const said of [
+        'slow down',
+        'caution',
+        'sharp turn',
+        'sharp turn ahead',
+        'curve ahead',
+        'puncture',
+        'low fuel',
+        'fuel empty',
+      ]) {
         expect({ said, echo: isAnnouncementEcho(said) }).toEqual({ said, echo: false });
       }
     });
 
     it('still ignores the announcements when the mic hears them (they contain trigger words)', () => {
-      // Sanity: without the echo check these WOULD raise a hazard.
       expect(extractHazards('caution slow down ahead')).toEqual(['slow']);
       expect(isAnnouncementEcho('caution slow down ahead')).toBe(true);
     });
   });
 
   describe('broadcast packet', () => {
-    it.each(['fuel', 'slow', 'vehicle_stopped', 'sharp_turn'] as const)('carries %s across the room and mesh unchanged', hazard => {
-      const packet = createHazardPacket(hazard, 'abc', 'Alex', NOW);
-      expect(parseHazardPacket(serializeHazardPacket(packet), NOW)).toEqual(packet);
-      expect(parseHazardPacket(encodeHazardPacket(packet), NOW)).toEqual(packet);
-    });
+    it.each(['fuel', 'slow', 'vehicle_stopped', 'sharp_turn'] as const)(
+      'carries %s across the room and mesh unchanged',
+      hazard => {
+        const packet = createHazardPacket(hazard, 'abc', 'Alex', NOW);
+        expect(parseHazardPacket(serializeHazardPacket(packet), NOW)).toEqual(packet);
+        expect(parseHazardPacket(encodeHazardPacket(packet), NOW)).toEqual(packet);
+      },
+    );
 
     it('still refuses a hazard type nobody knows', () => {
-      const bogus = JSON.stringify({ ...createHazardPacket('fuel', 'abc', 'Alex', NOW), hazard: 'LOW_FUEL' });
+      const bogus = JSON.stringify({
+        ...createHazardPacket('fuel', 'abc', 'Alex', NOW),
+        hazard: 'LOW_FUEL',
+      });
       expect(parseHazardPacket(bogus, NOW)).toBeNull();
     });
   });
@@ -856,7 +935,6 @@ describe('group-ride hazards: low fuel, slow down, vehicle stopped, sharp turn',
   });
 });
 
-
 describe('extractHazardsFromWords', () => {
   const said = (...words: [string, number][]) => words.map(([word, conf]) => ({ word, conf }));
 
@@ -865,27 +943,42 @@ describe('extractHazardsFromWords', () => {
   });
 
   it('needs every word of the phrase to clear the bar, not just the average', () => {
-    expect(extractHazardsFromWords(said(['missed', 1], ['the', 1], ['turn', 0.6]), 0.95)).toEqual([]);
+    expect(extractHazardsFromWords(said(['missed', 1], ['the', 1], ['turn', 0.6]), 0.95)).toEqual(
+      [],
+    );
   });
 
   it('keeps a longer phrase of another hazard swallowing a shorter one, even when it was unsure', () => {
-    // "emergency stop" is a stopped vehicle, never also a plain "stop" -- the same as extractHazards
     expect(extractHazardsFromWords(said(['emergency', 0.5], ['stop', 1]), 0.95)).toEqual([]);
-    expect(extractHazardsFromWords(said(['emergency', 1], ['stop', 1]), 0.95)).toEqual(['vehicle_stopped']);
+    expect(extractHazardsFromWords(said(['emergency', 1], ['stop', 1]), 0.95)).toEqual([
+      'vehicle_stopped',
+    ]);
   });
 
   it('splits Vosk words with apostrophes the way the text matcher does, and orders by first spoken', () => {
-    expect(extractHazardsFromWords(said(['police', 1], ['ahead', 1], ['stop', 1]), 0.95)).toEqual(['police', 'stop']);
-    expect(extractHazardsFromWords(said(["i'm", 1], ['low', 1], ['on', 1], ['fuel', 1]), 0.95)).toEqual(['fuel']);
+    expect(extractHazardsFromWords(said(['police', 1], ['ahead', 1], ['stop', 1]), 0.95)).toEqual([
+      'police',
+      'stop',
+    ]);
+    expect(
+      extractHazardsFromWords(said(["i'm", 1], ['low', 1], ['on', 1], ['fuel', 1]), 0.95),
+    ).toEqual(['fuel']);
   });
 
   it('never raises a distrusted phrase, but a plain one is unaffected', () => {
-    expect(extractHazardsFromWords(said(['police', 1]), 0.95, GRAMMAR_DISTRUSTED_PHRASES)).toEqual([]);
+    expect(extractHazardsFromWords(said(['police', 1]), 0.95, GRAMMAR_DISTRUSTED_PHRASES)).toEqual(
+      [],
+    );
     expect(extractHazardsFromWords(said(['police', 1]), 0.95)).toEqual(['police']);
   });
 
   it('agrees with extractHazards when everything is certain', () => {
-    for (const talk of ['there is a pothole ahead', 'slippery road ahead', 'we missed the turn', 'nice weather today']) {
+    for (const talk of [
+      'there is a pothole ahead',
+      'slippery road ahead',
+      'we missed the turn',
+      'nice weather today',
+    ]) {
       const words = talk.split(' ').map(word => ({ word, conf: 1 }));
       expect(extractHazardsFromWords(words, 0.95)).toEqual(extractHazards(talk));
     }
@@ -894,16 +987,30 @@ describe('extractHazardsFromWords', () => {
 
 describe('parseSpeechPayload', () => {
   it('reads the source, text and per-word confidences', () => {
-    const raw = JSON.stringify({ source: 'grammar', text: 'slow down', result: [{ word: 'slow', conf: 1 }, { word: 'down', conf: 0.9 }] });
+    const raw = JSON.stringify({
+      source: 'grammar',
+      text: 'slow down',
+      result: [
+        { word: 'slow', conf: 1 },
+        { word: 'down', conf: 0.9 },
+      ],
+    });
     expect(parseSpeechPayload(raw)).toEqual({
       source: 'grammar',
       text: 'slow down',
-      words: [{ word: 'slow', conf: 1 }, { word: 'down', conf: 0.9 }],
+      words: [
+        { word: 'slow', conf: 1 },
+        { word: 'down', conf: 0.9 },
+      ],
     });
   });
 
   it('treats an untagged payload as the full-vocabulary recognizer', () => {
-    expect(parseSpeechPayload('{"text":"hello"}')).toEqual({ source: 'free', text: 'hello', words: [] });
+    expect(parseSpeechPayload('{"text":"hello"}')).toEqual({
+      source: 'free',
+      text: 'hello',
+      words: [],
+    });
   });
 
   it('never throws on garbage', () => {

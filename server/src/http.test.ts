@@ -136,24 +136,29 @@ describe('HTTP security middleware', () => {
       });
       assert.equal(limitedAuth.status, 429);
       assert.match(limitedAuth.headers.get('content-type') ?? '', /^application\/json\b/);
-      assert.deepEqual(await limitedAuth.json(), { message: 'Too many requests. Please try again later.' });
+      assert.deepEqual(await limitedAuth.json(), {
+        message: 'Too many requests. Please try again later.',
+      });
 
       const anotherClient = await fetch(`${baseUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-forwarded-for': '203.0.113.10' },
         body: '{}',
       });
-      assert.equal(anotherClient.status, 400, 'a different forwarded client address has its own bucket');
+      assert.equal(
+        anotherClient.status,
+        400,
+        'a different forwarded client address has its own bucket',
+      );
 
       for (let attempt = 0; attempt < 2; attempt++) {
-        assert.equal(
-          (await fetch(`${baseUrl}/api/rooms/join`, { method: 'POST' })).status,
-          401,
-        );
+        assert.equal((await fetch(`${baseUrl}/api/rooms/join`, { method: 'POST' })).status, 401);
       }
       const limitedJoin = await fetch(`${baseUrl}/api/rooms/join`, { method: 'POST' });
       assert.equal(limitedJoin.status, 429);
-      assert.deepEqual(await limitedJoin.json(), { message: 'Too many requests. Please try again later.' });
+      assert.deepEqual(await limitedJoin.json(), {
+        message: 'Too many requests. Please try again later.',
+      });
     });
   });
 
@@ -199,7 +204,9 @@ describe('HTTP security middleware', () => {
       console.log = originalConsoleLog;
     }
 
-    const requestLog = entries.map(entry => JSON.parse(entry)).find(entry => entry.event === 'http_request');
+    const requestLog = entries
+      .map(entry => JSON.parse(entry))
+      .find(entry => entry.event === 'http_request');
     assert.ok(requestLog);
     assert.equal(requestLog.requestId, 'logging-test-id');
     assert.equal(requestLog.method, 'POST');

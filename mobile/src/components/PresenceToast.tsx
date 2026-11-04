@@ -4,8 +4,6 @@ interface PresenceToastProps {
   message: string;
 }
 
-/** Non-blocking, auto-dismissing banner -- never something the rider has to tap
- * away. See useRiderPresenceToasts for the queue/timing that drives this. */
 export default function PresenceToast({ message }: PresenceToastProps) {
   return (
     <View style={styles.container} pointerEvents="none">

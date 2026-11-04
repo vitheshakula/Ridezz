@@ -1,23 +1,3 @@
-/**
- * Wire codec and ingress boundary for RideMessage.
- *
- * Wire format (protocol v1): one UTF-8 JSON object with the RideMessage fields in a fixed order.
- * Outbound encoding is strict and throws on programmer error. Inbound parsing treats every byte
- * as untrusted, never throws, and returns null for anything it will not accept.
- *
- * Clock semantics at ingress (all times are epoch ms; `now` is the receiver's clock):
- *   - Future skew: accept iff createdAt - now <= RIDE_MESSAGE_MAX_FUTURE_SKEW_MS. A sender whose
- *     clock runs slightly ahead is tolerated; a timestamp further ahead is implausible.
- *   - Expiry: reject iff now >= expiresAt, the same rule as isRideMessageExpired. No grace is
- *     applied and expiresAt is never rewritten.
- * Together with TTL <= RIDE_MESSAGE_MAX_TTL_MS, an accepted message satisfies
- * expiresAt <= now + RIDE_MESSAGE_MAX_FUTURE_SKEW_MS + RIDE_MESSAGE_MAX_TTL_MS, so skew can never
- * keep a message alive indefinitely. Because expiresAt is absolute and immutable across relays,
- * that bound is evaluated afresh against each node's own clock and does not compound per hop.
- * A sender whose clock lags the receiver by at least the message's TTL is indistinguishable from
- * a stale message and is dropped; TTLs must be chosen comfortably above expected clock error.
- */
-
 import { isJsonValue, type JsonValue } from './jsonValue';
 import {
   RIDE_MESSAGE_MAX_ID_LENGTH,
@@ -38,11 +18,8 @@ import {
   type RideMessageType,
 } from './rideMessage';
 
-/** Largest accepted encoded packet, in UTF-8 bytes. Checked before decoding or JSON parsing. */
 export const RIDE_MESSAGE_MAX_WIRE_BYTES = 4096;
 
-/** How far a message's createdAt may be ahead of the receiver's clock. Matches the Phase 1
- * hazard parser's future tolerance. */
 export const RIDE_MESSAGE_MAX_FUTURE_SKEW_MS = 30_000;
 
 const utf8Encoder = new TextEncoder();
@@ -51,8 +28,6 @@ function utf8ByteLength(text: string): number {
   return utf8Encoder.encode(text).byteLength;
 }
 
-/** Structural, clock-independent validation shared by both directions. Returns a fresh object
- * containing only protocol fields in wire order, or null. */
 function toWireMessage(value: unknown): RideMessage<JsonValue> | null {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     return null;
@@ -78,7 +53,6 @@ function toWireMessage(value: unknown): RideMessage<JsonValue> | null {
   ) {
     return null;
   }
-  // Optional gateway routing: when present it must be exactly valid, on a routable type.
   if (
     m.gatewayRouting !== undefined &&
     (!isGatewayRoutableMessageType(m.type) || !isValidGatewayRouting(m.gatewayRouting))
@@ -108,9 +82,6 @@ function toWireMessage(value: unknown): RideMessage<JsonValue> | null {
   };
 }
 
-/** Serializes a message to its v1 JSON wire form. Throws TypeError when the message is not a
- * valid v1 envelope (including a non-JSON or null payload) and RangeError when the encoded form
- * exceeds RIDE_MESSAGE_MAX_WIRE_BYTES, so nothing is sent that a peer would reject. */
 export function serializeRideMessage(message: RideMessage): string {
   const wire = toWireMessage(message);
   if (!wire) {
@@ -126,16 +97,10 @@ export function serializeRideMessage(message: RideMessage): string {
   return text;
 }
 
-/** UTF-8 bytes of serializeRideMessage. Throws under the same conditions. */
 export function encodeRideMessage(message: RideMessage): Uint8Array<ArrayBuffer> {
   return new TextEncoder().encode(serializeRideMessage(message));
 }
 
-/**
- * Decodes and validates an untrusted packet from any transport. Never throws. Returns null for
- * oversized, non-UTF-8, malformed, structurally invalid, expired or implausibly future-dated
- * input, or when `now` itself is not a valid timestamp. Unknown extra fields are dropped.
- */
 export function parseRideMessage(
   input: string | Uint8Array,
   now: number,
@@ -147,8 +112,6 @@ export function parseRideMessage(
 
     let text: string;
     if (typeof input === 'string') {
-      // UTF-8 never uses fewer bytes than UTF-16 code units, so this rejects huge strings
-      // before paying to encode them.
       if (input.length > RIDE_MESSAGE_MAX_WIRE_BYTES) {
         return null;
       }
@@ -157,7 +120,6 @@ export function parseRideMessage(
       }
       text = input;
     } else if (ArrayBuffer.isView(input)) {
-      // isView rather than instanceof: byte arrays may come from another realm.
       if (input.byteLength > RIDE_MESSAGE_MAX_WIRE_BYTES) {
         return null;
       }

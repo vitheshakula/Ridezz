@@ -23,8 +23,6 @@ function render(props: Partial<React.ComponentProps<typeof OfflineRiderMap>> = {
   return renderer.root;
 }
 
-/** The mocked Marker is a plain View carrying the real `id`/`lngLat` props, with this component's
- * own marker content as children -- see __mocks__/@maplibre/maplibre-react-native.tsx. */
 const markerFor = (root: ReactTestRenderer.ReactTestInstance, id: string) =>
   root.findAll(node => node.props.id === id && node.props.lngLat !== undefined)[0];
 
@@ -32,21 +30,29 @@ const geoJsonSource = (root: ReactTestRenderer.ReactTestInstance, id: string) =>
   root.findAll(node => node.props.id === id)[0];
 
 function textsIn(node: ReactTestRenderer.ReactTestInstance): string[] {
-  return node.findAllByType(Text).map(t => (Array.isArray(t.props.children) ? t.props.children.join('') : String(t.props.children)));
+  return node
+    .findAllByType(Text)
+    .map(t =>
+      Array.isArray(t.props.children) ? t.props.children.join('') : String(t.props.children),
+    );
 }
 
 describe('OfflineRiderMap: rider markers', () => {
   it('renders no rider markers when given none', () => {
     const root = render({ riders: [] });
-    expect(root.findAll(node => node.props.lngLat !== undefined && node.props.id !== 'destination')).toHaveLength(0);
+    expect(
+      root.findAll(node => node.props.lngLat !== undefined && node.props.id !== 'destination'),
+    ).toHaveLength(0);
   });
 
   it('places a rider marker at their [longitude, latitude]', () => {
-    const root = render({ riders: [rider({ riderId: 'alex', latitude: 17.385, longitude: 78.4867 })] });
+    const root = render({
+      riders: [rider({ riderId: 'alex', latitude: 17.385, longitude: 78.4867 })],
+    });
     expect(markerFor(root, 'alex').props.lngLat).toEqual([78.4867, 17.385]);
   });
 
-  it('labels the marker with the rider\'s real name, never the raw riderId', () => {
+  it("labels the marker with the rider's real name, never the raw riderId", () => {
     const root = render({ riders: [rider({ riderId: 'a1b2c3', riderName: 'Jaswant' })] });
     const texts = textsIn(markerFor(root, 'a1b2c3'));
     expect(texts.some(t => t.includes('Jaswant'))).toBe(true);
@@ -64,7 +70,10 @@ describe('OfflineRiderMap: rider markers', () => {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     ReactTestRenderer.act(() => {
       renderer = ReactTestRenderer.create(
-        <OfflineRiderMap riders={[rider({ riderId: 'alex' })]} mapStyleUrl="https://example.com/style.json" />,
+        <OfflineRiderMap
+          riders={[rider({ riderId: 'alex' })]}
+          mapStyleUrl="https://example.com/style.json"
+        />,
       );
     });
     ReactTestRenderer.act(() => {
@@ -88,7 +97,7 @@ describe('OfflineRiderMap: rider markers', () => {
     expect(texts).toMatch(/km|m/);
   });
 
-  it('excludes this device\'s own entry when selfRiderId is given', () => {
+  it("excludes this device's own entry when selfRiderId is given", () => {
     const self = rider({ riderId: 'self', riderName: 'Me' });
     const other = rider({ riderId: 'bilal', riderName: 'Bilal' });
     const root = render({ riders: [self, other], selfRiderId: 'self' });
@@ -106,7 +115,9 @@ describe('OfflineRiderMap: rider markers', () => {
 describe('OfflineRiderMap: self-location marker', () => {
   it('renders no self marker when selfLocation is not given', () => {
     const root = render({ selfLocation: null });
-    expect(root.findAll(node => node.props.id === 'self' && node.props.lngLat !== undefined)).toHaveLength(0);
+    expect(
+      root.findAll(node => node.props.id === 'self' && node.props.lngLat !== undefined),
+    ).toHaveLength(0);
   });
 
   it('places a "You" marker at the given selfLocation', () => {
@@ -123,7 +134,7 @@ describe('OfflineRiderMap: destination', () => {
     expect(markerFor(root, 'destination')).toBeUndefined();
   });
 
-  it('renders a destination marker at the destination\'s coordinates', () => {
+  it("renders a destination marker at the destination's coordinates", () => {
     const root = render({ destination: { name: 'Beach House', latitude: 17.5, longitude: 78.6 } });
     expect(markerFor(root, 'destination').props.lngLat).toEqual([78.6, 17.5]);
   });
@@ -146,7 +157,10 @@ describe('OfflineRiderMap: route line (persists the active destination offline)'
   });
 
   it('draws no straight-line fallback without a self location', () => {
-    const root = render({ selfLocation: null, destination: { name: null, latitude: 17.5, longitude: 78.6 } });
+    const root = render({
+      selfLocation: null,
+      destination: { name: null, latitude: 17.5, longitude: 78.6 },
+    });
     expect(geoJsonSource(root, 'offlineRoute')).toBeUndefined();
   });
 
@@ -189,9 +203,12 @@ describe('OfflineRiderMap: off-route detection', () => {
     ],
   };
   const ON_ROUTE = { latitude: 17.4, longitude: 78.5 };
-  const FAR_OFF_ROUTE = { latitude: 17.5, longitude: 78.4 }; // well over 40m from ROAD_ROUTE
+  const FAR_OFF_ROUTE = { latitude: 17.5, longitude: 78.4 };
 
-  function renderWithRoute(selfLocation: { latitude: number; longitude: number }, onOffRouteChange = jest.fn()) {
+  function renderWithRoute(
+    selfLocation: { latitude: number; longitude: number },
+    onOffRouteChange = jest.fn(),
+  ) {
     let renderer!: ReactTestRenderer.ReactTestRenderer;
     ReactTestRenderer.act(() => {
       renderer = ReactTestRenderer.create(
@@ -228,7 +245,7 @@ describe('OfflineRiderMap: off-route detection', () => {
       );
     });
     expect(onOffRouteChange).toHaveBeenCalledWith(true);
-    expect(onOffRouteChange).toHaveBeenCalledTimes(1); // only on the transition, not every fix
+    expect(onOffRouteChange).toHaveBeenCalledTimes(1);
     expect(geoJsonSource(renderer.root, 'offlineRejoinGuidance')).toBeTruthy();
   });
 
@@ -270,7 +287,9 @@ describe('OfflineRiderMap: off-route detection', () => {
 describe('OfflineRiderMap: map setup', () => {
   it('passes the given style URL through to the map', () => {
     const root = render({ mapStyleUrl: 'https://example.com/offline-style.json' });
-    const map = root.findAll(node => node.props.mapStyle === 'https://example.com/offline-style.json');
+    const map = root.findAll(
+      node => node.props.mapStyle === 'https://example.com/offline-style.json',
+    );
     expect(map.length).toBeGreaterThan(0);
   });
 

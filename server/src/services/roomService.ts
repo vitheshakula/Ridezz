@@ -9,11 +9,8 @@ interface CreateHostedRoomInput {
   destination: Destination | null;
 }
 
-export type CreateHostedRoomResult =
-  | { kind: 'ok'; room: Room }
-  | { kind: 'ownership_conflict' };
+export type CreateHostedRoomResult = { kind: 'ok'; room: Room } | { kind: 'ownership_conflict' };
 
-/** Creates the signed-in rider's room, or refreshes that same room for a new ride. */
 export async function createOrReuseHostedRoom(
   prisma: PrismaClient,
   { userId, roomCode, riderName, destination }: CreateHostedRoomInput,
@@ -43,7 +40,6 @@ export interface RoomForJoin {
   isHost: boolean;
 }
 
-/** Finds a room and determines whether the joining rider owns it. */
 export async function findRoomForJoin(
   prisma: PrismaClient,
   roomCode: string,
@@ -58,7 +54,6 @@ export type UpdateRoomDestinationResult =
   | { kind: 'not_found' }
   | { kind: 'forbidden' };
 
-/** Updates a room's destination only when the requesting rider is its host. */
 export async function updateRoomDestination(
   prisma: PrismaClient,
   roomCode: string,

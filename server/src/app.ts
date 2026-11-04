@@ -14,7 +14,6 @@ import { createUserRouter } from './routes/user';
 export interface AppDeps {
   prisma: PrismaClient;
   env: Env;
-  /** Left out when Google sign-in isn't configured. */
   verifyGoogleIdToken?: GoogleVerifier;
 }
 
@@ -32,12 +31,8 @@ function createSensitiveRateLimiter(env: Env): RequestHandler {
   });
 }
 
-/** Builds the Express app from its dependencies (no listening, no globals) so tests can run the
- * real routes against a throwaway database and a fake Google. */
 export function createApp({ prisma, env, verifyGoogleIdToken }: AppDeps): Express {
   const app = express();
-  // Render is the single public ingress hop; trusting exactly one hop lets per-IP limits see the
-  // forwarded client address without accepting an arbitrary proxy chain.
   app.set('trust proxy', 1);
   const passport = configurePassport(prisma, env.jwtSecret, env.allowedEmails);
   const requireAuth = createRequireAuth(passport);
@@ -49,10 +44,15 @@ export function createApp({ prisma, env, verifyGoogleIdToken }: AppDeps): Expres
   app.use(helmet());
   app.use(
     env.corsOrigins
-      ? cors({ origin: (origin, callback) => callback(null, !origin || env.corsOrigins!.has(origin)) })
+      ? cors({
+          origin: (origin, callback) => callback(null, !origin || env.corsOrigins!.has(origin)),
+        })
       : cors(),
   );
-  app.post(['/api/auth/login', '/api/auth/register', '/api/auth/signup', '/api/auth/google'], authRateLimiter);
+  app.post(
+    ['/api/auth/login', '/api/auth/register', '/api/auth/signup', '/api/auth/google'],
+    authRateLimiter,
+  );
   app.post('/api/rooms/join', roomJoinRateLimiter);
   app.use(express.json({ limit: JSON_BODY_LIMIT }));
   app.use(passport.initialize());

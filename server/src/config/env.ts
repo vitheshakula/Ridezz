@@ -1,18 +1,9 @@
 export interface Env {
   port: number;
-  /** Signs and verifies login tokens. Required -- there is deliberately no default. */
   jwtSecret: string;
-  /** OAuth "Web application" client id. Null disables Google sign-in. */
   googleClientId: string | null;
-  /**
-   * Lowercased addresses allowed to register or sign in, or null for "anyone with a Gmail
-   * account". This is the only real gate: Google's "test users" list is enforced by Google (and
-   * not always, for plain sign-in), and this server never sees it.
-   */
   allowedEmails: ReadonlySet<string> | null;
-  /** Exact browser origins allowed by CORS, or null for permissive local/prototype behavior. */
   corsOrigins: ReadonlySet<string> | null;
-  /** Shared limits for abuse-sensitive authentication and room-join endpoints. */
   authRateLimit: { windowMs: number; max: number };
   livekit: { apiKey: string; apiSecret: string; url: string };
 }
@@ -38,11 +29,16 @@ function validateDatabaseUrl(source: NodeJS.ProcessEnv): void {
       throw new Error('unsupported protocol');
     }
     const parsed = new URL(databaseUrl);
-    if ((parsed.protocol !== 'postgresql:' && parsed.protocol !== 'postgres:') || !parsed.hostname) {
+    if (
+      (parsed.protocol !== 'postgresql:' && parsed.protocol !== 'postgres:') ||
+      !parsed.hostname
+    ) {
       throw new Error('unsupported protocol');
     }
   } catch {
-    throw new Error('DATABASE_URL must be a valid PostgreSQL URL using postgresql:// or postgres://.');
+    throw new Error(
+      'DATABASE_URL must be a valid PostgreSQL URL using postgresql:// or postgres://.',
+    );
   }
 }
 
@@ -84,7 +80,6 @@ function validateLiveKitUrl(raw: string): string {
   return raw;
 }
 
-/** "a@gmail.com, B@gmail.com" (commas, semicolons, spaces or newlines) -> a set, or null if empty. */
 export function parseAllowedEmails(raw: string | undefined): ReadonlySet<string> | null {
   const emails = (raw ?? '')
     .split(/[\s,;]+/)
@@ -93,7 +88,6 @@ export function parseAllowedEmails(raw: string | undefined): ReadonlySet<string>
   return emails.length > 0 ? new Set(emails) : null;
 }
 
-/** Comma-separated exact browser origins, or null to keep permissive development behavior. */
 export function parseCorsOrigins(raw: string | undefined): ReadonlySet<string> | null {
   const origins = (raw ?? '')
     .split(',')
@@ -102,11 +96,6 @@ export function parseCorsOrigins(raw: string | undefined): ReadonlySet<string> |
   return origins.length > 0 ? new Set(origins) : null;
 }
 
-/**
- * Reads and validates configuration, failing at startup rather than limping along with a
- * guessable default -- a JWT secret that anyone can find in the source lets them mint a valid
- * login for any account.
- */
 export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
   const jwtSecret = source.JWT_SECRET?.trim();
   if (!jwtSecret) {
@@ -116,7 +105,9 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     );
   }
   if (jwtSecret.length < MIN_JWT_SECRET_LENGTH) {
-    throw new Error(`JWT_SECRET is too short (${jwtSecret.length} chars); use at least ${MIN_JWT_SECRET_LENGTH}.`);
+    throw new Error(
+      `JWT_SECRET is too short (${jwtSecret.length} chars); use at least ${MIN_JWT_SECRET_LENGTH}.`,
+    );
   }
 
   validateDatabaseUrl(source);
@@ -137,7 +128,11 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
         DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS,
         'AUTH_RATE_LIMIT_WINDOW_MS',
       ),
-      max: parsePositiveInteger(source.AUTH_RATE_LIMIT_MAX, DEFAULT_AUTH_RATE_LIMIT_MAX, 'AUTH_RATE_LIMIT_MAX'),
+      max: parsePositiveInteger(
+        source.AUTH_RATE_LIMIT_MAX,
+        DEFAULT_AUTH_RATE_LIMIT_MAX,
+        'AUTH_RATE_LIMIT_MAX',
+      ),
     },
     livekit: {
       apiKey: livekitApiKey,

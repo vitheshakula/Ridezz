@@ -5,7 +5,6 @@ interface LogoProps {
   size?: number;
 }
 
-/** The Rideaze mark (helmet-R). Transparent PNG so it sits on any dark surface. */
 export function Logo({ size = 36 }: LogoProps) {
   return (
     <Image

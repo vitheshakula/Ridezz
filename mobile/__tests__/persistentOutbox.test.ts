@@ -24,7 +24,9 @@ function message(
   });
 }
 
-function memoryStore(initial: string | null = null): PersistentOutboxStore & { value: () => string | null } {
+function memoryStore(
+  initial: string | null = null,
+): PersistentOutboxStore & { value: () => string | null } {
   let value = initial;
   return {
     load: jest.fn(async () => value),
@@ -44,7 +46,10 @@ describe('PersistentOutbox', () => {
     await first.recordAttempt('message-1', NOW);
 
     const restarted = createPersistentOutbox({ store, random: () => 0 });
-    await expect(restarted.initialize(NOW + 1)).resolves.toEqual({ recovered: 1, corrupted: false });
+    await expect(restarted.initialize(NOW + 1)).resolves.toEqual({
+      recovered: 1,
+      corrupted: false,
+    });
     expect(restarted.size).toBe(1);
     expect(restarted.due(NOW + 999)).toEqual([]);
     expect(restarted.due(NOW + 1_000)[0]).toMatchObject({

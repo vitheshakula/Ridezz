@@ -19,12 +19,10 @@ interface Controlled {
   transport: HeartbeatTransport;
   broadcast: jest.Mock<Promise<void>, [string]>;
   sent: string[];
-  /** Settles the most recent broadcast. */
   resolve: () => void;
   reject: (error: unknown) => void;
 }
 
-/** A transport whose broadcasts stay pending until the test settles them (or forever). */
 function controlled(id: string): Controlled {
   const sent: string[] = [];
   const self = { sent } as Controlled;
@@ -75,7 +73,6 @@ function timedOut(transportId: string, payload: string) {
   return { transportId, ok: false, stage: 'transport', messageId, reason: 'timeout' };
 }
 
-/** Tracks when a cycle promise settles under fake time. */
 function track(cycle: Promise<HeartbeatCycleResult>) {
   const state: { settled: boolean; result?: HeartbeatCycleResult } = { settled: false };
   cycle.then(result => {
@@ -96,7 +93,6 @@ afterEach(() => {
 describe('heartbeat send timeout: constants', () => {
   test('timeout is 2 s and worst-case period stays below peer freshness', () => {
     expect(HEARTBEAT_SEND_TIMEOUT_MS).toBe(2_000);
-    // 2 s bounded cycle + 5 s delay after settlement = 7 s < 15 s freshness.
     expect(HEARTBEAT_SEND_TIMEOUT_MS + HEARTBEAT_INTERVAL_MS).toBeLessThan(
       PEER_OBSERVATION_DEFAULT_FRESHNESS_MS,
     );
@@ -120,9 +116,7 @@ describe('heartbeat send timeout: single cycle', () => {
 
     expect(cycle.result).toEqual({
       ok: true,
-      transmissions: [
-        timedOut('transport-x', x.sent[0]),
-      ],
+      transmissions: [timedOut('transport-x', x.sent[0])],
     });
   });
 
@@ -131,7 +125,6 @@ describe('heartbeat send timeout: single cycle', () => {
     const y = healthy('transport-y');
     const cycle = track(emitter(() => [x.transport, y.transport]).emitHeartbeatCycle());
 
-    // Both send attempts start before any time passes.
     expect(x.broadcast).toHaveBeenCalledTimes(1);
     expect(y.broadcast).toHaveBeenCalledTimes(1);
 
@@ -210,14 +203,17 @@ describe('heartbeat send timeout: late settlement', () => {
   test('a late success does not change or duplicate the timeout result', async () => {
     const x = controlled('transport-x');
     const outcomes: CycleOutcome<HeartbeatCycleResult>[] = [];
-    const scheduler = createHeartbeatScheduler(emitter(() => [x.transport]), {
-      onCycleSettled: o => outcomes.push(o),
-    });
+    const scheduler = createHeartbeatScheduler(
+      emitter(() => [x.transport]),
+      {
+        onCycleSettled: o => outcomes.push(o),
+      },
+    );
     scheduler.start();
     await jest.advanceTimersByTimeAsync(TIMEOUT);
     const first = outcomes[0];
 
-    x.resolve(); // the abandoned native send completes later
+    x.resolve();
     await jest.advanceTimersByTimeAsync(1_000);
 
     expect(outcomes).toHaveLength(1);
@@ -231,20 +227,20 @@ describe('heartbeat send timeout: late settlement', () => {
   });
 
   test('a late rejection is absorbed: no unhandled rejection, no second result', async () => {
-    // Jest fails the running test if an unhandled rejection surfaces during a real macrotask turn
-    // (verified with a deliberate unhandled control), so passing proves it was handled.
     const x = controlled('transport-x');
     const outcomes: CycleOutcome<HeartbeatCycleResult>[] = [];
-    const scheduler = createHeartbeatScheduler(emitter(() => [x.transport]), {
-      onCycleSettled: o => outcomes.push(o),
-    });
+    const scheduler = createHeartbeatScheduler(
+      emitter(() => [x.transport]),
+      {
+        onCycleSettled: o => outcomes.push(o),
+      },
+    );
     scheduler.start();
     await jest.advanceTimersByTimeAsync(TIMEOUT);
 
     x.reject(new Error('native send failed after timeout'));
     await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
 
-    // The scheduler carried on: cycle 2 started at 2 s + 5 s with a new heartbeat.
     expect(x.broadcast).toHaveBeenCalledTimes(2);
     expect(idOf(x.sent[1])).not.toBe(idOf(x.sent[0]));
     expect(outcomes).toHaveLength(1);
@@ -261,24 +257,27 @@ describe('heartbeat send timeout: scheduler recovery', () => {
   test('a permanently hung transport cannot stop heartbeat scheduling', async () => {
     const x = controlled('transport-x');
     const outcomes: CycleOutcome<HeartbeatCycleResult>[] = [];
-    const scheduler = createHeartbeatScheduler(emitter(() => [x.transport]), {
-      onCycleSettled: o => outcomes.push(o),
-    });
+    const scheduler = createHeartbeatScheduler(
+      emitter(() => [x.transport]),
+      {
+        onCycleSettled: o => outcomes.push(o),
+      },
+    );
 
     scheduler.start();
     expect(x.broadcast).toHaveBeenCalledTimes(1);
 
-    await jest.advanceTimersByTimeAsync(TIMEOUT); // t = 2 s: cycle 1 settles (timeout)
+    await jest.advanceTimersByTimeAsync(TIMEOUT);
     expect(outcomes).toHaveLength(1);
 
-    await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS - 1); // t = 6.999 s
+    await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS - 1);
     expect(x.broadcast).toHaveBeenCalledTimes(1);
-    await jest.advanceTimersByTimeAsync(1); // t = 7 s: cycle 2 starts
+    await jest.advanceTimersByTimeAsync(1);
     expect(x.broadcast).toHaveBeenCalledTimes(2);
 
-    await jest.advanceTimersByTimeAsync(TIMEOUT + HEARTBEAT_INTERVAL_MS); // t = 14 s: cycle 3
+    await jest.advanceTimersByTimeAsync(TIMEOUT + HEARTBEAT_INTERVAL_MS);
     expect(x.broadcast).toHaveBeenCalledTimes(3);
-    expect(new Set(x.sent.map(idOf)).size).toBe(3); // a new id every cycle, never a retry
+    expect(new Set(x.sent.map(idOf)).size).toBe(3);
     for (const outcome of outcomes) {
       expect(outcome.ok && outcome.value.ok && outcome.value.transmissions[0]).toMatchObject({
         reason: 'timeout',
@@ -290,9 +289,12 @@ describe('heartbeat send timeout: scheduler recovery', () => {
   test('stop during in-flight sends lets the cycle settle and schedules nothing more', async () => {
     const x = controlled('transport-x');
     const outcomes: CycleOutcome<HeartbeatCycleResult>[] = [];
-    const scheduler = createHeartbeatScheduler(emitter(() => [x.transport]), {
-      onCycleSettled: o => outcomes.push(o),
-    });
+    const scheduler = createHeartbeatScheduler(
+      emitter(() => [x.transport]),
+      {
+        onCycleSettled: o => outcomes.push(o),
+      },
+    );
     scheduler.start();
 
     scheduler.stop();

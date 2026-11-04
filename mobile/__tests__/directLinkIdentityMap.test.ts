@@ -176,7 +176,6 @@ describe('DirectLinkIdentityMap: freshness and pruning', () => {
 
     for (let i = 0; i < 3; i++) {
       map.prune(T0 + FRESH);
-      // Querying earlier proves removal: an unpruned ep-1 would resolve at T0 + 1.
       expect(map.resolve('nearby', 'ep-1', T0 + 1)).toBeUndefined();
       expect(map.resolve('nearby', 'ep-2', T0 + 6_001)).toBe('rider-c');
     }

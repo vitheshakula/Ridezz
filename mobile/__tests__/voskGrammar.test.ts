@@ -1,7 +1,5 @@
 import { HAZARD_RULES, extractHazards } from '../src/services/SpeechHazardService';
 
-// No @types/node in this project, so load fs the way the other tests load modules; jest runs from
-// the mobile/ root.
 const fs: { readFileSync(file: string, encoding: 'utf8'): string } = require('fs');
 const GRAMMAR_FILE = 'android/app/src/main/assets/vosk-grammar.json';
 
@@ -16,7 +14,6 @@ describe('Vosk hazard grammar (assets/vosk-grammar.json)', () => {
   });
 
   it('carries plenty of ordinary words next to the hazard phrases', () => {
-    // Without them Vosk forces ordinary sentences into hazard words (about 5% false alerts).
     const ordinary = grammar.filter(entry => entry !== '[unk]' && !isHazardEntry(entry));
     expect(ordinary.length).toBeGreaterThan(1000);
     expect(ordinary.every(entry => !entry.includes(' '))).toBe(true);
@@ -30,7 +27,10 @@ describe('Vosk hazard grammar (assets/vosk-grammar.json)', () => {
   it('covers every hazard type with several spoken phrases', () => {
     for (const rule of HAZARD_RULES) {
       const phrases = grammar.filter(entry => extractHazards(entry).includes(rule.id));
-      expect({ hazard: rule.id, enough: phrases.length >= 3 }).toEqual({ hazard: rule.id, enough: true });
+      expect({ hazard: rule.id, enough: phrases.length >= 3 }).toEqual({
+        hazard: rule.id,
+        enough: true,
+      });
     }
   });
 
@@ -71,7 +71,13 @@ describe('spoken variants all end up as the right hazard', () => {
   });
 
   it('keeps ordinary riding talk quiet', () => {
-    for (const talk of ["let's go", 'can you hear me', 'nice road', 'are you behind me', 'how is the weather today']) {
+    for (const talk of [
+      "let's go",
+      'can you hear me',
+      'nice road',
+      'are you behind me',
+      'how is the weather today',
+    ]) {
       expect({ talk, hazards: extractHazards(talk) }).toEqual({ talk, hazards: [] });
     }
   });

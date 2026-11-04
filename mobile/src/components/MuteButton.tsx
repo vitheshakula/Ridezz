@@ -5,13 +5,16 @@ import { MicIcon, MicOffIcon } from './HomeIcons';
 interface MuteButtonProps {
   muted: boolean;
   onPress: () => void;
-  /** 'large' is the hero voice control (80dp). 'small' is a 56dp variant for tighter layouts. */
   size?: 'large' | 'small';
-  /** Lit while this rider is actually being heard (LiveKit's own speaking detection). */
   talking?: boolean;
 }
 
-export default function MuteButton({ muted, onPress, size = 'large', talking = false }: MuteButtonProps) {
+export default function MuteButton({
+  muted,
+  onPress,
+  size = 'large',
+  talking = false,
+}: MuteButtonProps) {
   const isSmall = size === 'small';
   const iconColor = muted ? brand.textPrimary : brand.onPrimary;
   const iconSize = isSmall ? 24 : 32;
@@ -28,8 +31,14 @@ export default function MuteButton({ muted, onPress, size = 'large', talking = f
       accessibilityRole="button"
       accessibilityLabel={muted ? 'Unmute microphone' : 'Mute microphone'}
     >
-      {muted ? <MicOffIcon size={iconSize} color={iconColor} /> : <MicIcon size={iconSize} color={iconColor} />}
-      {isSmall ? null : <Text style={[styles.label, { color: iconColor }]}>{muted ? 'UNMUTE' : 'MUTE'}</Text>}
+      {muted ? (
+        <MicOffIcon size={iconSize} color={iconColor} />
+      ) : (
+        <MicIcon size={iconSize} color={iconColor} />
+      )}
+      {isSmall ? null : (
+        <Text style={[styles.label, { color: iconColor }]}>{muted ? 'UNMUTE' : 'MUTE'}</Text>
+      )}
     </Pressable>
   );
 }

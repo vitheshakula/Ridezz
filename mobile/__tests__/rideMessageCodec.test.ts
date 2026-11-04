@@ -35,7 +35,6 @@ function message(overrides: Partial<Parameters<typeof createRideMessage>[0]> = {
   });
 }
 
-/** A raw wire object, bypassing serializeRideMessage so invalid shapes can be produced. */
 function rawWire(overrides: Record<string, unknown> = {}, omit: string[] = []): string {
   const wire: Record<string, unknown> = {
     v: 1,
@@ -244,9 +243,9 @@ describe('RideMessage codec: ingress structural validation', () => {
 
   test('accepts maxHops at both protocol limits', () => {
     expect(parseRideMessage(rawWire({ maxHops: 0 }), NOW)?.maxHops).toBe(0);
-    expect(
-      parseRideMessage(rawWire({ maxHops: RIDE_MESSAGE_MAX_HOP_LIMIT }), NOW)?.maxHops,
-    ).toBe(RIDE_MESSAGE_MAX_HOP_LIMIT);
+    expect(parseRideMessage(rawWire({ maxHops: RIDE_MESSAGE_MAX_HOP_LIMIT }), NOW)?.maxHops).toBe(
+      RIDE_MESSAGE_MAX_HOP_LIMIT,
+    );
   });
 
   test.each<unknown>([-1, RIDE_MESSAGE_MAX_HOP_LIMIT + 1, 1.5, '3', null])(
@@ -262,8 +261,12 @@ describe('RideMessage codec: ingress structural validation', () => {
   });
 
   test('bounds payload nesting depth', () => {
-    expect(parseRideMessage(rawWire({ payload: nested(MAX_JSON_VALUE_DEPTH) }), NOW)).not.toBeNull();
-    expect(parseRideMessage(rawWire({ payload: nested(MAX_JSON_VALUE_DEPTH + 1) }), NOW)).toBeNull();
+    expect(
+      parseRideMessage(rawWire({ payload: nested(MAX_JSON_VALUE_DEPTH) }), NOW),
+    ).not.toBeNull();
+    expect(
+      parseRideMessage(rawWire({ payload: nested(MAX_JSON_VALUE_DEPTH + 1) }), NOW),
+    ).toBeNull();
   });
 
   test('rejects a payload number literal that overflows to Infinity', () => {
@@ -304,9 +307,7 @@ describe('RideMessage codec: clock skew and expiry', () => {
 
   test('skew plus maximum TTL bounds how long a message can stay acceptable', () => {
     const latest = NOW + RIDE_MESSAGE_MAX_FUTURE_SKEW_MS;
-    const encoded = serializeRideMessage(
-      message({ now: latest, ttlMs: RIDE_MESSAGE_MAX_TTL_MS }),
-    );
+    const encoded = serializeRideMessage(message({ now: latest, ttlMs: RIDE_MESSAGE_MAX_TTL_MS }));
     const bound = NOW + RIDE_MESSAGE_MAX_FUTURE_SKEW_MS + RIDE_MESSAGE_MAX_TTL_MS;
 
     expect(parseRideMessage(encoded, NOW)?.expiresAt).toBe(bound);
@@ -320,7 +321,6 @@ describe('RideMessage codec: clock skew and expiry', () => {
 });
 
 describe('RideMessage codec: wire size bound', () => {
-  /** A valid message whose ASCII encoding is exactly `bytes` long. */
   function messageOfSize(bytes: number, padChar = 'x') {
     const base = serializeRideMessage(message({ payload: { pad: '' } })).length;
     return message({ payload: { pad: padChar.repeat(bytes - base) } });
@@ -354,7 +354,6 @@ describe('RideMessage codec: wire size bound', () => {
   });
 
   test('measures strings in UTF-8 bytes, not code units', () => {
-    // Fits by .length but each "é" is two UTF-8 bytes.
     const base = serializeRideMessage(message({ payload: { pad: '' } })).length;
     const text = rawWire({ payload: { pad: 'é'.repeat(RIDE_MESSAGE_MAX_WIRE_BYTES - base) } });
 
@@ -379,7 +378,7 @@ describe('RideMessage codec: parser never throws', () => {
     'x'.repeat(10 * RIDE_MESSAGE_MAX_WIRE_BYTES),
     new Uint8Array(0),
     new Uint8Array([0xff, 0xfe, 0xfd]),
-    new Uint8Array([0x7b, 0xc3]), // "{" then a truncated two-byte sequence
+    new Uint8Array([0x7b, 0xc3]),
     new Uint16Array([0x7b7b]),
     null,
     undefined,
@@ -395,7 +394,10 @@ describe('RideMessage codec: parser never throws', () => {
 
   test('does not pollute Object.prototype', () => {
     parseRideMessage('{"__proto__":{"polluted":true}}', NOW);
-    parseRideMessage(rawWire().replace('"payload":{', '"payload":{"__proto__":{"polluted":true},'), NOW);
+    parseRideMessage(
+      rawWire().replace('"payload":{', '"payload":{"__proto__":{"polluted":true},'),
+      NOW,
+    );
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 

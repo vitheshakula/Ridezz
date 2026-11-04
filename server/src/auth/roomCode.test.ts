@@ -15,8 +15,14 @@ describe('generateRoomCode', () => {
   });
 
   it('writes the lowest and highest values as five digits', () => {
-    assert.equal(generateRoomCode(() => 10000), '10000');
-    assert.equal(generateRoomCode(() => 99999), '99999');
+    assert.equal(
+      generateRoomCode(() => 10000),
+      '10000',
+    );
+    assert.equal(
+      generateRoomCode(() => 99999),
+      '99999',
+    );
   });
 
   it('always produces a valid code with the real random source', () => {
@@ -37,10 +43,10 @@ describe('isRoomCode', () => {
 
   it('rejects anything else', () => {
     const bad: unknown[] = [
-      '09999', // leading zero: below the range
+      '09999',
       '00000',
-      '100000', // six digits
-      '1234', // four digits
+      '100000',
+      '1234',
       '',
       ' 54321',
       '54321 ',
@@ -48,7 +54,7 @@ describe('isRoomCode', () => {
       'ABCDE',
       '5.4321',
       '-5432',
-      54321, // a number, not text
+      54321,
       null,
       undefined,
     ];

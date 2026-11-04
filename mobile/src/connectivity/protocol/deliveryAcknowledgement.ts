@@ -18,18 +18,12 @@ export interface DeliveryAcknowledgementPayload extends Record<string, JsonValue
   readonly originalOriginId: string;
   readonly destinationNodeId: string;
   readonly acknowledgedAt: number;
-  /** Backend-issued verification-key identifier. It is public metadata, never a secret. */
   readonly keyId: string;
-  /** Unique signer nonce covered by the signature and used for replay rejection. */
   readonly nonce: string;
-  /** Base64url signature produced by a backend-authorized ride member credential. */
   readonly signature: string;
 }
 
-export type DeliveryAcknowledgementMessage = RideMessage<
-  DeliveryAcknowledgementPayload,
-  'ack'
->;
+export type DeliveryAcknowledgementMessage = RideMessage<DeliveryAcknowledgementPayload, 'ack'>;
 
 export interface DeliveryAcknowledgementExpectation {
   readonly rideId: string;
@@ -39,12 +33,6 @@ export interface DeliveryAcknowledgementExpectation {
   readonly expiresAt: number;
 }
 
-/**
- * Trust boundary for ACK verification. A production implementation must validate a backend-issued,
- * ride-scoped membership credential and an established signature scheme (for example Ed25519).
- * The connectivity layer deliberately has no backend signing secret and never treats the ride code
- * or a self-reported node id as authentication.
- */
 export interface DeliveryAcknowledgementVerifier {
   verify(
     acknowledgement: DeliveryAcknowledgementMessage,
@@ -115,7 +103,6 @@ export function asDeliveryAcknowledgementMessage(
   return Object.freeze({ ...message, type: 'ack' as const, payload });
 }
 
-/** Stable, mutable-routing-free input for an established signature primitive. */
 export function deliveryAcknowledgementSigningInput(
   acknowledgement: Omit<DeliveryAcknowledgementPayload, 'signature'>,
   rideId: string,

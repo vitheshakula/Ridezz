@@ -10,7 +10,6 @@ export const OUTBOX_DEFAULT_MAX_DELAY_MS = 60_000;
 const PRIORITY_ORDER = Object.freeze({ critical: 0, high: 1, normal: 2, low: 3 });
 
 export interface PersistentOutboxStore {
-  /** Implementations must provide encryption at rest; plaintext stores are test-only. */
   load(): Promise<string | null>;
   save(serialized: string): Promise<void>;
 }
@@ -31,7 +30,10 @@ interface StoredRecord {
 
 export type OutboxEnqueueResult =
   | { readonly accepted: true }
-  | { readonly accepted: false; readonly reason: 'duplicate' | 'queue_full' | 'expired' | 'invalid' };
+  | {
+      readonly accepted: false;
+      readonly reason: 'duplicate' | 'queue_full' | 'expired' | 'invalid';
+    };
 
 export type OutboxAttemptResult =
   | { readonly state: 'scheduled'; readonly nextAttemptAt: number; readonly attempts: number }
@@ -51,7 +53,9 @@ export interface PersistentOutbox {
   recordAttempt(messageId: string, now: number): Promise<OutboxAttemptResult>;
   acknowledge(messageId: string): Promise<boolean>;
   remove(messageId: string): Promise<boolean>;
-  expire(now: number): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]>;
+  expire(
+    now: number,
+  ): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]>;
   readonly size: number;
 }
 
@@ -71,8 +75,6 @@ function validStoredRecord(value: unknown, now: number): StoredRecord | null {
   ) {
     return null;
   }
-  // Parse at creation time to retain records that are valid but currently expired; expire() owns
-  // removal and reports their IDs. Structural validation still uses the canonical codec.
   const parsed = JSON.parse(record.wireMessage) as { createdAt?: unknown };
   const createdAt = typeof parsed.createdAt === 'number' ? parsed.createdAt : now;
   if (!parseRideMessage(record.wireMessage, Math.max(0, createdAt))) {
@@ -129,7 +131,14 @@ export function createPersistentOutbox({
     const raw = JSON.parse(record.wireMessage) as { createdAt?: unknown };
     const at = typeof raw.createdAt === 'number' ? raw.createdAt : 0;
     const message = parseRideMessage(record.wireMessage, at);
-    return message ? Object.freeze({ message, destinationGatewayId: record.destinationGatewayId, attempts: record.attempts, nextAttemptAt: record.nextAttemptAt }) : null;
+    return message
+      ? Object.freeze({
+          message,
+          destinationGatewayId: record.destinationGatewayId,
+          attempts: record.attempts,
+          nextAttemptAt: record.nextAttemptAt,
+        })
+      : null;
   };
 
   const requireInitialized = (): void => {
@@ -191,7 +200,12 @@ export function createPersistentOutbox({
       } catch {
         return { accepted: false, reason: 'invalid' };
       }
-      records.set(message.id, { wireMessage, destinationGatewayId, attempts: 0, nextAttemptAt: now });
+      records.set(message.id, {
+        wireMessage,
+        destinationGatewayId,
+        attempts: 0,
+        nextAttemptAt: now,
+      });
       await persist();
       return { accepted: true };
     },
@@ -210,11 +224,12 @@ export function createPersistentOutbox({
           due.push(decoded);
         }
       }
-      due.sort((a, b) =>
-        PRIORITY_ORDER[a.message.priority] - PRIORITY_ORDER[b.message.priority] ||
-        a.nextAttemptAt - b.nextAttemptAt ||
-        a.message.createdAt - b.message.createdAt ||
-        a.message.id.localeCompare(b.message.id),
+      due.sort(
+        (a, b) =>
+          PRIORITY_ORDER[a.message.priority] - PRIORITY_ORDER[b.message.priority] ||
+          a.nextAttemptAt - b.nextAttemptAt ||
+          a.message.createdAt - b.message.createdAt ||
+          a.message.id.localeCompare(b.message.id),
       );
       return Object.freeze(due);
     },
@@ -281,7 +296,9 @@ export function createPersistentOutbox({
       return removed;
     },
 
-    async expire(now): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]> {
+    async expire(
+      now,
+    ): Promise<readonly { readonly messageId: string; readonly expiresAt: number }[]> {
       requireInitialized();
       const expired: { messageId: string; expiresAt: number }[] = [];
       for (const [messageId, record] of records) {

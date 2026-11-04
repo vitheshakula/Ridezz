@@ -1,28 +1,9 @@
 /* eslint-disable no-bitwise -- this is a bit-packed binary wire format */
-/**
- * Compact binary wire format for the emergency hard-braking alert: 24 bytes, so it fits one radio
- * frame and parses in microseconds. Sent as raw bytes over LiveKit and as base64 (32 characters)
- * over Nearby, whose transport carries strings. It is deliberately NOT a hazard packet: it skips
- * the hazard policy's per-type throttle and announcement path, and older apps ignore it because it
- * is neither JSON nor a hazard.
- *
- *   0       magic 0xB7
- *   1       version (high nibble, = 1) | remaining relay hops (low nibble)
- *   2-3     sequence, u16 big-endian (wraps)
- *   4-11    sender id, 8 ASCII bytes, NUL padded
- *   12-17   timestamp, u48 big-endian, epoch ms (onset of the braking)
- *   18-19   speed, u16, 0.1 km/h units
- *   20      peak deceleration, u8, 0.02 g units (caps at 5.1 g)
- *   21-22   heading, u16, whole degrees; 0xFFFF = unknown
- *   23      XOR of bytes 0-22
- */
 
 export const BRAKE_PACKET_BYTES = 24;
 export const BRAKE_PACKET_MAGIC = 0xb7;
 export const BRAKE_PACKET_VERSION = 1;
-/** How many times a packet may be re-broadcast after the first send. */
 export const BRAKE_MAX_HOPS = 3;
-/** Braking news is useless when old; clocks across phones may differ by a few seconds. */
 export const BRAKE_PACKET_MAX_SKEW_MS = 10_000;
 
 const SENDER_BYTES = 8;
@@ -31,11 +12,9 @@ const HEADING_UNKNOWN = 0xffff;
 export interface BrakeAlert {
   senderId: string;
   seq: number;
-  /** Epoch ms of the braking onset on the sender's clock. */
   timestamp: number;
   speedKmh: number;
   peakDecelG: number;
-  /** Degrees [0, 360), or null when the sender had no course. */
   headingDeg: number | null;
 }
 
@@ -90,7 +69,6 @@ export function encodeBrakePacket(
   return out;
 }
 
-/** Returns null (never throws) for anything that is not a well-formed v1 braking packet. */
 export function decodeBrakePacket(input: Uint8Array): DecodedBrakePacket | null {
   if (!(input instanceof Uint8Array) || input.length !== BRAKE_PACKET_BYTES) {
     return null;
@@ -135,7 +113,6 @@ export function bytesToBase64(bytes: Uint8Array): string {
   return out;
 }
 
-/** Returns null for anything that is not strict, padded base64. */
 export function base64ToBytes(text: string): Uint8Array<ArrayBuffer> | null {
   if (typeof text !== 'string' || text.length === 0 || text.length % 4 !== 0 || text.length > 64) {
     return null;

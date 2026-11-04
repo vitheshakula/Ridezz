@@ -29,71 +29,46 @@ interface RiderMapProps {
   localIdentity: string;
   statusMessage?: string | null;
   destination?: RideDestination | null;
-  /** Space the floating HUD / bottom panel occupy, so map overlays and camera fits stay clear of them. */
   topInset?: number;
   bottomInset?: number;
-  /** Identities LiveKit currently reports as speaking (drives the talking marker state). */
   speakingIdentities?: string[];
-  /** Host-only: opens the existing "Change destination" editor. */
   onChangeDestination?: () => void;
-  /** Fires whenever the real road-route geometry (OSRM) changes -- null while none is loaded
-   * (no destination, or still on the straight-line fallback). Lets the parent cache the last
-   * known route so OfflineRiderMap can keep showing it after the app falls back to mesh-only,
-   * instead of just a destination pin with no path. */
   onRouteGeometryChange?: (geometry: GeoJSON.LineString | null) => void;
 }
 
-/** Deterministic per-rider marker palette, distinct from the local rider's blue
- * and from each other -- chosen for contrast against the light marker card and
- * against a typical street map background. Freshness is still conveyed (offline
- * riders are dimmed via markerOffline), just not by recoloring the pin. */
 const RIDER_COLOR_PALETTE: string[] = [
-  '#f97316', // orange
-  '#a855f7', // purple
-  '#ec4899', // pink
-  '#14b8a6', // teal
-  '#eab308', // yellow
-  '#ef4444', // red
-  '#06b6d4', // cyan
-  '#84cc16', // lime
-  '#f43f5e', // rose
-  '#8b5cf6', // violet
+  '#f97316',
+  '#a855f7',
+  '#ec4899',
+  '#14b8a6',
+  '#eab308',
+  '#ef4444',
+  '#06b6d4',
+  '#84cc16',
+  '#f43f5e',
+  '#8b5cf6',
 ];
 
-/** Stable hash of a participant identity -> a palette index, so a given rider
- * keeps the same color for the whole ride (and across re-renders) without any
- * server-assigned color state. */
-// Exported so OfflineRiderMap can use the exact same palette/hash -- a rider keeps the same
-// marker colour whether the group is seeing them over the cloud map or the offline one.
 export function colorForRider(identity: string): string {
   let hash = 0;
   for (let i = 0; i < identity.length; i++) {
-    hash = (hash * 31 + identity.charCodeAt(i)) >>> 0;
+    hash = (hash * 31 + identity.charCodeAt(i)) % 4294967296;
   }
   return RIDER_COLOR_PALETTE[hash % RIDER_COLOR_PALETTE.length];
 }
 
-/** The local rider keeps a fixed, reserved color (never handed out by colorForRider)
- * so "which one is me" never depends on remembering a hash. */
 const LOCAL_RIDER_COLOR = brand.primary;
 
 const MAP_STATUS_TICK_MS = 5000;
 const CAMERA_ANIMATION_MS = 400;
 const CENTER_ZOOM = 15;
-/** Street-level: "Center Me" shows the rider's own position, not the neighbourhood. */
 const CENTER_ME_ZOOM = 17;
-/** "Fit Group" with one rider (or everyone bunched together): a touch wider than CENTER_ZOOM. */
 const FIT_GROUP_SINGLE_ZOOM = 14;
 const FIT_GROUP_MARGIN = 80;
 const INITIAL_ZOOM = 13;
 const ROUTE_RETRY_MS = 10_000;
 const MIN_ZOOM = 1;
 const MAX_ZOOM = 20;
-// Dark variant so the map reads as part of the app's black UI instead of a bright
-// rectangle dropped into it -- confirmed this style exists on the same MapTiler
-// account/key as the light one (streets-v4-dark, verified via a direct request).
-// Exported so OfflineRiderMap can be pointed at the exact same style -- OfflineManager's cached
-// pack is keyed by style URL, so the offline map must request this one verbatim to get the hit.
 export const MAPTILER_STYLE_URL = `https://api.maptiler.com/maps/streets-v4-dark/style.json?key=${encodeURIComponent(
   MAPTILER_API_KEY || '',
 )}`;
@@ -158,18 +133,12 @@ export default function RiderMap({
     [destination],
   );
 
-  // "Falling behind" is judged against the live/stale group, not riders who've
-  // dropped off the map entirely -- an offline rider's stale last-known position
-  // shouldn't drag the centroid toward them or get flagged itself.
   const activeLocations = useMemo(
     () => validLocations.filter(location => classifyFreshness(location, nowMs) !== 'offline'),
     [validLocations, nowMs],
   );
   const groupCentroid = useMemo(() => computeCentroid(activeLocations), [activeLocations]);
 
-  // Straight-line ("as the crow flies") guide from the local rider to the destination.
-  // Always computed as the fallback: if the real road route below hasn't loaded yet, or
-  // its fetch fails, this is what renders instead of nothing.
   const straightLineGeoJSON = useMemo(() => {
     if (!localLocation || !destinationLngLat) {
       return null;
@@ -190,11 +159,6 @@ export default function RiderMap({
     };
   }, [localLocation, destinationLngLat]);
 
-  // Real road-following route via OSRM's free public demo server (no API key -- MapTiler's
-  // own Directions API is beta/gated, see routingService.ts). Fetched once per destination,
-  // then re-fetched only after the rider has actually moved a meaningful distance from where
-  // the current route was fetched -- not on every 15m GPS tick, since this is a shared public
-  // server with no uptime guarantee and refetching that often would be both wasteful and rude.
   const [roadRoute, setRoadRoute] = useState<RoadRoute | null>(null);
   const [routeStatus, setRouteStatus] = useState<'idle' | 'loading' | 'road' | 'fallback'>('idle');
   const [routeError, setRouteError] = useState<string | null>(null);
@@ -203,7 +167,9 @@ export default function RiderMap({
   const REROUTE_THRESHOLD_METERS = 300;
 
   useEffect(() => {
-    onRouteGeometryChange?.(roadRoute ? { type: 'LineString', coordinates: roadRoute.coordinates } : null);
+    onRouteGeometryChange?.(
+      roadRoute ? { type: 'LineString', coordinates: roadRoute.coordinates } : null,
+    );
   }, [roadRoute, onRouteGeometryChange]);
 
   useEffect(() => {
@@ -217,13 +183,13 @@ export default function RiderMap({
 
     const last = lastSuccessfulRouteRef.current;
     const destinationChanged =
-      !last || last.destination[0] !== destinationLngLat[0] || last.destination[1] !== destinationLngLat[1];
+      !last ||
+      last.destination[0] !== destinationLngLat[0] ||
+      last.destination[1] !== destinationLngLat[1];
     const movedFar =
       !last ||
-      haversineDistanceMeters(
-        { latitude: last.from[1], longitude: last.from[0] },
-        localLocation,
-      ) > REROUTE_THRESHOLD_METERS;
+      haversineDistanceMeters({ latitude: last.from[1], longitude: last.from[0] }, localLocation) >
+        REROUTE_THRESHOLD_METERS;
 
     if (!destinationChanged && !movedFar) {
       return;
@@ -239,23 +205,23 @@ export default function RiderMap({
       latitude: destinationLngLat[1],
       longitude: destinationLngLat[0],
     }).then(result => {
-        if (!cancelled) {
-          if (result.ok) {
-            setRoadRoute(result.route);
-            setRouteStatus('road');
-            lastSuccessfulRouteRef.current = {
-              from: currentFrom,
-              destination: destinationLngLat,
-            };
-          } else {
-            console.warn(`Route unavailable: ${result.reason}`);
-            setRoadRoute(null);
-            setRouteStatus('fallback');
-            setRouteError(result.reason);
-            retryTimer = setTimeout(() => setRouteRetry(value => value + 1), ROUTE_RETRY_MS);
-          }
+      if (!cancelled) {
+        if (result.ok) {
+          setRoadRoute(result.route);
+          setRouteStatus('road');
+          lastSuccessfulRouteRef.current = {
+            from: currentFrom,
+            destination: destinationLngLat,
+          };
+        } else {
+          console.warn(`Route unavailable: ${result.reason}`);
+          setRoadRoute(null);
+          setRouteStatus('fallback');
+          setRouteError(result.reason);
+          retryTimer = setTimeout(() => setRouteRetry(value => value + 1), ROUTE_RETRY_MS);
         }
-      });
+      }
+    });
     return () => {
       cancelled = true;
       clearTimeout(retryTimer);
@@ -266,7 +232,9 @@ export default function RiderMap({
     if (!roadRoute) {
       return null;
     }
-    const label = `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(roadRoute.durationSeconds)}`;
+    const label = `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(
+      roadRoute.durationSeconds,
+    )}`;
     return {
       type: 'Feature' as const,
       geometry: { type: 'LineString' as const, coordinates: roadRoute.coordinates },
@@ -279,11 +247,6 @@ export default function RiderMap({
     return () => clearInterval(interval);
   }, []);
 
-  // Follows the rider's live position as it updates -- starts enabled, and only the FIRST fix
-  // forces a zoom level (CENTER_ZOOM, a wide establishing view); every fix after that just
-  // re-centers, leaving whatever zoom the rider currently has alone. Any manual map gesture
-  // (onRegionWillChange's userInteraction) switches this off so the camera stops yanking back
-  // mid-pan; "Center Me" is the only thing that switches it back on.
   const hasCenteredOnceRef = useRef(false);
   const autoFollowRef = useRef(true);
   useEffect(() => {
@@ -304,15 +267,11 @@ export default function RiderMap({
     }
   }, [localLocation]);
 
-  // Bumped by every map-control press, so a slow precise fix from "Center Me" can't yank the
-  // camera away after the rider has since pressed something else.
   const cameraIntentRef = useRef(0);
 
   const handleFitGroup = useCallback(() => {
     cameraIntentRef.current += 1;
     autoFollowRef.current = false;
-    // Every rider still in the ride, however far apart -- and only riders: the destination
-    // is left out so the view frames the group, not the route.
     const points: LngLat[] = validLocations.filter(location => location.connected).map(toLngLat);
 
     if (points.length === 0) {
@@ -329,8 +288,6 @@ export default function RiderMap({
       return;
     }
 
-    // Generous padding zooms out a little past the tightest fit, so riders at the edges sit
-    // comfortably inside the view instead of under the HUD, controls or bottom panel.
     cameraRef.current?.fitBounds(bounds, {
       padding: {
         top: topInset + FIT_GROUP_MARGIN,
@@ -353,8 +310,6 @@ export default function RiderMap({
   const handleCenterMe = useCallback(() => {
     const intent = ++cameraIntentRef.current;
     autoFollowRef.current = true;
-    // Jump to the last shared fix right away, then refine with a fresh high-accuracy GPS fix:
-    // the shared one is deliberately coarse (battery-balanced, only updated every 15 m).
     if (localLocation) {
       cameraRef.current?.easeTo({
         center: toLngLat(localLocation),
@@ -373,9 +328,7 @@ export default function RiderMap({
           duration: CAMERA_ANIMATION_MS,
         });
       },
-      () => {
-        // No precise fix (GPS off, indoors, timed out) -- the jump above is the best we have.
-      },
+      () => {},
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 },
     );
   }, [localLocation]);
@@ -386,8 +339,6 @@ export default function RiderMap({
         style={styles.map}
         mapStyle={MAPTILER_STYLE_URL}
         onRegionWillChange={event => {
-          // Switch auto-follow off the instant a drag/pinch/rotate starts -- not onRegionDidChange,
-          // which only fires once the gesture has already finished moving the camera around.
           if (event.nativeEvent.userInteraction) {
             autoFollowRef.current = false;
           }
@@ -400,20 +351,10 @@ export default function RiderMap({
         <Camera
           ref={cameraRef}
           initialViewState={
-            localLocation
-              ? { center: toLngLat(localLocation), zoom: INITIAL_ZOOM }
-              : { zoom: 2 }
+            localLocation ? { center: toLngLat(localLocation), zoom: INITIAL_ZOOM } : { zoom: 2 }
           }
         />
         {roadRouteGeoJSON ? (
-          // Real road-following route (OSRM). Solid + blue, the way an actual route is
-          // conventionally drawn -- visually distinct from the dashed "direct" fallback
-          // below, so a rider can tell at a glance which one they're looking at.
-          // `key` (not just `id`) is required here: MapLibre's GeoJSONSource throws if its
-          // `id` prop changes after mount, and without a distinct `key` React reconciles
-          // this ternary's two branches as updates to the same instance rather than an
-          // unmount/remount -- confirmed on-device (`Render Error: \`id\` cannot be changed`)
-          // the moment the OSRM fetch resolved and this branch swapped in.
           <GeoJSONSource key="roadRoute" id="roadRouteSource" data={roadRouteGeoJSON}>
             <Layer
               id="roadRouteLine"
@@ -430,13 +371,14 @@ export default function RiderMap({
                 'text-size': 12,
                 'text-offset': [0, -1.2],
               }}
-              paint={{ 'text-color': '#e5e7eb', 'text-halo-color': '#111827', 'text-halo-width': 1.5 }}
+              paint={{
+                'text-color': '#e5e7eb',
+                'text-halo-color': '#111827',
+                'text-halo-width': 1.5,
+              }}
             />
           </GeoJSONSource>
         ) : straightLineGeoJSON ? (
-          // Fallback while the real route hasn't loaded yet (or OSRM's public demo server
-          // is unavailable) -- deliberately dashed and gray, and labeled "direct" rather than
-          // with a turn-by-turn distance, so it never reads as an actual route.
           <GeoJSONSource key="straightLine" id="straightLineSource" data={straightLineGeoJSON}>
             <Layer
               id="straightLine"
@@ -471,14 +413,11 @@ export default function RiderMap({
           const isLocal = location.participantIdentity === localIdentity;
           const freshness = classifyFreshness(location, nowMs);
           const distance =
-            !isLocal && localLocation
-              ? haversineDistanceMeters(localLocation, location)
-              : null;
+            !isLocal && localLocation ? haversineDistanceMeters(localLocation, location) : null;
           const distanceToDestination = destination
             ? haversineDistanceMeters(location, destination)
             : null;
-          const fallingBehind =
-            freshness !== 'offline' && isFallingBehind(location, groupCentroid);
+          const fallingBehind = freshness !== 'offline' && isFallingBehind(location, groupCentroid);
           const markerKey = `${location.participantIdentity || 'rider'}-${index}`;
 
           return (
@@ -533,13 +472,19 @@ export default function RiderMap({
                 {routeStatus === 'loading'
                   ? 'Finding road route...'
                   : routeStatus === 'road' && roadRoute
-                    ? `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(roadRoute.durationSeconds)}`
-                    : `Direct-line fallback${routeError ? ` · ${routeError}` : ''}`}
+                  ? `${(roadRoute.distanceMeters / 1000).toFixed(1)} km · ${formatDuration(
+                      roadRoute.durationSeconds,
+                    )}`
+                  : `Direct-line fallback${routeError ? ` · ${routeError}` : ''}`}
               </Text>
             ) : null}
           </View>
           {routeStatus === 'fallback' && localLocation ? (
-            <Pressable style={styles.navAction} onPress={() => setRouteRetry(value => value + 1)} hitSlop={6}>
+            <Pressable
+              style={styles.navAction}
+              onPress={() => setRouteRetry(value => value + 1)}
+              hitSlop={6}
+            >
               <Text style={styles.navActionText}>Retry</Text>
             </Pressable>
           ) : null}
@@ -593,7 +538,11 @@ function MapControl({
 }) {
   return (
     <Pressable
-      style={({ pressed }) => [styles.controlButton, disabled && styles.controlButtonDisabled, pressed && styles.controlPressed]}
+      style={({ pressed }) => [
+        styles.controlButton,
+        disabled && styles.controlButtonDisabled,
+        pressed && styles.controlPressed,
+      ]}
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
@@ -604,13 +553,16 @@ function MapControl({
   );
 }
 
-/** Soft expanding ring behind a rider who is currently talking. Native-driven, and only runs
- * while `active` -- nothing animates for a quiet rider. */
 function PulseRing({ color }: { color: string }) {
   const progress = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     const loop = Animated.loop(
-      Animated.timing(progress, { toValue: 1, duration: 1200, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+      Animated.timing(progress, {
+        toValue: 1,
+        duration: 1200,
+        easing: Easing.out(Easing.quad),
+        useNativeDriver: true,
+      }),
     );
     loop.start();
     return () => loop.stop();
@@ -643,9 +595,6 @@ interface RiderMarkerProps {
   talking: boolean;
 }
 
-/** Below this, a reported heading is more likely GPS/compass jitter on a
- * stopped bike than a real direction of travel -- the arrow only appears
- * once the rider is genuinely moving. */
 const MIN_HEADING_SPEED_MPS = 0.5;
 
 function RiderMarker({
@@ -670,28 +619,19 @@ function RiderMarker({
     location.speed >= MIN_HEADING_SPEED_MPS &&
     !offline;
 
-  // State is never colour-only: each non-default state also carries a text tag or glyph.
   const tag = offline ? 'OFFLINE' : fallingBehind ? 'FAR' : freshness === 'stale' ? 'STALE' : null;
   const ring = isLocal
     ? brand.primary
     : offline
-      ? brand.outline
-      : talking
-        ? brand.success
-        : fallingBehind || freshness === 'stale'
-          ? brand.warning
-          : brand.success;
+    ? brand.outline
+    : talking
+    ? brand.success
+    : fallingBehind || freshness === 'stale'
+    ? brand.warning
+    : brand.success;
   const tagColor = offline ? brand.outline : brand.warning;
   const firstName = displayName.split(' ')[0];
 
-  // The label (namePill/detailCard) is a normal in-flow sibling stacked above markerBox, not an
-  // absolutely-positioned overlay inside it -- a label floating outside its parent's own bounds
-  // inside a native marker-annotation host view is what caused both the earlier "y..." truncation
-  // and, once numberOfLines was removed to stop that, letters wrapping one-per-line instead.
-  // Normal flow layout has no such edge case. markerBox itself (the avatar and everything
-  // positioned relative to it -- aura, pulse, heading arrow, talk badge) is untouched below; only
-  // the Marker's anchor changes from "center" to "bottom" to compensate for the stack now being
-  // taller than just the avatar (see the anchor="bottom" change at this component's call site).
   return (
     <View style={styles.markerStack}>
       {selected ? (
@@ -709,7 +649,9 @@ function RiderMarker({
           {location.accuracy !== undefined ? (
             <Text style={styles.detailLine}>Accuracy +/-{Math.round(location.accuracy)}m</Text>
           ) : null}
-          {distance !== null ? <Text style={styles.detailLine}>{formatDistance(distance)}</Text> : null}
+          {distance !== null ? (
+            <Text style={styles.detailLine}>{formatDistance(distance)}</Text>
+          ) : null}
           {distanceToDestination !== null ? (
             <Text style={styles.detailLine}>
               {isLocal ? '' : `${firstName}: `}
@@ -719,7 +661,6 @@ function RiderMarker({
         </View>
       ) : (
         <View style={styles.namePill}>
-          {/* No numberOfLines here deliberately -- see the comment above this return. */}
           <Text style={styles.namePillText}>
             {isLocal ? 'You' : firstName}
             {distance !== null ? `  ${formatDistance(distance)}` : ''}
@@ -847,8 +788,6 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   navActionText: { ...homeType.labelMedium, color: brand.primary },
-  // Plain column flow, sized to its content (the label plus markerBox below it) -- deliberately
-  // not position:'absolute' anywhere inside it; see the comment in RiderMarker's return.
   markerStack: {
     alignItems: 'center',
   },
@@ -899,9 +838,6 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
   },
-  /** CSS-triangle trick: a 0x0 box with transparent left/right borders and a colored bottom
-   * border renders as an upward-pointing triangle, rotated by the rider's compass heading
-   * (0deg = north = "up", clockwise). Sits just outside the avatar ring. */
   headingArrow: {
     position: 'absolute',
     top: -6,
@@ -927,8 +863,6 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: brand.inputBorder,
   },
-  // flexShrink: 0 -- never let the name itself be squeezed by the "OFFLINE"/"FAR"/"STALE" tag
-  // sharing this row; the pill grows to fit both (up to maxWidth above) instead.
   namePillText: { ...homeType.labelMedium, color: brand.textPrimary, flexShrink: 0 },
   tagText: { ...homeType.labelSmall },
   detailCard: {

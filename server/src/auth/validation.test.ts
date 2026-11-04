@@ -16,7 +16,12 @@ describe('normalizeEmail', () => {
 });
 
 describe('emailError', () => {
-  for (const ok of ['alex@gmail.com', 'alex.rider99@gmail.com', 'a@gmail.com', `${'a'.repeat(30)}@gmail.com`]) {
+  for (const ok of [
+    'alex@gmail.com',
+    'alex.rider99@gmail.com',
+    'a@gmail.com',
+    `${'a'.repeat(30)}@gmail.com`,
+  ]) {
     it(`accepts ${ok}`, () => assert.equal(emailError(ok), null));
   }
 
@@ -57,7 +62,6 @@ describe('passwordError', () => {
   it('rejects more than 72 bytes, which bcrypt would silently truncate', () => {
     assert.equal(passwordError('a'.repeat(72)), null);
     assert.match(passwordError('a'.repeat(73)) ?? '', /at most 72/);
-    // 37 two-byte characters = 74 bytes despite being only 37 characters long.
     assert.match(passwordError('é'.repeat(37)) ?? '', /at most 72/);
   });
 });

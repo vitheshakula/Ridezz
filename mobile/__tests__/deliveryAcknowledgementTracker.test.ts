@@ -98,7 +98,10 @@ describe('DeliveryAcknowledgementTracker', () => {
       reason: 'duplicate_ack',
     });
     await expect(
-      tracker.handle(acknowledgement({ id: 'ack-unknown', originalMessageId: 'unknown' }), verifier),
+      tracker.handle(
+        acknowledgement({ id: 'ack-unknown', originalMessageId: 'unknown' }),
+        verifier,
+      ),
     ).resolves.toEqual({ accepted: false, reason: 'unknown_ack' });
   });
 
@@ -107,7 +110,9 @@ describe('DeliveryAcknowledgementTracker', () => {
     await expect(
       tracker.handle(acknowledgement({ signature: 'forged' }), verifier),
     ).resolves.toEqual({ accepted: false, reason: 'unauthenticated_ack' });
-    await expect(tracker.handle(acknowledgement({ id: 'ack-no-verifier' }), undefined)).resolves.toEqual({
+    await expect(
+      tracker.handle(acknowledgement({ id: 'ack-no-verifier' }), undefined),
+    ).resolves.toEqual({
       accepted: false,
       reason: 'unauthenticated_ack',
     });

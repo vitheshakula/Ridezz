@@ -2,19 +2,27 @@ import { AuthError, describeAuthError, errorCode, isUnauthorized } from '../src/
 
 const FALLBACK = 'Sign in failed. Please try again.';
 
-/** Shaped like the errors axios throws, without importing axios. */
 function axiosError(response?: { status?: number; data?: unknown }, code?: string) {
   return Object.assign(new Error('Request failed'), { isAxiosError: true, response, code });
 }
 
 describe('describeAuthError', () => {
   it('shows the message the server chose to send', () => {
-    expect(describeAuthError(axiosError({ status: 401, data: { message: 'Invalid credentials.' } }), FALLBACK)).toBe(
-      'Invalid credentials.',
-    );
-    expect(describeAuthError(axiosError({ status: 409, data: { message: 'An account with this email already exists.' } }), FALLBACK)).toBe(
-      'An account with this email already exists.',
-    );
+    expect(
+      describeAuthError(
+        axiosError({ status: 401, data: { message: 'Invalid credentials.' } }),
+        FALLBACK,
+      ),
+    ).toBe('Invalid credentials.');
+    expect(
+      describeAuthError(
+        axiosError({
+          status: 409,
+          data: { message: 'An account with this email already exists.' },
+        }),
+        FALLBACK,
+      ),
+    ).toBe('An account with this email already exists.');
   });
 
   it('shows a message the app wrote (AuthError)', () => {
@@ -24,7 +32,9 @@ describe('describeAuthError', () => {
   });
 
   it('explains a request that never reached the server', () => {
-    expect(describeAuthError(axiosError(undefined), FALLBACK)).toBe("Can't reach the server. Check your connection.");
+    expect(describeAuthError(axiosError(undefined), FALLBACK)).toBe(
+      "Can't reach the server. Check your connection.",
+    );
   });
 
   it('explains a timeout differently from an unreachable server', () => {
@@ -34,20 +44,27 @@ describe('describeAuthError', () => {
   });
 
   it('gives a plain message for a server error with no usable body', () => {
-    expect(describeAuthError(axiosError({ status: 500, data: '<html>boom</html>' }), FALLBACK)).toBe(
-      'The server had a problem. Try again in a moment.',
-    );
+    expect(
+      describeAuthError(axiosError({ status: 500, data: '<html>boom</html>' }), FALLBACK),
+    ).toBe('The server had a problem. Try again in a moment.');
   });
 
   it('never shows raw internals -- unknown errors become the fallback', () => {
-    expect(describeAuthError(new Error('TypeError: undefined is not an object (evaluating x.y)'), FALLBACK)).toBe(FALLBACK);
+    expect(
+      describeAuthError(
+        new Error('TypeError: undefined is not an object (evaluating x.y)'),
+        FALLBACK,
+      ),
+    ).toBe(FALLBACK);
     expect(describeAuthError('some string', FALLBACK)).toBe(FALLBACK);
     expect(describeAuthError(null, FALLBACK)).toBe(FALLBACK);
     expect(describeAuthError(undefined, FALLBACK)).toBe(FALLBACK);
   });
 
   it('ignores a non-string message in the response body', () => {
-    expect(describeAuthError(axiosError({ status: 400, data: { message: { nested: true } } }), FALLBACK)).toBe(FALLBACK);
+    expect(
+      describeAuthError(axiosError({ status: 400, data: { message: { nested: true } } }), FALLBACK),
+    ).toBe(FALLBACK);
   });
 });
 
@@ -64,7 +81,9 @@ describe('isUnauthorized', () => {
 
 describe('errorCode', () => {
   it('reads the machine-readable code the server sent', () => {
-    expect(errorCode(axiosError({ status: 404, data: { message: 'x', code: 'ACCOUNT_NOT_FOUND' } }))).toBe('ACCOUNT_NOT_FOUND');
+    expect(
+      errorCode(axiosError({ status: 404, data: { message: 'x', code: 'ACCOUNT_NOT_FOUND' } })),
+    ).toBe('ACCOUNT_NOT_FOUND');
   });
 
   it('is null when there is no code, or it is not a string', () => {

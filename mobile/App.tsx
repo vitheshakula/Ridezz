@@ -1,9 +1,3 @@
-/**
- * Rideaze - Motorcycle group intercom
- *
- * @format
- */
-
 import React, { useCallback, useEffect, useState } from 'react';
 import { StatusBar } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -32,9 +26,6 @@ function MainContent() {
 
   const handleLeave = useCallback(() => setSession(null), []);
 
-  // The native splash (logo on brand.bg, from MainActivity.kt) is still covering the screen at
-  // this point. Only hide it once the saved sign-in has actually been restored -- otherwise a
-  // returning rider would see a flash of the logged-out Dashboard before JoinScreen takes over.
   useEffect(() => {
     if (!isLoading) {
       BootSplash.hide({ fade: true });
@@ -42,45 +33,32 @@ function MainContent() {
   }, [isLoading]);
 
   if (isLoading) {
-    return null; // native splash is still showing; nothing to render yet
+    return null;
   }
 
   const navigation = {
     navigate: (screen: ScreenName) => setCurrentScreen(screen),
   };
 
-  // 1. In active voice room
   if (session) {
     return <RideScreen session={session} onLeave={handleLeave} />;
   }
 
-  // 2a. Logged-in rider's profile
   if (user && currentScreen === 'ProfileScreen') {
     return <ProfileScreen navigation={navigation} />;
   }
 
-  // 2. Logged-in user or directed to JoinScreen
   if (user || currentScreen === 'JoinScreen') {
     return <JoinScreen onJoined={setSession} navigation={navigation} />;
   }
 
-  // 3. Unauthenticated auth stack
   return (
     <>
       <StatusBar barStyle="light-content" />
-      {currentScreen === 'Dashboard' && (
-        <Dashboard navigation={navigation} />
-      )}
-      {currentScreen === 'LoginPage' && (
-        <LoginPage navigation={navigation} />
-      )}
-      {currentScreen === 'SignupPage' && (
-        <SignupPage navigation={navigation} />
-      )}
-      {currentScreen === 'ForgotPassword' && (
-        <ForgotPassword navigation={navigation} />
-      )}
-      
+      {currentScreen === 'Dashboard' && <Dashboard navigation={navigation} />}
+      {currentScreen === 'LoginPage' && <LoginPage navigation={navigation} />}
+      {currentScreen === 'SignupPage' && <SignupPage navigation={navigation} />}
+      {currentScreen === 'ForgotPassword' && <ForgotPassword navigation={navigation} />}
     </>
   );
 }

@@ -48,7 +48,6 @@ describe('SeenMessageCache: claims', () => {
   });
 
   test('separate nodes keep separate caches', () => {
-    // A sends M1; B and C each accept it; B then hears M1 again via C.
     const b = createSeenMessageCache();
     const c = createSeenMessageCache();
 
@@ -72,15 +71,11 @@ describe('SeenMessageCache: path and transport independence', () => {
   });
 
   test('D accepts a message via A→B→D once and rejects the copy via A→C→D', () => {
-    // Topology: A reaches D over two paths, A→B→D and A→C→D. Each relay produces a copy with a
-    // different hopCount, carried over whatever transport each link happens to use. D must
-    // process exactly one copy: dedup keys on the message id, never on path or transport.
     const viaB = relayRideMessage(relayRideMessage(original, NOW + 100)!, NOW + 200)!;
     const viaC = relayRideMessage(relayRideMessage(original, NOW + 150)!, NOW + 400)!;
     expect(viaB.hopCount).toBe(2);
     expect(viaC.hopCount).toBe(2);
 
-    // e.g. B→D over a byte transport, C→D over a string transport.
     const atDFromB = parseRideMessage(encodeRideMessage(viaB), NOW + 250)!;
     const atDFromC = parseRideMessage(serializeRideMessage(viaC), NOW + 450)!;
     const d = createSeenMessageCache();
@@ -112,7 +107,6 @@ describe('SeenMessageCache: expiry', () => {
 
     cache.prune(EXPIRES);
     expect(cache.size).toBe(0);
-    // Only a copy that is itself still live can re-enter.
     expect(cache.claim('m1', EXPIRES + 1_000, EXPIRES)).toBe('accepted');
   });
 
@@ -138,7 +132,6 @@ describe('SeenMessageCache: expiry', () => {
     expect(cache.claim('M1', EXPIRES, NOW)).toBe('accepted');
     expect(cache.claim('M1', EXPIRES + 10_000, NOW + 1)).toBe('duplicate');
 
-    // Stored lifetime is still EXPIRES: live one ms before it, gone exactly at it.
     cache.prune(EXPIRES - 1);
     expect(cache.size).toBe(1);
     cache.prune(EXPIRES);
@@ -192,7 +185,7 @@ describe('SeenMessageCache: expiry', () => {
       cache.prune(NOW + 15);
       expect(cache.size).toBe(1);
     }
-    cache.prune(NOW + 5); // clock stepping backwards neither restores nor removes entries
+    cache.prune(NOW + 5);
     expect(cache.size).toBe(1);
     expect(cache.claim('b', NOW + 20, NOW + 15)).toBe('duplicate');
     for (let i = 0; i < 3; i++) {
@@ -243,7 +236,6 @@ describe('SeenMessageCache: capacity and eviction', () => {
     expect(cache.claim('b', EXPIRES, NOW + 4)).toBe('duplicate');
     expect(cache.claim('c', EXPIRES, NOW + 4)).toBe('duplicate');
     expect(cache.claim('d', EXPIRES, NOW + 4)).toBe('duplicate');
-    // 'a' lost its protection, so it is accepted again (evicting 'b', the next earliest).
     expect(cache.claim('a', EXPIRES, NOW + 4)).toBe('accepted');
     expect(cache.claim('b', EXPIRES, NOW + 5)).toBe('accepted');
   });
@@ -294,7 +286,7 @@ describe('SeenMessageCache: capacity and eviction', () => {
     expect(cache.claim('a', EXPIRES + 10_000, NOW + 1)).toBe('duplicate');
     expect(cache.claim('a', NOW + 100, NOW + 1)).toBe('duplicate');
 
-    cache.claim('c', EXPIRES, NOW + 2); // evicts 'a', still the earliest claim
+    cache.claim('c', EXPIRES, NOW + 2);
 
     expect(cache.size).toBe(2);
     expect(cache.claim('b', EXPIRES, NOW + 3)).toBe('duplicate');
@@ -315,7 +307,7 @@ describe('SeenMessageCache: capacity and eviction', () => {
   test('remains correct when eviction removed the earliest-expiring entry', () => {
     const cache = createSeenMessageCache(1);
     cache.claim('a', NOW + 10, NOW);
-    cache.claim('b', NOW + 1_000, NOW); // evicts 'a', the earliest expiry
+    cache.claim('b', NOW + 1_000, NOW);
 
     expect(cache.claim('b', NOW + 1_000, NOW + 20)).toBe('duplicate');
     expect(cache.size).toBe(1);
@@ -376,8 +368,9 @@ describe('SeenMessageCache: invalid input', () => {
 
   test('invalid input never throws', () => {
     const cache = createSeenMessageCache();
-    expect(() => cache.claim(undefined as never, undefined as never, undefined as never)).not
-      .toThrow();
+    expect(() =>
+      cache.claim(undefined as never, undefined as never, undefined as never),
+    ).not.toThrow();
     expect(() => cache.prune(undefined as never)).not.toThrow();
   });
 });
@@ -407,7 +400,6 @@ describe('SeenMessageCache: no background work', () => {
   test('nothing changes between operations as time passes', () => {
     const cache = createSeenMessageCache();
     cache.claim('a', NOW + 10, NOW);
-    // Without an operation at a later `now`, the expired entry is still held.
     expect(cache.size).toBe(1);
     cache.prune(NOW + 10);
     expect(cache.size).toBe(0);

@@ -1,8 +1,3 @@
-// Manual Jest mock for @react-native-google-signin/google-signin.
-//
-// The real package talks to the Google Sign-In SDK through a native module that doesn't exist under
-// Jest. Only the pieces AuthService uses are provided; tests that care about the sign-in flow
-// (authService.test.ts) install their own, more specific mock.
 export const GoogleSignin = {
   configure: jest.fn(),
   hasPlayServices: jest.fn(async () => true),

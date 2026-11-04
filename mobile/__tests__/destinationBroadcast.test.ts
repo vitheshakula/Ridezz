@@ -3,7 +3,6 @@ import { createDestinationBroadcaster } from '../src/services/destinationBroadca
 const fort = { name: 'Golconda Fort, Hyderabad', latitude: 17.3833, longitude: 78.4011 };
 const charminar = { name: 'Charminar, Hyderabad', latitude: 17.3616, longitude: 78.4747 };
 
-/** The error LiveKit raises while this phone has no peer connection. */
 const pcClosed = () => new Error('PC manager is closed');
 
 describe('createDestinationBroadcaster', () => {
@@ -69,8 +68,8 @@ describe('createDestinationBroadcaster', () => {
   it('only ever retries the latest destination, not one it was replaced by', async () => {
     const publish = jest.fn().mockRejectedValueOnce(pcClosed()).mockResolvedValue(undefined);
     const broadcaster = createDestinationBroadcaster(publish);
-    await broadcaster.send(fort); // fails
-    await broadcaster.send(charminar); // succeeds; replaces the one that never went out
+    await broadcaster.send(fort);
+    await broadcaster.send(charminar);
 
     expect(broadcaster.hasPending()).toBe(false);
     publish.mockClear();
@@ -82,7 +81,7 @@ describe('createDestinationBroadcaster', () => {
     const publish = jest.fn().mockResolvedValueOnce(undefined).mockRejectedValueOnce(pcClosed());
     const broadcaster = createDestinationBroadcaster(publish);
     await broadcaster.send(fort);
-    await broadcaster.send(charminar); // fails
+    await broadcaster.send(charminar);
 
     publish.mockReset();
     publish.mockResolvedValue(undefined);
@@ -100,8 +99,8 @@ describe('createDestinationBroadcaster', () => {
       .mockRejectedValueOnce(pcClosed());
     const broadcaster = createDestinationBroadcaster(publish);
 
-    const older = broadcaster.send(fort); // still in flight
-    await broadcaster.send(charminar); // newer one fails
+    const older = broadcaster.send(fort);
+    await broadcaster.send(charminar);
     finishOlder();
     await older;
 

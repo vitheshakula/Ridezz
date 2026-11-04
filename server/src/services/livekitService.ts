@@ -5,7 +5,6 @@ export interface LiveKitCredentials {
   apiSecret: string;
 }
 
-/** Creates a token for one rider to join and participate in a ride's LiveKit room. */
 export async function createLiveKitToken(
   credentials: LiveKitCredentials,
   roomCode: string,

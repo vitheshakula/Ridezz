@@ -14,13 +14,6 @@ function presenceMessage(event: PresenceEvent): string {
   }
 }
 
-/** Turns raw remote-rider membership changes into a queue of non-blocking
- * "X joined" / "X rejoined" / "X left the ride" messages, shown one at a time.
- * Riders already in the room when we joined are not announced.
- *
- * `onEvent`, if given, fires once per real join/rejoin/left transition -- the
- * same de-duplicated events the toast queue is built from -- so callers (e.g.
- * audio cues) never need to re-derive presence transitions themselves. */
 export function useRiderPresenceToasts(
   currentRiders: RiderIdentity[],
   onEvent?: (event: PresenceEvent) => void,
@@ -34,10 +27,7 @@ export function useRiderPresenceToasts(
   const onEventRef = useRef(onEvent);
   onEventRef.current = onEvent;
 
-  const identityKey = useMemo(
-    () => currentRiders.map(r => r.identity).join(','),
-    [currentRiders],
-  );
+  const identityKey = useMemo(() => currentRiders.map(r => r.identity).join(','), [currentRiders]);
 
   useEffect(() => {
     if (isFirstRunRef.current) {
@@ -71,8 +61,6 @@ export function useRiderPresenceToasts(
         }, TOAST_DURATION_MS);
       }
     }
-    // currentRiders is intentionally excluded: identityKey is the real dependency
-    // (a stable string), while currentRiders itself is a new array every render.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [identityKey]);
 

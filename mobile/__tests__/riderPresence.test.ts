@@ -38,7 +38,10 @@ describe('sortByJoinOrder', () => {
   });
 
   test('does not mutate the input array', () => {
-    const riders = [{ identity: 'b', joinedAt: new Date(2) }, { identity: 'a', joinedAt: new Date(1) }];
+    const riders = [
+      { identity: 'b', joinedAt: new Date(2) },
+      { identity: 'a', joinedAt: new Date(1) },
+    ];
     const original = [...riders];
     sortByJoinOrder(riders);
     expect(riders).toEqual(original);

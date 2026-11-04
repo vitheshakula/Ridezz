@@ -14,10 +14,8 @@ import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
-/** Encrypted, app-private persistence for the connectivity outbox only. */
 class RideazeSecureOutboxModule(reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
-
   private val preferences = reactContext.getSharedPreferences(PREFERENCES, 0)
 
   override fun getName(): String = NAME

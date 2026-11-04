@@ -16,10 +16,7 @@ describe('appendDiagnosticEvent', () => {
   });
 
   it('preserves order, oldest first', () => {
-    const result = appendDiagnosticEvent(
-      [makeEvent('a', 1), makeEvent('b', 2)],
-      makeEvent('c', 3),
-    );
+    const result = appendDiagnosticEvent([makeEvent('a', 1), makeEvent('b', 2)], makeEvent('c', 3));
     expect(result.map(e => e.message)).toEqual(['a', 'b', 'c']);
   });
 

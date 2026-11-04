@@ -15,9 +15,7 @@ import {
   type RideMessageIngressResult,
   type RideMessageIngressSource,
 } from '../src/connectivity/rideMessageIngress';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
 import type { RideMessage } from '../src/connectivity/protocol/rideMessage';
 import { encodeRideMessage } from '../src/connectivity/protocol/rideMessageCodec';
@@ -30,7 +28,6 @@ const LOCAL = 'rider-a';
 
 type Accepted = Extract<RideMessageIngressResult, { accepted: true }>;
 
-/** Directly built local state for focused routing tests (link freshness 15 s, gateway 25 s). */
 function world() {
   const gatewayState = createGatewayState({ localNodeId: LOCAL });
   const linkIdentities = createDirectLinkIdentityMap({ localNodeId: LOCAL });
@@ -144,15 +141,14 @@ describe('gateway routing: no route without a resolved, fresh direct sender', ()
     const w = world();
     w.linkIdentities.observe('nearby', 'ep-b', 'rider-b', MONO);
     w.linkIdentities.observe('nearby', 'ep-c', 'rider-c', MONO);
-    w.gatewayState.observe('rider-c', 'nearby', 0, MONO, 'rider-b'); // hop 0 must be via C
-    w.gatewayState.observe('rider-c', 'nearby', 2, MONO, 'rider-c'); // relayed via C itself
+    w.gatewayState.observe('rider-c', 'nearby', 0, MONO, 'rider-b');
+    w.gatewayState.observe('rider-c', 'nearby', 2, MONO, 'rider-c');
 
     expect(w.candidates()).toEqual([]);
   });
 
   test('never yields the local node as next hop or gateway', () => {
     const w = world();
-    // The state structures already refuse the local node; nothing they hold can produce one.
     expect(w.linkIdentities.observe('nearby', 'ep', LOCAL, MONO)).toMatchObject({
       reason: 'local_node',
     });
@@ -164,7 +160,6 @@ describe('gateway routing: no route without a resolved, fresh direct sender', ()
     });
     expect(w.candidates()).toEqual([]);
 
-    // And candidate construction guards independently, given state from another node's view.
     const foreign = createGatewayState({ localNodeId: 'rider-z' });
     const foreignLinks = createDirectLinkIdentityMap({ localNodeId: 'rider-z' });
     foreignLinks.observe('nearby', 'ep', LOCAL, MONO);
@@ -202,7 +197,6 @@ describe('gateway routing: endpoint reassignment', () => {
     expect(w.gatewayState.isKnownGateway('rider-c', MONO + 1_000)).toBe(true);
     expect(w.candidates(MONO + 1_000)).toEqual([]);
 
-    // Only a fresh advertisement handed over by D establishes a route via D.
     w.gatewayState.observe('rider-c', 'nearby', 1, MONO + 2_000, 'rider-d');
     expect(w.candidates(MONO + 2_000)).toEqual([
       route('rider-c', 'rider-d', 'nearby', 1, MONO + 2_000),
@@ -308,9 +302,8 @@ describe('gateway routing: immutability and purity', () => {
     w.linkIdentities.observe('nearby', 'ep-b', 'rider-b', MONO);
     w.gatewayState.observe('rider-c', 'nearby', 1, MONO, 'rider-b');
 
-    w.candidates(MONO + 100_000); // everything is stale at this time
+    w.candidates(MONO + 100_000);
 
-    // Still present when viewed at an earlier time: nothing was removed by reading.
     expect(w.candidates(MONO + 1)).toHaveLength(1);
     expect(w.linkIdentities.resolve('nearby', 'ep-b', MONO + 1)).toBe('rider-b');
   });
@@ -358,7 +351,6 @@ describe('gateway routing: immutability and purity', () => {
   });
 });
 
-/** One node's receive side built from the real stack. */
 function node(localNodeId: string) {
   const ingress = createRideMessageIngress({
     rideId: RIDE,
@@ -417,7 +409,7 @@ describe('gateway advertisement handler: direct-sender resolution', () => {
   test('unknown endpoint: gateway known, no route, nothing guessed from originId', () => {
     const a = node(LOCAL);
     handleHeartbeat(
-      a.receive(heartbeatFrom('rider-c'), { transportId: 'nearby' }), // presence, but no peer id
+      a.receive(heartbeatFrom('rider-c'), { transportId: 'nearby' }),
       MONO,
       a.peers,
       a.links,
@@ -459,20 +451,17 @@ describe('end to end: A ↔ B ↔ C → cloud', () => {
     const a = node(LOCAL);
     const b = node('rider-b');
 
-    // B heartbeats A directly: presence plus (nearby, endpoint-B) -> rider-b at A.
     handleHeartbeat(
       a.receive(heartbeatFrom('rider-b'), { transportId: 'nearby', peerId: 'endpoint-B' }),
       MONO,
       a.peers,
       a.links,
     );
-    // C advertises; B accepts it (direct from C) and relays it with the existing relay policy.
     const atB = b.receive(advertFrom('rider-c'), { transportId: 'nearby', peerId: 'endpoint-C' });
     const relay = decideRelay(atB.message, WALL + 50);
     if (!relay.relay) {
       throw new Error('expected B to relay');
     }
-    // A receives B's hop-1 copy from endpoint-B and resolves B as the direct sender.
     const handled = handleGatewayAdvertisement(
       a.receive(relay.message, { transportId: 'nearby', peerId: 'endpoint-B' }),
       MONO + 100,
@@ -495,10 +484,8 @@ describe('end to end: A ↔ B ↔ C → cloud', () => {
       observedAt: MONO + 100,
     });
     expect(candidates).toHaveLength(1);
-    // C is a known, routable gateway but never a direct peer of A.
     expect(a.peers.isDirectPeer('rider-c', MONO + 100)).toBe(false);
 
-    // When B's heartbeats stop, the route disappears even though C is still a known gateway.
     expect(a.gateways.isKnownGateway('rider-c', MONO + 15_000)).toBe(true);
     expect(selectGatewayRoute(a.routes(MONO + 15_000))).toBeUndefined();
   });
@@ -517,7 +504,6 @@ describe('end to end: A ↔ B ↔ C → cloud', () => {
         a.links,
       );
     }
-    // Gateway E reachable via B at hop 1; gateway C reachable directly at hop 0.
     const atB = b.receive(advertFrom('rider-e'), { transportId: 'nearby', peerId: 'ep-e' });
     const relay = decideRelay(atB.message, WALL + 50);
     handleGatewayAdvertisement(

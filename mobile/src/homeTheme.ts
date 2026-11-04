@@ -1,13 +1,3 @@
-/**
- * Design tokens for the redesigned Home screens (Dashboard, JoinScreen, Profile).
- * Kept separate from theme.ts so screens not yet redesigned keep their current look.
- *
- * Fonts: Manrope (headings/metrics) and Inter (body, labels, buttons, navigation), bundled as
- * static files in android/app/src/main/assets/fonts. On Android a family name is the file name,
- * and each weight is its own file, so weight is chosen through `font` below -- do not also set
- * `fontWeight` on these styles or Android will fake-bold the already-bold file.
- */
-
 export const brand = {
   primary: '#12CFE4',
   onPrimary: '#00363D',
@@ -48,7 +38,12 @@ export const font = {
 } as const;
 
 export const homeType = {
-  displayLarge: { fontSize: 40, lineHeight: 48, letterSpacing: -0.8, fontFamily: font.headingExtraBold },
+  displayLarge: {
+    fontSize: 40,
+    lineHeight: 48,
+    letterSpacing: -0.8,
+    fontFamily: font.headingExtraBold,
+  },
   headlineLarge: { fontSize: 32, lineHeight: 40, letterSpacing: -0.32, fontFamily: font.heading },
   headlineMedium: { fontSize: 24, lineHeight: 32, fontFamily: font.heading },
   headlineSmall: { fontSize: 20, lineHeight: 28, fontFamily: font.headingSemiBold },

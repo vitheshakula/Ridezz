@@ -128,9 +128,7 @@ describe('RideMessage ingress: dedup across paths and transports', () => {
     const { ingress } = setup();
     const bytes = encodeRideMessage(message());
 
-    expect(ingress.ingest(bytes, { transportId: 'transport-1', peerId: 'p1' }).accepted).toBe(
-      true,
-    );
+    expect(ingress.ingest(bytes, { transportId: 'transport-1', peerId: 'p1' }).accepted).toBe(true);
     expect(ingress.ingest(bytes, { transportId: 'transport-1', peerId: 'p2' })).toMatchObject({
       accepted: false,
       reason: 'duplicate',
@@ -138,9 +136,6 @@ describe('RideMessage ingress: dedup across paths and transports', () => {
   });
 
   test('SOS-123 via A→B→D is accepted; the copy via A→C→D is a duplicate', () => {
-    // A originates SOS-123. B and C each relay it to D, over whatever links they have.
-    // originId is the end-to-end origin (A) in both copies; the ingress peer is the last hop
-    // (B or C). D dedups on the message id alone, regardless of path, peer or transport.
     const sos = message({ id: 'SOS-123', type: 'sos', priority: 'critical', payload: {} });
     const viaB = relayRideMessage(sos, NOW)!;
     const viaC = relayRideMessage(sos, NOW)!;
@@ -232,7 +227,6 @@ describe('RideMessage ingress: rejections', () => {
       source: SOURCE,
     });
     expect(seenMessages.size).toBe(0);
-    // The id was not claimed: the same id for this ride is still accepted.
     expect(ingress.ingest(encodeRideMessage(message()), SOURCE).accepted).toBe(true);
   });
 
@@ -249,9 +243,10 @@ describe('RideMessage ingress: rejections', () => {
 
   test('ride id comparison is case-sensitive', () => {
     const { ingress } = setup({ rideId: 'Ride-A' });
-    expect(
-      ingress.ingest(encodeRideMessage(message({ rideId: 'ride-a' })), SOURCE),
-    ).toMatchObject({ accepted: false, reason: 'wrong_ride' });
+    expect(ingress.ingest(encodeRideMessage(message({ rideId: 'ride-a' })), SOURCE)).toMatchObject({
+      accepted: false,
+      reason: 'wrong_ride',
+    });
   });
 
   test('rejects a locally originated packet without consuming the cache', () => {
@@ -390,7 +385,7 @@ describe('RideMessage ingress: purity and determinism', () => {
     const bytes = encodeRideMessage(message());
 
     expect(ingress.ingest(bytes, SOURCE).accepted).toBe(true);
-    now = NOW + TTL; // expired: the codec rejects before dedup is consulted
+    now = NOW + TTL;
     expect(ingress.ingest(bytes, SOURCE)).toMatchObject({ reason: 'invalid' });
   });
 
@@ -403,7 +398,6 @@ describe('RideMessage ingress: purity and determinism', () => {
     ];
     try {
       const { ingress } = setup();
-      // Relayable (hopCount 0 < maxHops 3), yet ingress must only decide acceptance.
       const result = ingress.ingest(encodeRideMessage(message()), SOURCE);
 
       expect(result.accepted).toBe(true);
@@ -469,7 +463,6 @@ describe('RideMessage ingress: session scoping', () => {
     const inNewRide = encodeRideMessage(message({ id: 'X', rideId: '22222' }));
 
     expect(newRide.ingress.ingest(inNewRide, SOURCE).accepted).toBe(true);
-    // The old session never accepts the new ride's traffic.
     expect(oldRide.ingress.ingest(inNewRide, SOURCE)).toMatchObject({ reason: 'wrong_ride' });
   });
 });

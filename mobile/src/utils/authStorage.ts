@@ -1,12 +1,6 @@
 import type { RiderUser } from '../services/AuthService';
 import { isRoomCode } from './roomCode';
 
-/**
- * Reads a rider profile back out of storage, accepting the shape saved by earlier builds
- * (`rider_name` instead of `name`) so an upgrade doesn't sign anyone out or show them as "Rider".
- * Returns null for anything that isn't recognisably a profile -- the caller then treats the
- * rider as signed out instead of running with half a profile.
- */
 export function parseStoredUser(json: string | null): RiderUser | null {
   if (!json) {
     return null;
@@ -21,7 +15,8 @@ export function parseStoredUser(json: string | null): RiderUser | null {
     return null;
   }
   const p = raw as Record<string, unknown>;
-  const name = typeof p.name === 'string' ? p.name : typeof p.rider_name === 'string' ? p.rider_name : null;
+  const name =
+    typeof p.name === 'string' ? p.name : typeof p.rider_name === 'string' ? p.rider_name : null;
   if (typeof p.id !== 'string' || typeof p.email !== 'string' || !name) {
     return null;
   }
@@ -30,7 +25,6 @@ export function parseStoredUser(json: string | null): RiderUser | null {
     email: p.email,
     name,
     emailVerified: p.emailVerified === true,
-    // Only a well-formed code is kept; a profile saved before room codes existed just has none yet.
     ...(isRoomCode(p.roomCode) ? { roomCode: p.roomCode } : {}),
   };
 }

@@ -32,16 +32,6 @@ import {
   type RideMeshSessionOwner,
 } from './rideMeshSession';
 
-/**
- * App-side composition of the Ride Connectivity Protocol (Phase 2) on Nearby. Additive: Phase 1
- * hazards and mesh sync keep their own Nearby receive paths and wire formats untouched.
- *
- * Nearby lifecycle ownership: startAppRideMeshSession is the only way the app starts or stops
- * Nearby. It drives the one application-wide RideConnectivityClient, which starts Nearby and the
- * runtime on it, and falls back to a Phase 1-only Nearby session if the protocol cannot initialize.
- */
-
-/** Diagnostics are for device testing; set false to silence them. */
 const RIDE_CONNECTIVITY_DIAGNOSTICS = true;
 
 export function logRideConnectivity(line: string): void {
@@ -54,7 +44,6 @@ export function logRideConnectivity(line: string): void {
   }
 }
 
-/** One secure identity per ride session. Throws if secure randomness is unavailable. */
 export function createAppRideNodeIdentity(): RideNodeIdentity {
   return createRideNodeIdentity(createRuntimeRideMessageIdGenerator());
 }
@@ -69,11 +58,6 @@ function describeNearbyStartError(error: unknown): NearbyStartError {
   });
 }
 
-/**
- * nearbyTransport as the client sees it: identical, except it remembers the native start
- * rejection (e.g. "Bluetooth is off...") that the client deliberately sanitizes away, so the ride
- * screen can still show it. Nothing else reads it.
- */
 const clientNearbyTransport: typeof nearbyTransport = {
   ...nearbyTransport,
   start(session) {
@@ -85,11 +69,6 @@ const clientNearbyTransport: typeof nearbyTransport = {
   },
 };
 
-/**
- * Public application-facing connectivity client. It owns the Nearby session lifecycle, and only one
- * owner may use the concrete Nearby transport at a time: create it only through
- * getAppRideConnectivityClient (its encrypted outbox is a single stored record, too).
- */
 function createAppRideConnectivityClient(): RideConnectivityClient {
   const outbox = createPersistentOutbox({ store: createSecureOutboxStore() });
   return createRideConnectivityClient({
@@ -98,12 +77,7 @@ function createAppRideConnectivityClient(): RideConnectivityClient {
     createNodeIdentity: createAppRideNodeIdentity,
     outbox,
     onDiagnostic: event => logRideConnectivity(JSON.stringify(event)),
-    createRuntime: ({
-      rideContext,
-      localNodeId,
-      generateMessageId,
-      onApplicationMessage,
-    }) => {
+    createRuntime: ({ rideContext, localNodeId, generateMessageId, onApplicationMessage }) => {
       let runtime: RideConnectivityRuntime | undefined;
       runtime = createRideConnectivityRuntime({
         rideId: rideContext.rideId,
@@ -117,8 +91,7 @@ function createAppRideConnectivityClient(): RideConnectivityClient {
         onApplicationMessage,
         onEvent: createConnectivityDiagnostics({
           log: logRideConnectivity,
-          getRoute: () =>
-            runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
+          getRoute: () => (runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' }),
         }),
       });
       logRideConnectivity(
@@ -132,7 +105,6 @@ function createAppRideConnectivityClient(): RideConnectivityClient {
 
 let appClient: RideConnectivityClient | undefined;
 
-/** The one application-wide connectivity client, created on first use. */
 export function getAppRideConnectivityClient(): RideConnectivityClient {
   appClient ??= createAppRideConnectivityClient();
   return appClient;
@@ -145,16 +117,14 @@ function appClientOrNull(): RideConnectivityClient | null {
     return getAppRideConnectivityClient();
   } catch (error) {
     logRideConnectivity(
-      `connectivity client unavailable: ${error instanceof Error ? error.message : 'unexpected error'}`,
+      `connectivity client unavailable: ${
+        error instanceof Error ? error.message : 'unexpected error'
+      }`,
     );
     return null;
   }
 }
 
-/**
- * Starts the ride's Nearby session (the single lifecycle owner, see rideMeshSession) and returns
- * its idempotent dispose. Call once per mounted ride session.
- */
 export function startAppRideMeshSession(callbacks: RideMeshSessionCallbacks): () => void {
   appMeshSessionOwner ??= createRideMeshSessionOwner({
     client: appClientOrNull(),
@@ -165,22 +135,11 @@ export function startAppRideMeshSession(callbacks: RideMeshSessionCallbacks): ()
   return appMeshSessionOwner.start(callbacks);
 }
 
-/**
- * @deprecated Legacy composition, no longer used by the app: startAppRideMeshSession owns Nearby
- * and the runtime now. It must never run while that session is live (it would add a second
- * runtime on the same Nearby session).
- *
- * A controller for one Nearby session of one ride. Call transportStarted() after
- * nearbyTransport.start() resolves and dispose() before nearbyTransport.stop(). Any failure to
- * create the runtime (no secure randomness, no monotonic clock) leaves the protocol off and is
- * logged; Phase 1 is unaffected.
- */
 export function createNearbyRideConnectivity({
   roomCode,
   getNodeIdentity,
 }: {
   roomCode: string;
-  /** The ride session's identity (created once per mounted ride, reused across Nearby retries). */
   getNodeIdentity: () => RideNodeIdentity;
 }): RideConnectivityController {
   return createRideConnectivityController({
@@ -198,8 +157,7 @@ export function createNearbyRideConnectivity({
         isCloudReachable: isRideCloudReachable,
         onEvent: createConnectivityDiagnostics({
           log: logRideConnectivity,
-          getRoute: () =>
-            runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' },
+          getRoute: () => (runtime ? runtime.getGatewayRoute() : { ok: false, reason: 'no_route' }),
         }),
       });
       logRideConnectivity(
@@ -217,7 +175,6 @@ export function createNearbyRideConnectivity({
 
 let devMenuRegistered = false;
 
-/** Debug builds only: adds a dev-menu item that makes THIS phone a test cloud gateway. */
 export function registerRideConnectivityDevMenu(): void {
   if (!__DEV__ || devMenuRegistered) {
     return;

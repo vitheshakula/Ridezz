@@ -1,11 +1,3 @@
-/**
- * Bounded transport sends for connectivity-layer traffic. A transport promise cannot be cancelled,
- * so the operation is raced against a timeout: when the timeout wins the result is UNKNOWN (the
- * send may still complete), and the late settlement is absorbed so it is neither reported twice
- * nor left as an unhandled rejection.
- */
-
-/** Local operational bound on one transport send (routed sendTo, control-plane broadcast). */
 export const OPERATIONAL_SEND_TIMEOUT_MS = 2_000;
 
 export type BoundedSendOutcome =

@@ -5,10 +5,6 @@ import JoinScreen from '../src/screens/JoinScreen';
 import { api, fetchProfile } from '../src/services/AuthService';
 import { geocodeDestination, searchDestinations } from '../src/services/destinationService';
 
-/**
- * JoinScreen is where two features meet: the destination / host handling, and the signed-in API
- * client. These tests pin down both, and how they interact.
- */
 const mockLogout = jest.fn();
 const mockUpdateUser = jest.fn();
 let mockAuth: {
@@ -22,7 +18,10 @@ jest.mock('../src/context/AuthContext', () => ({ useAuth: () => mockAuth }));
 jest.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
 }));
-jest.mock('../src/services/AuthService', () => ({ api: { post: jest.fn() }, fetchProfile: jest.fn() }));
+jest.mock('../src/services/AuthService', () => ({
+  api: { post: jest.fn() },
+  fetchProfile: jest.fn(),
+}));
 jest.mock('../src/services/destinationService', () => ({
   geocodeDestination: jest.fn(),
   searchDestinations: jest.fn(async () => []),
@@ -69,10 +68,11 @@ const type = (root: ReactTestInstance, placeholder: string, value: string) =>
     input(root, placeholder).props.onChangeText(value);
   });
 
-/** The pressable wrapping the Text with this exact label. */
 function pressableLabelled(root: ReactTestInstance, label: string) {
-  // The tab and the submit button can share a label (e.g. "JOIN RIDE"); the submit button renders last.
-  const text = root.findAllByType(Text).filter(t => t.props.children === label).pop();
+  const text = root
+    .findAllByType(Text)
+    .filter(t => t.props.children === label)
+    .pop();
   if (!text) {
     throw new Error(`no text "${label}"`);
   }
@@ -116,14 +116,21 @@ describe('JoinScreen', () => {
   describe('joining a room', () => {
     it('sends the code and rider name through the signed-in client, and starts the ride as a guest', async () => {
       post.mockResolvedValue(
-        roomReply({ destinationName: fort.name, destinationLat: fort.latitude, destinationLng: fort.longitude }),
+        roomReply({
+          destinationName: fort.name,
+          destinationLat: fort.latitude,
+          destinationLng: fort.longitude,
+        }),
       );
       const root = render();
       type(root, 'e.g. 54321', '54321');
       await press(root, 'JOIN RIDE');
 
-      // No hand-built Authorization header: the shared client adds the bearer token itself.
-      expect(post).toHaveBeenCalledWith('/rooms/join', { roomCode: '54321', riderName: 'Alex' }, { timeout: 8000 });
+      expect(post).toHaveBeenCalledWith(
+        '/rooms/join',
+        { roomCode: '54321', riderName: 'Alex' },
+        { timeout: 8000 },
+      );
       expect(onJoined).toHaveBeenCalledWith({
         serverUrl: 'wss://livekit.test',
         token: 'livekit-token',
@@ -155,7 +162,10 @@ describe('JoinScreen', () => {
       post.mockRejectedValue(
         Object.assign(new Error('x'), {
           isAxiosError: true,
-          response: { status: 404, data: { message: 'Ride room not found. Check the 5-digit code.' } },
+          response: {
+            status: 404,
+            data: { message: 'Ride room not found. Check the 5-digit code.' },
+          },
         }),
       );
       const root = render();
@@ -200,7 +210,9 @@ describe('JoinScreen', () => {
         },
         { timeout: 8000 },
       );
-      expect(onJoined).toHaveBeenCalledWith(expect.objectContaining({ isHost: true, destination: fort }));
+      expect(onJoined).toHaveBeenCalledWith(
+        expect.objectContaining({ isHost: true, destination: fort }),
+      );
     });
 
     it('creates a room without a destination when none is typed, and never calls the geocoder', async () => {
@@ -212,10 +224,17 @@ describe('JoinScreen', () => {
       expect(geocode).not.toHaveBeenCalled();
       expect(post).toHaveBeenCalledWith(
         '/rooms/create',
-        { riderName: 'Alex', destinationName: undefined, destinationLat: undefined, destinationLng: undefined },
+        {
+          riderName: 'Alex',
+          destinationName: undefined,
+          destinationLat: undefined,
+          destinationLng: undefined,
+        },
         { timeout: 8000 },
       );
-      expect(onJoined).toHaveBeenCalledWith(expect.objectContaining({ isHost: true, destination: null }));
+      expect(onJoined).toHaveBeenCalledWith(
+        expect.objectContaining({ isHost: true, destination: null }),
+      );
     });
 
     it('stops and explains when the destination cannot be found, without creating a room', async () => {
@@ -232,13 +251,16 @@ describe('JoinScreen', () => {
     });
 
     it('offers suggestions while typing, and a picked one is sent exactly, without geocoding again', async () => {
-      const bhel = { name: 'BHEL Township, Ramachandrapuram mandal, Telangana, India', latitude: 17.4911, longitude: 78.3056 };
+      const bhel = {
+        name: 'BHEL Township, Ramachandrapuram mandal, Telangana, India',
+        latitude: 17.4911,
+        longitude: 78.3056,
+      };
       search.mockResolvedValue([bhel]);
       post.mockResolvedValue(roomReply({ isHost: true }));
       const root = render();
       openCreateTab(root);
       type(root, 'e.g. Golconda Fort, Hyderabad', 'bhel');
-      // Suggestions wait for a pause in typing.
       await ReactTestRenderer.act(async () => {
         await new Promise<void>(resolve => setTimeout(resolve, 600));
       });
@@ -254,7 +276,12 @@ describe('JoinScreen', () => {
       expect(geocode).not.toHaveBeenCalled();
       expect(post).toHaveBeenCalledWith(
         '/rooms/create',
-        { riderName: 'Alex', destinationName: bhel.name, destinationLat: bhel.latitude, destinationLng: bhel.longitude },
+        {
+          riderName: 'Alex',
+          destinationName: bhel.name,
+          destinationLat: bhel.latitude,
+          destinationLng: bhel.longitude,
+        },
         { timeout: 8000 },
       );
     });
@@ -263,7 +290,10 @@ describe('JoinScreen', () => {
   describe('an expired or rejected sign-in', () => {
     it('signs the rider out and sends them to the sign-in screen, instead of showing an error', async () => {
       post.mockRejectedValue(
-        Object.assign(new Error('x'), { isAxiosError: true, response: { status: 401, data: { message: 'Authentication required.' } } }),
+        Object.assign(new Error('x'), {
+          isAxiosError: true,
+          response: { status: 401, data: { message: 'Authentication required.' } },
+        }),
       );
       const root = render();
       type(root, 'e.g. 54321', '54321');
@@ -348,7 +378,9 @@ describe('JoinScreen', () => {
       await press(root, 'CREATE RIDE');
 
       expect(post.mock.calls[0][1]).not.toHaveProperty('roomCode');
-      expect(onJoined).toHaveBeenCalledWith(expect.objectContaining({ roomCode: '54321', isHost: true }));
+      expect(onJoined).toHaveBeenCalledWith(
+        expect.objectContaining({ roomCode: '54321', isHost: true }),
+      );
     });
 
     it('does not ask the server for a code the account already has', async () => {
@@ -359,7 +391,12 @@ describe('JoinScreen', () => {
 
     it('fetches and saves the code for an account saved before room codes existed', async () => {
       mockAuth.user = { id: 'u1', name: 'Alex' };
-      profile.mockResolvedValue({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode: '27182' });
+      profile.mockResolvedValue({
+        id: 'u1',
+        email: 'a@gmail.com',
+        name: 'Alex',
+        roomCode: '27182',
+      });
       render();
       await ReactTestRenderer.act(async () => {});
 

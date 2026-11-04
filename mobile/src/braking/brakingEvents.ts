@@ -1,15 +1,12 @@
 import { DeviceEventEmitter } from 'react-native';
 import type { BrakeAlert } from './brakePacket';
 
-/** JS event raised for each braking alert that arrives from another rider. */
 export const PEER_BRAKING_EVENT = 'onPeerBrakingAlertReceived';
 
 export type BrakingSource = 'imu' | 'gnss_only';
 
-/** Payload of the native onHardBrakingDetected event: this phone's own hard braking. */
 export interface HardBrakingDetected {
   seq: number;
-  /** Epoch ms the deceleration threshold was crossed. */
   onsetAt: number;
   raisedAt: number;
   speedKmh: number;
@@ -19,8 +16,7 @@ export interface HardBrakingDetected {
 }
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null;
-const num = (v: unknown): number | null =>
-  typeof v === 'number' && Number.isFinite(v) ? v : null;
+const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 
 export function decodeHardBraking(raw: unknown): HardBrakingDetected | null {
   if (!isObject(raw)) {
@@ -55,7 +51,6 @@ export function decodeHardBraking(raw: unknown): HardBrakingDetected | null {
   };
 }
 
-/** One-line description of a native onHardBrakingDecision payload for the diagnostics log. */
 export function describeBrakingDecision(raw: unknown): string {
   if (!isObject(raw)) {
     return 'unreadable decision';
@@ -66,7 +61,9 @@ export function describeBrakingDecision(raw: unknown): string {
   }
   if (raw.outcome === 'confirmed') {
     const drop = num(raw.dropMps);
-    return `confirmed by GNSS${drop === null ? '' : `, speed fell ${(drop * 3.6).toFixed(0)} km/h`}`;
+    return `confirmed by GNSS${
+      drop === null ? '' : `, speed fell ${(drop * 3.6).toFixed(0)} km/h`
+    }`;
   }
   return String(raw.outcome);
 }
@@ -76,7 +73,6 @@ export interface BrakingEventHandlers {
   onDecision?: (raw: unknown) => void;
 }
 
-/** Subscribes to the native braking events. Malformed payloads are dropped. Returns an unsubscribe. */
 export function subscribeToBrakingEvents(handlers: BrakingEventHandlers): () => void {
   const subs = [
     DeviceEventEmitter.addListener('onHardBrakingDetected', (raw: unknown) => {
@@ -92,7 +88,6 @@ export function subscribeToBrakingEvents(handlers: BrakingEventHandlers): () => 
   return () => subs.forEach(sub => sub.remove());
 }
 
-/** Raises onPeerBrakingAlertReceived. Called once per accepted alert from another rider. */
 export function emitPeerBrakingAlert(alert: BrakeAlert): void {
   DeviceEventEmitter.emit(PEER_BRAKING_EVENT, alert);
 }

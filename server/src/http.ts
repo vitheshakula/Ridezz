@@ -15,7 +15,6 @@ function requestPath(req: Request): string {
   return req.originalUrl.split('?', 1)[0] || req.path;
 }
 
-/** Reuses a bounded caller-provided correlation id, or creates one local to this request. */
 export const requestIdMiddleware: RequestHandler = (req, res, next) => {
   const supplied = req.get('x-request-id')?.trim();
   req.requestId = supplied && REQUEST_ID_PATTERN.test(supplied) ? supplied : randomUUID();
@@ -23,7 +22,6 @@ export const requestIdMiddleware: RequestHandler = (req, res, next) => {
   next();
 };
 
-/** One compact completion event per request; deliberately excludes headers, query strings and bodies. */
 export const requestLogger: RequestHandler = (req, res, next) => {
   const startedAt = process.hrtime.bigint();
   const path = requestPath(req);
@@ -57,7 +55,6 @@ function safeErrorDetails(error: unknown): { errorName: string; errorMessage: st
   return { errorName: error.name, errorMessage };
 }
 
-/** Structured operational error with correlation context and bounded/redacted error text. */
 export function logRequestError(
   req: Request,
   event: string,
@@ -75,8 +72,6 @@ export function logRequestError(
   );
 }
 
-/** Express 4 ignores a rejected promise from an async handler, leaving the request hanging.
- * This forwards it to the error handler instead. */
 export function asyncHandler(
   handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>,
 ): RequestHandler {
@@ -85,14 +80,11 @@ export function asyncHandler(
   };
 }
 
-/** JSON fallthrough for requests that did not match any API route. */
 export const notFoundHandler: RequestHandler = (_req, res) => {
   res.status(404).json({ message: 'Not found.' });
 };
 
-/** Last-resort handler: a JSON body like every other error, and no internals leaked to the client. */
 export const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
-  // Malformed JSON body etc. -- the client's fault.
   if (typeof err?.status === 'number' && err.status >= 400 && err.status < 500) {
     res.status(err.status).json({ message: 'Invalid request.' });
     return;

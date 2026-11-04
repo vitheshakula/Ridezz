@@ -20,7 +20,6 @@ function deferred<T = void>() {
   return { promise, resolve, reject };
 }
 
-/** A cycle that settles immediately, counting invocations. */
 function instantCycle() {
   return jest.fn(() => Promise.resolve('done'));
 }

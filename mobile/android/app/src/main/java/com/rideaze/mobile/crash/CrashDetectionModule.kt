@@ -11,43 +11,8 @@ import com.facebook.react.bridge.WritableMap
 import com.facebook.react.modules.core.DeviceEventManagerModule
 import com.rideaze.mobile.RidezzIntercomService
 
-/**
- * JS bridge for crash / laydown detection (native module name `CrashDetection`).
- *
- * Methods (all return Promises):
- *   startMonitoring(options?)   -> { accelMaxRangeG, hasGyroscope, hasGravity, gnss, samplingHz,
- *                                    foregroundServiceActive, alreadyRunning }
- *   stopMonitoring()            -- also drops any running countdown WITHOUT sending an alert
- *   cancelCrashAlert()          -> boolean   "I'm OK" (tap or voice): cancels a running countdown
- *   sendAlertNow()              -> boolean   skip the rest of the countdown and alert now
- *   acknowledgeAlert()          -> boolean   dismiss the "alert sent" state
- *   calibrateRidingAngle()      -> { success, reason?, deltaDeg? }   pin the riding reference
- *   clearRidingCalibration()    -> boolean   back to automatic reference learning
- *   consumePendingSos()         -> SOS payload | null   an alert whose event may have been missed
- *   getStatus()                 -> { monitoring, phase, ... }
- *   simulateCrash()             -- debuggable builds only
- *   resetBrakingMount()         -> boolean   forget the learned mount axis (phone was re-mounted)
- *
- * Events (DeviceEventEmitter):
- *   onCrashCandidateDetected  { countdownMs, confidence, severity, path, evidence }
- *                             every pipeline stage agreed; start the "Are you OK?" countdown UI
- *   onCrashCancelled          { reason }      "user" | "riding_resumed"
- *   onCountdownExpired        SOS payload     dispatch to the mesh / cloud layer (see SosPayload)
- *   onCrashStateChanged       { phase }       idle | countdown | sos | cancelled
- *   onCrashDecision           { outcome, ... }   every finished candidate, for tuning
- *   onCrashMonitorStatus      { sensorsStalled, gnss }
- *   onHardBrakingDetected     { seq, onsetAt, raisedAt, speedMps, speedKmh, peakDecelG, headingDeg|null,
- *                               source }   raised at IMU onset; broadcast it to the group
- *   onHardBrakingDecision     { outcome, ... }   GNSS confirmation / rejection, for tuning
- *
- * startMonitoring options also accept { hardBraking: false } to run crash detection alone.
- *
- * The countdown is owned by the native side and keeps running if JS is busy; if the alert fires
- * while no React instance is attached, it is held and returned by consumePendingSos().
- */
 class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext), CrashMonitor.Listener {
-
   companion object {
     private const val SAMPLING_HZ = 100
   }
@@ -59,8 +24,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   @Volatile private var calibrationPromise: Promise? = null
 
   override fun getName(): String = "CrashDetection"
-
-  // --- JS API -------------------------------------------------------------------------------
 
   @ReactMethod
   fun startMonitoring(options: ReadableMap?, promise: Promise) {
@@ -75,7 +38,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
       map.putString("gnss", info.gnss.wire)
       map.putInt("samplingHz", SAMPLING_HZ)
       map.putBoolean("hardBraking", brakingEnabledFrom(options))
-      // False means Android may freeze the process once the app is backgrounded.
       map.putBoolean("foregroundServiceActive", RidezzIntercomService.isRunning)
       map.putBoolean("alreadyRunning", wasRunning)
       promise.resolve(map)
@@ -181,8 +143,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   private fun isDebuggable() =
     (reactContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
 
-  // Debug builds only: `adb shell am broadcast -a com.rideaze.mobile.SIMULATE_BRAKING` replays the
-  // 30,30,30,30 -> 5 km/h scenario so two phones can be tested without riding.
   private var debugReceiver: android.content.BroadcastReceiver? = null
 
   override fun initialize() {
@@ -213,8 +173,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     super.invalidate()
   }
 
-  // --- CrashDetectorListener (sensor thread) ------------------------------------------------
-
   override fun onStateChanged(state: CrashState) {
     val previous = lastPhase
     lastPhase = state.phase
@@ -233,7 +191,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
   }
 
   override fun onCountdownExpired(sos: SosPayload) {
-    // Held until JS consumes it, so a missed event (no React instance attached) is not lost.
     pendingSos = sos
     emit("onCountdownExpired", sosMap(sos))
   }
@@ -309,8 +266,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     )
   }
 
-  // --- helpers ------------------------------------------------------------------------------
-
   private fun failCalibration(reason: String) {
     val promise = calibrationPromise ?: return
     calibrationPromise = null
@@ -328,7 +283,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
     options == null || !options.hasKey("hardBraking") || options.isNull("hardBraking") ||
       options.getBoolean("hardBraking")
 
-  /** Optional tuning overrides from JS; anything absent or out of range keeps its default. */
   private fun configFrom(options: ReadableMap?): CrashConfig {
     var config = CrashConfig()
     if (options == null) return config
@@ -367,7 +321,6 @@ class CrashDetectionModule(private val reactContext: ReactApplicationContext) :
 
   private fun candidateMap(state: CrashState): WritableMap =
     Arguments.createMap().apply {
-      // Remaining time, not an absolute timestamp: JS counts down on its own clock.
       putDouble("countdownMs", (state.countdownMs ?: 0L).toDouble())
       putString("confidence", (state.confidence ?: CrashConfidence.MEDIUM).wire)
       putString("severity", state.severity ?: "UNKNOWN")

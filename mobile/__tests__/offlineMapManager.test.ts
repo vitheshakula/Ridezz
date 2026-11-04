@@ -1,11 +1,3 @@
-/**
- * offlineMapManager wraps @maplibre/maplibre-react-native's real OfflineManager singleton, which
- * doesn't run under Jest (it's a native module, and the project already has an automatic manual
- * mock for this package at __mocks__/@maplibre/maplibre-react-native.tsx for the map *components*
- * App.test.tsx etc. need -- it has no OfflineManager at all). Module freshly `require`d after
- * `jest.doMock`, same pattern as authService.test.ts, so this file's own OfflineManager mock is
- * what offlineMapManager.ts actually gets, regardless of that other automatic mock.
- */
 function load() {
   jest.resetModules();
 
@@ -37,7 +29,8 @@ function load() {
   jest.doMock('@maplibre/maplibre-react-native', () => ({ OfflineManager: mockOfflineManager }));
 
   return {
-    manager: require('../src/services/offlineMapManager') as typeof import('../src/services/offlineMapManager'),
+    manager:
+      require('../src/services/offlineMapManager') as typeof import('../src/services/offlineMapManager'),
     mockOfflineManager,
   };
 }
@@ -45,9 +38,13 @@ function load() {
 const BOUNDS = { west: 78.3, south: 17.3, east: 78.5, north: 17.45 };
 
 describe('downloadOfflineRegion', () => {
-  it('creates a pack with the bounds in MapLibre\'s [west, south, east, north] order', async () => {
+  it("creates a pack with the bounds in MapLibre's [west, south, east, north] order", async () => {
     const { manager, mockOfflineManager } = load();
-    await manager.downloadOfflineRegion({ name: 'ride-ABC123', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'ride-ABC123',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
 
     expect(mockOfflineManager.createPack).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -62,7 +59,11 @@ describe('downloadOfflineRegion', () => {
 
   it('applies sensible default zoom levels when none are given', async () => {
     const { manager, mockOfflineManager } = load();
-    await manager.downloadOfflineRegion({ name: 'r', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'r',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
     const options = mockOfflineManager.createPack.mock.calls[0][0];
     expect(options.minZoom).toBe(10);
     expect(options.maxZoom).toBe(16);
@@ -85,7 +86,12 @@ describe('downloadOfflineRegion', () => {
   it('forwards progress updates', async () => {
     const { manager } = load();
     const onProgress = jest.fn();
-    await manager.downloadOfflineRegion({ name: 'r', bounds: BOUNDS, mapStyleUrl: 'https://style.json', onProgress });
+    await manager.downloadOfflineRegion({
+      name: 'r',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+      onProgress,
+    });
     expect(onProgress).toHaveBeenCalledWith({ state: 'active', percentage: 0 });
   });
 
@@ -96,17 +102,31 @@ describe('downloadOfflineRegion', () => {
       bounds: BOUNDS,
       mapStyleUrl: 'https://style.json',
     });
-    await manager.downloadOfflineRegion({ name: 'ride-ABC123', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'ride-ABC123',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
 
     expect(mockOfflineManager.deletePack).toHaveBeenCalledWith(first.id);
-    const remaining = (await mockOfflineManager.getPacks()).filter((p: any) => p.metadata.name === 'ride-ABC123');
+    const remaining = (await mockOfflineManager.getPacks()).filter(
+      (p: any) => p.metadata.name === 'ride-ABC123',
+    );
     expect(remaining).toHaveLength(1);
   });
 
   it('does not disturb a differently named region', async () => {
     const { manager, mockOfflineManager } = load();
-    await manager.downloadOfflineRegion({ name: 'ride-A', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
-    await manager.downloadOfflineRegion({ name: 'ride-B', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'ride-A',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
+    await manager.downloadOfflineRegion({
+      name: 'ride-B',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
 
     expect(mockOfflineManager.deletePack).not.toHaveBeenCalled();
     expect(await mockOfflineManager.getPacks()).toHaveLength(2);
@@ -116,7 +136,11 @@ describe('downloadOfflineRegion', () => {
 describe('findRegionByName / getRegionStatus', () => {
   it('finds a region created earlier by its name', async () => {
     const { manager } = load();
-    await manager.downloadOfflineRegion({ name: 'ride-ABC123', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'ride-ABC123',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
     const found = await manager.findRegionByName('ride-ABC123');
     expect(found?.metadata).toEqual({ name: 'ride-ABC123' });
   });
@@ -128,8 +152,15 @@ describe('findRegionByName / getRegionStatus', () => {
 
   it('reports status for a known region, and null for an unknown one', async () => {
     const { manager } = load();
-    await manager.downloadOfflineRegion({ name: 'ride-ABC123', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
-    expect(await manager.getRegionStatus('ride-ABC123')).toEqual({ state: 'active', percentage: 0 });
+    await manager.downloadOfflineRegion({
+      name: 'ride-ABC123',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
+    expect(await manager.getRegionStatus('ride-ABC123')).toEqual({
+      state: 'active',
+      percentage: 0,
+    });
     expect(await manager.getRegionStatus('never-downloaded')).toBeNull();
   });
 });
@@ -137,7 +168,11 @@ describe('findRegionByName / getRegionStatus', () => {
 describe('pauseRegion / resumeRegion / deleteRegion', () => {
   it('pauses and resumes a known region', async () => {
     const { manager } = load();
-    await manager.downloadOfflineRegion({ name: 'r', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'r',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
     const pack = await manager.findRegionByName('r');
 
     await manager.pauseRegion('r');
@@ -156,7 +191,11 @@ describe('pauseRegion / resumeRegion / deleteRegion', () => {
 
   it('deletes a known region', async () => {
     const { manager, mockOfflineManager } = load();
-    await manager.downloadOfflineRegion({ name: 'r', bounds: BOUNDS, mapStyleUrl: 'https://style.json' });
+    await manager.downloadOfflineRegion({
+      name: 'r',
+      bounds: BOUNDS,
+      mapStyleUrl: 'https://style.json',
+    });
     await manager.deleteRegion('r');
 
     expect(await manager.findRegionByName('r')).toBeUndefined();

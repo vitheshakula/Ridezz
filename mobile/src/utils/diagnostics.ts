@@ -13,14 +13,11 @@ export type DiagnosticEventType =
   | 'mesh_hazard_received'
   | 'remote_participant_disconnected'
   | 'remote_location_resumed'
-  /** Ride Connectivity Protocol (Phase 2) device-testing diagnostics. */
   | 'mesh_protocol'
-  /** Crash / laydown detection: sensor status, every finished candidate, countdown outcome. */
   | 'crash_sensors'
   | 'crash_decision'
   | 'crash_countdown'
   | 'crash_sos'
-  /** Hard-braking warning: own alerts, GNSS confirmation, alerts heard from riders ahead. */
   | 'braking';
 
 export interface DiagnosticEvent {
@@ -31,10 +28,6 @@ export interface DiagnosticEvent {
 
 export const MAX_DIAGNOSTIC_EVENTS = 100;
 
-/** Appends an event to a bounded ring buffer, dropping the oldest entries once
- * MAX_DIAGNOSTIC_EVENTS is exceeded. Only ever holds operational metadata --
- * event type, a short human-readable message, and a timestamp -- never audio,
- * conversation content, precise GPS trails, keys, or tokens (see call sites). */
 export function appendDiagnosticEvent(
   events: DiagnosticEvent[],
   event: DiagnosticEvent,

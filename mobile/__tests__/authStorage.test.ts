@@ -2,17 +2,37 @@ import { parseStoredUser } from '../src/utils/authStorage';
 
 describe('parseStoredUser', () => {
   it('reads a current profile', () => {
-    const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: true });
-    expect(parseStoredUser(json)).toEqual({ id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: true });
+    const json = JSON.stringify({
+      id: 'u1',
+      email: 'a@gmail.com',
+      name: 'Alex',
+      emailVerified: true,
+    });
+    expect(parseStoredUser(json)).toEqual({
+      id: 'u1',
+      email: 'a@gmail.com',
+      name: 'Alex',
+      emailVerified: true,
+    });
   });
 
   it('upgrades a profile saved by the previous build (rider_name) instead of signing the rider out', () => {
     const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', rider_name: 'Alex' });
-    expect(parseStoredUser(json)).toEqual({ id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: false });
+    expect(parseStoredUser(json)).toEqual({
+      id: 'u1',
+      email: 'a@gmail.com',
+      name: 'Alex',
+      emailVerified: false,
+    });
   });
 
   it('keeps a saved room code', () => {
-    const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode: '54321' });
+    const json = JSON.stringify({
+      id: 'u1',
+      email: 'a@gmail.com',
+      name: 'Alex',
+      roomCode: '54321',
+    });
     expect(parseStoredUser(json)?.roomCode).toBe('54321');
   });
 
@@ -21,13 +41,15 @@ describe('parseStoredUser', () => {
     expect(user).not.toHaveProperty('roomCode');
   });
 
-  it.each([['not five digits', '1234'], ['a leading zero', '01234'], ['letters', 'ABCDE'], ['a number, not text', 54321]])(
-    'ignores a saved room code that is %s',
-    (_label, roomCode) => {
-      const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode });
-      expect(parseStoredUser(json)).not.toHaveProperty('roomCode');
-    },
-  );
+  it.each([
+    ['not five digits', '1234'],
+    ['a leading zero', '01234'],
+    ['letters', 'ABCDE'],
+    ['a number, not text', 54321],
+  ])('ignores a saved room code that is %s', (_label, roomCode) => {
+    const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'Alex', roomCode });
+    expect(parseStoredUser(json)).not.toHaveProperty('roomCode');
+  });
 
   it('prefers name over the legacy field when both exist', () => {
     const json = JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'New', rider_name: 'Old' });
@@ -35,7 +57,9 @@ describe('parseStoredUser', () => {
   });
 
   it('treats a missing verified flag as unverified', () => {
-    expect(parseStoredUser(JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'A' }))?.emailVerified).toBe(false);
+    expect(
+      parseStoredUser(JSON.stringify({ id: 'u1', email: 'a@gmail.com', name: 'A' }))?.emailVerified,
+    ).toBe(false);
   });
 
   it.each([

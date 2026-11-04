@@ -5,7 +5,6 @@ import { toAuthUser, type AuthUser } from '../auth/user';
 
 const BCRYPT_ROUNDS = 10;
 
-/** Compared against when the email is unknown, so misses cost the same as wrong passwords. */
 const DUMMY_HASH = bcrypt.hashSync('not-a-real-password', BCRYPT_ROUNDS);
 
 export interface PasswordCrypto {
@@ -24,15 +23,12 @@ interface PasswordRegistration {
   password: string;
 }
 
-export type PasswordRegistrationResult =
-  | { kind: 'ok'; user: User }
-  | { kind: 'duplicate' };
+export type PasswordRegistrationResult = { kind: 'ok'; user: User } | { kind: 'duplicate' };
 
 function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
-/** Creates an email/password account after the route has validated and normalized its input. */
 export async function registerWithPassword(
   prisma: PrismaClient,
   { riderName, email, password }: PasswordRegistration,
@@ -51,7 +47,6 @@ export async function registerWithPassword(
     });
     return { kind: 'ok', user };
   } catch (err) {
-    // Two sign-ups for the same address raced past the lookup above.
     if (isUniqueViolation(err)) {
       return { kind: 'duplicate' };
     }
@@ -64,7 +59,6 @@ export type PasswordLoginResult =
   | { kind: 'invalid_credentials' }
   | { kind: 'google_only' };
 
-/** Checks a password without revealing through timing whether the email has an account. */
 export async function loginWithPassword(
   prisma: PrismaClient,
   email: string,
@@ -83,12 +77,10 @@ export async function loginWithPassword(
   return { kind: 'ok', user };
 }
 
-/** Prepares a database account for a new API session and excludes its password from the result. */
 export async function prepareSessionUser(prisma: PrismaClient, account: User): Promise<AuthUser> {
   return toAuthUser(await withRoomCode(prisma, account));
 }
 
-/** Completes the Passport-projected current user for `/auth/me` and `/user/profile`. */
 export async function prepareCurrentUser(prisma: PrismaClient, user: AuthUser): Promise<AuthUser> {
   return { ...user, roomCode: user.roomCode ?? (await ensureRoomCode(prisma, user.id)) };
 }

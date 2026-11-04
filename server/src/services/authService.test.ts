@@ -161,13 +161,18 @@ describe('loginWithPassword', () => {
     const password = 'correct horse battery';
     const existing = user({ password: await bcrypt.hash(password, 4) });
     const prisma = {
-      user: { findUnique: async (args: any) => {
-        assert.deepEqual(args, { where: { email: existing.email } });
-        return existing;
-      } },
+      user: {
+        findUnique: async (args: any) => {
+          assert.deepEqual(args, { where: { email: existing.email } });
+          return existing;
+        },
+      },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await loginWithPassword(prisma, existing.email, password), { kind: 'ok', user: existing });
+    assert.deepEqual(await loginWithPassword(prisma, existing.email, password), {
+      kind: 'ok',
+      user: existing,
+    });
   });
 
   it('rejects a wrong password', async () => {
@@ -194,9 +199,12 @@ describe('loginWithPassword', () => {
       user: { findUnique: async () => null },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await loginWithPassword(prisma, 'missing@gmail.com', 'wrong password', passwordCrypto), {
-      kind: 'invalid_credentials',
-    });
+    assert.deepEqual(
+      await loginWithPassword(prisma, 'missing@gmail.com', 'wrong password', passwordCrypto),
+      {
+        kind: 'invalid_credentials',
+      },
+    );
     assert.match(comparedHash, /^\$2[aby]\$10\$/);
     assert.equal(bcrypt.compareSync('not-a-real-password', comparedHash), true);
   });
@@ -215,9 +223,12 @@ describe('loginWithPassword', () => {
       user: { findUnique: async () => user({ password: null, googleId: 'google-123' }) },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await loginWithPassword(prisma, 'alex@gmail.com', 'anything', passwordCrypto), {
-      kind: 'google_only',
-    });
+    assert.deepEqual(
+      await loginWithPassword(prisma, 'alex@gmail.com', 'anything', passwordCrypto),
+      {
+        kind: 'google_only',
+      },
+    );
     assert.equal(comparisons, 1);
   });
 });
@@ -233,8 +244,18 @@ describe('authenticated user preparation', () => {
     assert.equal(prepared.roomCode, setup.assignedCode());
     assert.equal('password' in prepared, false);
     assert.deepEqual(
-      { id: prepared.id, email: prepared.email, name: prepared.name, emailVerified: prepared.emailVerified },
-      { id: legacy.id, email: legacy.email, name: legacy.riderName, emailVerified: legacy.emailVerified },
+      {
+        id: prepared.id,
+        email: prepared.email,
+        name: prepared.name,
+        emailVerified: prepared.emailVerified,
+      },
+      {
+        id: legacy.id,
+        email: legacy.email,
+        name: legacy.riderName,
+        emailVerified: legacy.emailVerified,
+      },
     );
   });
 

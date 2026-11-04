@@ -2,17 +2,17 @@ import React from 'react';
 import { View } from 'react-native';
 import Svg, { Circle, Path, Rect } from 'react-native-svg';
 
-/**
- * Icons for the Home screens: 24x24 viewBox, 2px round-cap strokes (the "2dp balanced line
- * weight" from the style guide). All are decorative.
- */
-
 interface IconProps {
   size?: number;
   color: string;
 }
 
-function Icon({ size = 20, color, children, filled = false }: IconProps & { children: React.ReactNode; filled?: boolean }) {
+function Icon({
+  size = 20,
+  color,
+  children,
+  filled = false,
+}: IconProps & { children: React.ReactNode; filled?: boolean }) {
   return (
     <Svg
       width={size}
@@ -73,7 +73,6 @@ export function MicIcon(props: IconProps) {
   );
 }
 
-/** Motorcycle: two wheels joined by a frame, with handlebar. */
 export function RidesIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -100,7 +99,6 @@ export function MinusIcon(props: IconProps) {
   );
 }
 
-/** Crosshair: "center on me". */
 export function LocateIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -111,7 +109,6 @@ export function LocateIcon(props: IconProps) {
   );
 }
 
-/** Four corner brackets: "fit the whole group in view". */
 export function FitIcon(props: IconProps) {
   return (
     <Icon {...props}>
@@ -172,5 +169,7 @@ export function CloseIcon(props: IconProps) {
 }
 
 export function StatusDot({ color, size = 8 }: IconProps) {
-  return <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />;
+  return (
+    <View style={{ width: size, height: size, borderRadius: size / 2, backgroundColor: color }} />
+  );
 }

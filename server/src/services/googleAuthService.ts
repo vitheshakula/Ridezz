@@ -14,12 +14,6 @@ function isUniqueViolation(err: unknown): boolean {
   return err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002';
 }
 
-/**
- * Resolves the account for a Google-verified identity.
- *
- * Login only finds an existing account; signup may create one. An existing password account with
- * the verified email is linked to Google and loses its unverified password credential.
- */
 export async function reconcileGoogleAccount(
   prisma: PrismaClient,
   identity: GoogleIdentity,
@@ -57,7 +51,6 @@ export async function reconcileGoogleAccount(
     });
     return { kind: 'ok', user: created };
   } catch (err) {
-    // The same person's first two requests raced; the other one created the account.
     if (isUniqueViolation(err)) {
       const existing = await prisma.user.findUnique({ where: { googleId: identity.googleId } });
       return existing ? { kind: 'ok', user: existing } : { kind: 'conflict' };

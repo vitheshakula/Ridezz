@@ -51,8 +51,8 @@ describe('hasSeen', () => {
     const queue = new HazardSyncQueue(() => now);
     queue.add(hazard());
     now = NOW + HAZARD_TTL_MS + 1;
-    expect(queue.active()).toHaveLength(0); // expired out of the active list
-    expect(queue.hasSeen('h1')).toBe(true); // but never re-admitted as "new"
+    expect(queue.active()).toHaveLength(0);
+    expect(queue.hasSeen('h1')).toBe(true);
     expect(queue.add(hazard({ timestamp: now }))).toBe(false);
   });
 
@@ -70,8 +70,6 @@ describe('active', () => {
   });
 
   it('drops expired hazards from the list but keeps unexpired ones', () => {
-    // A clock that advances, so a hazard admitted fresh can be aged past its TTL and pruned --
-    // add() refuses anything already stale on arrival, so that's the only way to produce this.
     let now = NOW;
     const queue = new HazardSyncQueue(() => now);
     queue.add(hazard({ hazardId: 'will-expire' }));
@@ -112,7 +110,7 @@ describe('per-peer receipt tracking', () => {
 
     expect(queue.hasReceivedBy('h1', 'bilal')).toBe(false);
     expect(queue.hasReceivedBy('h2', 'bilal')).toBe(false);
-    expect(queue.hasReceivedBy('h1', 'casey')).toBe(true); // untouched
+    expect(queue.hasReceivedBy('h1', 'casey')).toBe(true);
   });
 });
 
@@ -130,7 +128,6 @@ describe('popNextForPeer (the gentle, one-at-a-time reconnect flush)', () => {
 
     const first = queue.popNextForPeer('bilal');
     expect(first?.hazardId).toBe('h1');
-    // calling again immediately does not also hand back h2 and h3 -- the caller controls pacing.
     expect(queue.pendingCountForPeer('bilal')).toBe(2);
   });
 
@@ -176,12 +173,10 @@ describe('popNextForPeer (the gentle, one-at-a-time reconnect flush)', () => {
 describe('a realistic reconnect scenario', () => {
   it('a rider offline for three hazards gets exactly those three, in order, one per call', () => {
     const queue = new HazardSyncQueue(() => NOW);
-    // Three hazards happen while "bilal" is out of range.
     queue.add(hazard({ hazardId: 'pothole-1', hazardType: 'pothole', timestamp: NOW }));
     queue.add(hazard({ hazardId: 'accident-1', hazardType: 'accident', timestamp: NOW + 60_000 }));
     queue.add(hazard({ hazardId: 'obstacle-1', hazardType: 'obstacle', timestamp: NOW + 120_000 }));
 
-    // bilal reconnects; the mesh manager calls popNextForPeer once per spacing interval.
     const delivered: string[] = [];
     for (;;) {
       const next = queue.popNextForPeer('bilal');

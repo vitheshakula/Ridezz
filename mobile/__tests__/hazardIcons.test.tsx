@@ -11,7 +11,10 @@ describe('hazard icons', () => {
         renderer = ReactTestRenderer.create(<HazardGlyph type={rule.id} color="#fff" />);
       });
       const tree = JSON.stringify(renderer.toJSON());
-      expect({ hazard: rule.id, drawn: tree.length > 40 }).toEqual({ hazard: rule.id, drawn: true });
+      expect({ hazard: rule.id, drawn: tree.length > 40 }).toEqual({
+        hazard: rule.id,
+        drawn: true,
+      });
     }
   });
 

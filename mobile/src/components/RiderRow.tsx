@@ -9,8 +9,6 @@ import { MicOffIcon } from './HomeIcons';
 interface RiderRowProps {
   participant: Participant;
   isLocal: boolean;
-  /** Straight-line distance from the local rider, already formatted (e.g. "240 m"); omitted when
-   * either rider has no GPS fix. */
   distanceLabel?: string | null;
 }
 
@@ -24,7 +22,13 @@ export default function RiderRow({ participant, isLocal, distanceLabel }: RiderR
   const displayName = participant.name || participant.identity;
   const initial = displayName.trim().charAt(0).toUpperCase() || '?';
   const weak = Boolean(qualityLabel) && !isMuted;
-  const ring = isSpeaking ? brand.success : weak ? brand.warning : isMuted ? brand.outline : brand.success;
+  const ring = isSpeaking
+    ? brand.success
+    : weak
+    ? brand.warning
+    : isMuted
+    ? brand.outline
+    : brand.success;
 
   return (
     <View style={styles.row}>
@@ -34,7 +38,7 @@ export default function RiderRow({ participant, isLocal, distanceLabel }: RiderR
       <View style={styles.body}>
         <Text style={styles.name} numberOfLines={1}>
           {displayName}
-          {isLocal ? <Text style={styles.youBadge}>  You</Text> : null}
+          {isLocal ? <Text style={styles.youBadge}> You</Text> : null}
         </Text>
         <Text style={[styles.status, weak && styles.statusWarning]} numberOfLines={1}>
           {statusLabel || 'Connected'}

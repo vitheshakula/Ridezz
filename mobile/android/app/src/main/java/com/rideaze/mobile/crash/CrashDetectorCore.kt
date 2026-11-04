@@ -6,30 +6,6 @@ import kotlin.math.acos
 import kotlin.math.max
 import kotlin.math.sqrt
 
-/**
- * Crash / bike-laydown detection pipeline. Pure Kotlin: no Android classes, no clocks of its own --
- * every input carries its own epoch-ms timestamp, so the whole pipeline is unit-tested on the JVM
- * by replaying synthetic sensor traces (see CrashDetectorCoreTest).
- *
- * THREADING: single-threaded by contract. In production every call, including [tick], is made on
- * the sensor HandlerThread; callers on other threads must post to it.
- *
- * Stages, all of which must agree before the countdown starts:
- *  1. IMPACT     |a| >= impactG (3.5 g). A lower trigger (1.8 g) opens candidates for the low-speed
- *                laydown path, which then needs the stricter checks.
- *  2. ROTATION   gyro |w| >= rotationRadS (5 rad/s) within +-1 s of the impact.
- *  3. LAYDOWN    after the tumble settles the phone stays still for stillMs (4 s), and the rest
- *                gravity vector is >= tiltDeg (60 deg) away from the riding reference. The reference
- *                is learned (or calibrated) while riding, so any mount orientation works.
- *  4. GNSS       speed >= 20 km/h before the impact and <= 5 km/h at least gnssSettleMs after it.
- *                A bike still moving at speed after the "impact" means the phone fell off its mount;
- *                a phone that was already stationary was merely dropped.
- *
- * Without GNSS proof (no fix, a stopped bike that stops producing fixes, or no gyro) the pipeline
- * falls back to a longer stillness requirement and a longer countdown, at MEDIUM confidence.
- *
- * Confirmation only starts a countdown; nothing is sent until it expires un-cancelled.
- */
 class CrashDetectorCore(
   private val config: CrashConfig = CrashConfig(),
   private val listener: CrashDetectorListener,
@@ -47,7 +23,6 @@ class CrashDetectorCore(
   private var lastGyroMag = 0.0
   private var gyroAvailable = true
 
-  // Riding gravity reference (unit vector in the phone frame).
   private var ref: Vec3? = null
   private var refQuietCount = 0
   private var lastRefT = 0L
@@ -76,7 +51,7 @@ class CrashDetectorCore(
 
   private class Candidate(
     val t0: Long,
-    var peak: Double, // m/s^2
+    var peak: Double,
     val ref: Vec3,
     val preSpeed: Double?,
     val freeFall: Boolean,
@@ -102,11 +77,8 @@ class CrashDetectorCore(
 
   private class RestWindow(val still: Boolean, val vector: Vec3?, val from: Long)
 
-  // --- public API ---------------------------------------------------------------------------
-
   fun getState(): CrashState = state
 
-  /** False for phones with no gyroscope: rotation evidence is skipped and confidence is capped. */
   fun setGyroAvailable(available: Boolean) {
     gyroAvailable = available
   }
@@ -126,8 +98,6 @@ class CrashDetectorCore(
         calibration?.let { it.interrupted = true }
         openCandidate(t, m)
       } else if (calibration == null) {
-        // Automatic learning pauses during a manual calibration so the shift it reports is
-        // measured against the reference that was in force when the rider asked.
         updateReference(t, x, y, z, m)
       }
       return
@@ -135,7 +105,6 @@ class CrashDetectorCore(
     if (t - c.t0 <= PEAK_WINDOW_MS) {
       c.peak = max(c.peak, m)
     } else if (m >= config.impactG * g && c.peak < config.impactG * g) {
-      // A full-size impact after a minor bump: restart the evidence chain from the big one.
       openCandidate(t, m)
     }
     evaluate(t)
@@ -154,7 +123,6 @@ class CrashDetectorCore(
     }
   }
 
-  /** Fused gravity vector (Sensor.TYPE_GRAVITY), m/s^2 in the phone frame. Optional. */
   fun addGravity(t: Long, x: Double, y: Double, z: Double) {
     if (!finite(x, y, z) || t <= lastGravityT) return
     lastGravityT = t
@@ -167,7 +135,6 @@ class CrashDetectorCore(
     }
   }
 
-  /** [speedMps] null when the fix carries no speed. [lat]/[lon] are kept only for the alert. */
   fun addGnss(t: Long, speedMps: Double?, lat: Double? = null, lon: Double? = null) {
     val speed = speedMps?.takeIf { it.isFinite() && it >= 0.0 }
     val fix = Fix(t, speed, lat?.takeIf { it.isFinite() }, lon?.takeIf { it.isFinite() })
@@ -193,7 +160,6 @@ class CrashDetectorCore(
     }
   }
 
-  /** Advances countdown / cooldown / candidate expiry / calibration. Call a few times a second. */
   fun tick(now: Long) {
     when {
       state.phase == CrashPhase.COUNTDOWN && now >= (state.countdownEndsAt ?: Long.MAX_VALUE) ->
@@ -209,7 +175,6 @@ class CrashDetectorCore(
     calibration?.let { if (now >= it.endsAt + CALIBRATION_GRACE_MS) finishCalibration() }
   }
 
-  /** Rider says they are fine. Returns true if a countdown was cancelled. */
   fun cancel(now: Long, reason: String = "user"): Boolean {
     if (state.phase == CrashPhase.COUNTDOWN) {
       state =
@@ -227,14 +192,12 @@ class CrashDetectorCore(
     return false
   }
 
-  /** Skip the rest of a running countdown and alert now. Returns true if an alert was sent. */
   fun sendNow(now: Long): Boolean {
     if (state.phase != CrashPhase.COUNTDOWN) return false
     dispatchSos(now, "user_sent")
     return true
   }
 
-  /** Rider acknowledges a sent alert; back to idle behind a cooldown. */
   fun acknowledge(now: Long): Boolean {
     if (state.phase != CrashPhase.SOS) return false
     state = CrashState()
@@ -243,7 +206,6 @@ class CrashDetectorCore(
     return true
   }
 
-  /** Starts a countdown without sensor evidence (demo / dev menu). */
   fun simulate(now: Long) {
     if (state.phase == CrashPhase.COUNTDOWN || state.phase == CrashPhase.SOS) return
     startCountdown(
@@ -263,12 +225,6 @@ class CrashDetectorCore(
     )
   }
 
-  /**
-   * Pins the riding reference to the phone's current attitude: averages the fused gravity vector
-   * (or the accelerometer if there is no gravity sensor) over [durationMs]. The phone must be
-   * steady (parked upright, or riding smoothly). The result arrives via
-   * [CrashDetectorListener.onCalibration]. Until [clearCalibration], automatic learning is off.
-   */
   fun startCalibration(now: Long, durationMs: Long = CALIBRATION_MS) {
     if (state.phase != CrashPhase.IDLE || cand != null || calibration != null) {
       listener.onCalibration(CalibrationResult(false, "busy"))
@@ -277,14 +233,12 @@ class CrashDetectorCore(
     calibration = Calibration(now + durationMs)
   }
 
-  /** Back to automatic reference learning. */
   fun clearCalibration() {
     manualRef = false
     ref = null
     refQuietCount = 0
   }
 
-  /** Forgets all history, calibration and state (e.g. when monitoring restarts). */
   fun reset() {
     accel.clear()
     gyro.clear()
@@ -304,8 +258,6 @@ class CrashDetectorCore(
     state = CrashState()
     listener.onStateChanged(state)
   }
-
-  // --- internals ----------------------------------------------------------------------------
 
   private fun finite(x: Double, y: Double, z: Double) = x.isFinite() && y.isFinite() && z.isFinite()
 
@@ -372,7 +324,6 @@ class CrashDetectorCore(
     cand = null
   }
 
-  /** Latest fix at least gnssSettleMs after the impact that carries a speed. */
   private fun postImpactFix(c: Candidate): Fix? {
     var found: Fix? = null
     for (f in fixes) {
@@ -381,10 +332,6 @@ class CrashDetectorCore(
     return found
   }
 
-  /**
-   * Looks at the last second of samples. `vector` is the rest gravity direction: the mean of the
-   * fused gravity sensor if it has been reporting, otherwise of the accelerometer.
-   */
   private fun restWindow(now: Long): RestWindow? {
     val from = now - STILL_WINDOW_MS
     val a0 = accel.firstIndexAtOrAfter(from + 1)
@@ -451,7 +398,6 @@ class CrashDetectorCore(
       reject(now, CrashRejectReason.EXPIRED)
       return
     }
-    // Need the +-1 s rotation window closed and a whole still-window after the settle delay.
     if (age < SETTLE_MS + STILL_WINDOW_MS) return
 
     if (gyroAvailable && c.rotMax < config.laydownRotationRadS) {
@@ -462,7 +408,6 @@ class CrashDetectorCore(
     val post = postImpactFix(c)
     val postSpeed = post?.speed
     if (postSpeed != null && postSpeed > config.stillMovingMps) {
-      // The bike is still moving seconds after the "impact": the phone left its mount.
       reject(now, CrashRejectReason.STILL_MOVING)
       return
     }
@@ -488,7 +433,6 @@ class CrashDetectorCore(
     var needStill: Long
     var conf: CrashConfidence
     if (highImpact && pre != null && pre >= config.minPreSpeedMps) {
-      // GNSS confirms when it saw the stop; otherwise fall back to the no-GNSS requirements.
       needRot = config.rotationRadS
       if (postStopped && gyroAvailable) {
         path = CrashPath.CRASH
@@ -500,7 +444,6 @@ class CrashDetectorCore(
         conf = CrashConfidence.MEDIUM
       }
     } else if (pre != null) {
-      // Known to have been moving, but slower than a crash, or below the full impact threshold.
       if (!config.enableLowSpeedLaydown) {
         reject(now, CrashRejectReason.LOW_SPEED_DISABLED)
         return
@@ -515,21 +458,18 @@ class CrashDetectorCore(
       needStill = config.stillMsNoGnss
       conf = CrashConfidence.MEDIUM
     } else {
-      // A moderate bump with no speed information at all: nothing to anchor a laydown to.
       return
     }
     if (!gyroAvailable) {
       needStill = max(needStill, config.stillMsNoGnss)
       conf = CrashConfidence.MEDIUM
     }
-    // The rotation window closed at +1 s, so a shortfall is final.
     if (gyroAvailable && c.rotMax < needRot) {
       reject(now, CrashRejectReason.NO_ROTATION)
       return
     }
     if (stillFor < needStill) return
 
-    // A falling phone with no GNSS proof that the bike stopped is more likely a dropped phone.
     if (c.freeFall && !postStopped) {
       reject(now, CrashRejectReason.MOUNT_DROP_SUSPECTED)
       return
@@ -537,7 +477,6 @@ class CrashDetectorCore(
 
     val tilt = c.ref.angleDegTo(win.vector)
     if (tilt < config.tiltDeg) {
-      // Still, but the phone is back at its riding attitude: the bike is upright.
       reject(now, CrashRejectReason.UPRIGHT)
       return
     }
@@ -602,8 +541,6 @@ class CrashDetectorCore(
     )
   }
 
-  // --- calibration --------------------------------------------------------------------------
-
   private fun calibrationAccel(t: Long, x: Double, y: Double, z: Double, m: Double) {
     val cal = calibration ?: return
     cal.sx += x
@@ -656,21 +593,17 @@ class CrashDetectorCore(
   }
 
   private companion object {
-    /** Impact peak is tracked for this long after the first over-threshold sample. */
     const val PEAK_WINDOW_MS = 2_000L
-    /** The still-window must start at least this long after the impact (tumbling has stopped). */
     const val SETTLE_MS = 1_000L
     const val STILL_WINDOW_MS = 1_000L
     const val MIN_STILL_SAMPLES = 20
     const val MIN_GRAVITY_SAMPLES = 10
     const val REF_TAU_S = 2.0
     const val REF_MIN_QUIET_SAMPLES = 50
-    /** Samples count as "quiet riding" (used to learn the reference) inside this band, in g. */
     const val QUIET_BAND_G = 0.15
     const val QUIET_GYRO_RAD_S = 1.0
     const val FIX_KEEP_MS = 60_000L
     const val CALIBRATION_MS = 2_000L
-    /** If no accelerometer sample arrives to finish a calibration, tick() gives up after this. */
     const val CALIBRATION_GRACE_MS = 1_000L
   }
 }

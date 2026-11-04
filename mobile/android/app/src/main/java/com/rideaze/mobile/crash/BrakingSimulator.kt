@@ -3,12 +3,6 @@ package com.rideaze.mobile.crash
 import kotlin.math.floor
 import kotlin.math.sin
 
-/**
- * Debug-only: replays a synthetic ride through the REAL [HardBrakingDetector] (same code path as
- * live sensors, nothing is faked at the event level): a short ride that lets it learn the mount
- * axis, four GNSS fixes at the cruise speed, then a drop to the final speed within one second.
- * The ride is timed to end at [endAt], so the resulting alert looks like it just happened.
- */
 object BrakingSimulator {
   private const val G = STANDARD_GRAVITY
 
@@ -41,7 +35,6 @@ object BrakingSimulator {
     return (x - floor(x)) * 2 - 1
   }
 
-  /** Returns the simulated duration in ms. */
   private fun run(start: Long, sink: Sink, cruiseKmh: Double, finalKmh: Double): Long {
     var t = start
     var v = 6.0
@@ -61,15 +54,15 @@ object BrakingSimulator {
 
     val cruise = cruiseKmh / 3.6
     val end = finalKmh / 3.6
-    repeat(4) { // learn the mount axis: accelerate and brake at 2 m/s^2
+    repeat(4) {
       hold(3000, 2.0)
       hold(3000, -2.0)
     }
     while (v < cruise) step(1.5)
-    v = cruise // exactly the requested speed from here on
+    v = cruise
     hold(4500, 0.0)
     while (sinceFix != 0L) step(0.0)
-    hold(1000, -(cruise - end)) // 1 s of braking from cruise to the final speed
+    hold(1000, -(cruise - end))
     hold(1500, 0.0)
     return t - start
   }

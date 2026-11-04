@@ -3,7 +3,6 @@ import { MAPTILER_API_KEY } from '../config/appConfig';
 import type { RideDestination } from '../components/RiderMap';
 import { api } from './AuthService';
 
-/** A MapTiler geocoding feature as a destination, or null when it has no usable point. */
 function destinationFromFeature(feature: any, fallbackName: string): RideDestination | null {
   const center = feature?.center;
   if (!Array.isArray(center) || center.length !== 2) {
@@ -45,9 +44,6 @@ export async function geocodeDestination(query: string): Promise<RideDestination
 export const MIN_SUGGESTION_QUERY_LENGTH = 3;
 const MAX_SUGGESTIONS = 5;
 
-/** Type-ahead destination suggestions from the same MapTiler geocoding API, biased toward the
- * phone's area (MapTiler resolves `proximity=ip` from the request). Empty on any failure --
- * suggestions are a convenience, and typing a place and submitting still geocodes as before. */
 export async function searchDestinations(query: string): Promise<RideDestination[]> {
   const trimmed = query.trim();
   if (trimmed.length < MIN_SUGGESTION_QUERY_LENGTH || !MAPTILER_API_KEY) {
@@ -58,11 +54,18 @@ export async function searchDestinations(query: string): Promise<RideDestination
     const response = await axios.get(
       `https://api.maptiler.com/geocoding/${encodeURIComponent(trimmed)}.json`,
       {
-        params: { key: MAPTILER_API_KEY, limit: MAX_SUGGESTIONS, autocomplete: true, proximity: 'ip' },
+        params: {
+          key: MAPTILER_API_KEY,
+          limit: MAX_SUGGESTIONS,
+          autocomplete: true,
+          proximity: 'ip',
+        },
         timeout: 8000,
       },
     );
-    const features: unknown[] = Array.isArray(response.data?.features) ? response.data.features : [];
+    const features: unknown[] = Array.isArray(response.data?.features)
+      ? response.data.features
+      : [];
     return features
       .map(feature => destinationFromFeature(feature, trimmed))
       .filter((destination): destination is RideDestination => destination !== null);

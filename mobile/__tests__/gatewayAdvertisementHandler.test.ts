@@ -7,9 +7,7 @@ import {
   type RideMessageIngressResult,
   type RideMessageIngressSource,
 } from '../src/connectivity/rideMessageIngress';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
 import {
   createRideMessage,
@@ -22,7 +20,6 @@ import {
 } from '../src/connectivity/protocol/rideMessageCodec';
 import { createSeenMessageCache } from '../src/connectivity/protocol/seenMessageCache';
 
-/** Wall clock (protocol) and monotonic clock (local freshness) are deliberately different. */
 const WALL = 1_700_000_000_000;
 const MONO = 50_000;
 const RIDE = '12345';
@@ -33,7 +30,6 @@ function advertFrom(originId: string, id = `gw-${originId}-1`) {
   return createGatewayAdvertisementMessage({ id, rideId: RIDE, originId, createdAt: WALL });
 }
 
-/** A node's receive side: real ingress (wall clock) plus its own gateway state and peer table. */
 function node(localNodeId: string) {
   const ingress = createRideMessageIngress({
     rideId: RIDE,
@@ -62,7 +58,6 @@ describe('gateway advertisement handler: C → B → A', () => {
     const b = node('rider-b');
     const a = node('rider-a');
 
-    // C advertises (hop 0). B accepts it and records C as a direct-hop gateway.
     const atB = b.receive(advertFrom('rider-c'), { transportId: 'b-link', peerId: 'ep-c' });
     expect(handleGatewayAdvertisement(atB, MONO, b.gateways)).toMatchObject({
       observed: true,
@@ -70,7 +65,6 @@ describe('gateway advertisement handler: C → B → A', () => {
       hopCount: 0,
     });
 
-    // B relays through the existing relay policy; A accepts the hop-1 copy from B.
     const relay = decideRelay(atB.message, WALL + 50);
     if (!relay.relay) {
       throw new Error('expected relay');
@@ -92,7 +86,6 @@ describe('gateway advertisement handler: C → B → A', () => {
         observations: [{ transportId: 'transport-x', hopCount: 1, lastSeenAt: MONO }],
       },
     ]);
-    // Neither the gateway nor the relay endpoint becomes a direct peer, nor a gateway.
     expect(a.peers.getPeers(MONO)).toEqual([]);
     expect(a.gateways.isKnownGateway('nearby-ep-77', MONO)).toBe(false);
     expect(a.gateways.isKnownGateway('rider-b', MONO)).toBe(false);
@@ -167,8 +160,6 @@ describe('gateway advertisement handler: behaviour', () => {
   });
 
   test('the SAME advertisement over a second path is deduplicated by ingress first', () => {
-    // Documents the dedup implication: only the first-arriving path of one advertisement id is
-    // observed. Later advertisement cycles carry new ids and can reveal other paths.
     const a = node('rider-a');
     const bytes = encodeRideMessage(advertFrom('rider-c'));
     const first = a.ingress.ingest(bytes, { transportId: 'transport-x' });
@@ -230,7 +221,6 @@ describe('gateway advertisement handler: behaviour', () => {
       maxHops: 4,
       now: WALL,
     });
-    // It is a valid envelope, so real ingress accepts it; the handler validates the payload.
     const a = node('rider-a');
     const result = a.ingress.ingest(serializeRideMessage(odd), { transportId: 't' });
     if (!result.accepted) {
@@ -290,7 +280,6 @@ describe('gateway advertisement handler: ingress owns ride, origin and dedup che
       'local_origin',
       'duplicate',
     ]);
-    // The handler's input type only admits accepted results, so these cannot be passed to it.
     for (const r of results) {
       if (r.accepted) {
         handleGatewayAdvertisement(r, MONO, spyState);

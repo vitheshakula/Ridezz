@@ -9,8 +9,6 @@ interface DestinationSuggestionsProps {
   onSelect: (destination: RideDestination) => void;
 }
 
-/** Tappable list of place suggestions shown under a destination field. Renders nothing when
- * there are no suggestions, so the field looks exactly as before when the API has none. */
 export function DestinationSuggestions({ suggestions, onSelect }: DestinationSuggestionsProps) {
   if (suggestions.length === 0) {
     return null;

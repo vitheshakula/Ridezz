@@ -1,21 +1,8 @@
-/**
- * Small, React-free helpers that let a screen own the Ride Connectivity runtime safely:
- *
- *   createRideNodeIdentity        one secure node id per ride session, stable across retries
- *   createMonotonicClock          performance.now(), or fail closed (never Date.now)
- *   createRideConnectivityController  at most one running runtime per transport session;
- *                                 safe against retries, late async completion and repeat calls
- *   createConnectivityDiagnostics concise, deduplicated diagnostic lines (no payloads)
- */
-
 import type { RideConnectivityEvent, RideConnectivityRuntime } from './rideConnectivityRuntime';
 import type { GatewayForwardingDecision } from './gatewayRouting';
 
 export interface RideNodeIdentity {
-  /** Secure RideMessage id source for this ride session. */
   readonly generateMessageId: () => string;
-  /** The node id for `rideKey`: generated once per ride, stable across repeated calls. A different
-   * ride key gets a new id; nothing is persisted. */
   nodeIdFor(rideKey: string): string;
 }
 
@@ -32,10 +19,6 @@ export function createRideNodeIdentity(generateId: () => string): RideNodeIdenti
   };
 }
 
-/**
- * A monotonic clock from performance.now (React Native's native steady clock). Throws when it is
- * unavailable: protocol freshness must never silently fall back to the wall clock.
- */
 export function createMonotonicClock(
   runtime: { performance?: unknown } = globalThis as { performance?: unknown },
 ): () => number {
@@ -48,10 +31,7 @@ export function createMonotonicClock(
 }
 
 export interface RideConnectivityController {
-  /** Call once the transport session has started. Creates and starts at most one runtime; does
-   * nothing after dispose() (e.g. an async start that completes after cleanup). */
   transportStarted(): void;
-  /** Stops the runtime, if any, and ignores any later transportStarted(). Idempotent. */
   dispose(): void;
   readonly runtime: RideConnectivityRuntime | null;
 }
@@ -61,7 +41,6 @@ export function createRideConnectivityController({
   onError,
 }: {
   createRuntime: () => RideConnectivityRuntime;
-  /** Runtime creation/start failures (the protocol stays off; nothing else is affected). */
   onError?: (error: unknown) => void;
 }): RideConnectivityController {
   let runtime: RideConnectivityRuntime | null = null;
@@ -79,14 +58,10 @@ export function createRideConnectivityController({
       } catch (error) {
         try {
           created?.stop();
-        } catch {
-          // Best effort.
-        }
+        } catch {}
         try {
           onError?.(error);
-        } catch {
-          // Reporting must not throw into the caller's lifecycle.
-        }
+        } catch {}
       }
     },
     dispose(): void {
@@ -102,12 +77,6 @@ export function createRideConnectivityController({
 
 const short = (id: string) => id.slice(0, 8);
 
-/**
- * Turns runtime events into a few meaningful diagnostic lines: new peers and links, new gateway
- * observations, gateway route changes, routed sends and arrivals, and failures. Steady-state
- * repeats (refreshes, unchanged cycle outcomes) are not logged. Never logs packet payloads or
- * account identifiers; node ids are random per ride and shown truncated.
- */
 export function createConnectivityDiagnostics({
   log,
   getRoute,
@@ -145,18 +114,18 @@ export function createConnectivityDiagnostics({
         summary = !value.ok
           ? `heartbeat cycle failed: ${value.reason}`
           : failed.length > 0
-            ? `heartbeat send failed: ${failed
-                .map(t => (t.stage === 'transport' ? t.reason : t.stage))
-                .join(', ')}`
-            : 'heartbeats ok';
+          ? `heartbeat send failed: ${failed
+              .map(t => (t.stage === 'transport' ? t.reason : t.stage))
+              .join(', ')}`
+          : 'heartbeats ok';
       } else {
         const status = event.outcome.value.status;
         summary =
           status === 'sent'
             ? 'advertising as cloud gateway'
             : status === 'not_reachable'
-              ? 'not a cloud gateway'
-              : `gateway advertisement ${status}`;
+            ? 'not a cloud gateway'
+            : `gateway advertisement ${status}`;
       }
       const previous = event.kind === 'heartbeat_cycle' ? lastHeartbeat : lastAdvertisement;
       const initialQuiet =

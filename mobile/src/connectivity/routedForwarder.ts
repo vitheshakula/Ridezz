@@ -1,16 +1,3 @@
-/**
- * Executes gateway-routed sends over one targeted transport (Nearby in this version).
- *
- *   route.nextHopNodeId -> fresh DirectLinkIdentityMap link -> endpoint -> serialize -> sendTo
- *
- * Exactly one targeted send per routed hop, to exactly one endpoint. Never broadcasts, never tries
- * another endpoint, route or gateway, never retries, never mints a new message id. Routes on any
- * other transport fail closed as 'unsupported_transport'.
- *
- * Routed vs flooded: a message carrying gatewayRouting is handled here only; it must never also be
- * passed to flood relay (relay policy / Phase 1 broadcast).
- */
-
 import {
   decideGatewayForward,
   originateGatewayRouted,
@@ -32,7 +19,6 @@ import type { RideMessage, RideMessageType } from './protocol/rideMessage';
 import { serializeRideMessage } from './protocol/rideMessageCodec';
 import type { TargetedTransport } from '../transports/Transport';
 
-/** Local operational bound on one sendTo(); expiry means "result unknown", not "not delivered". */
 export const ROUTED_SEND_TIMEOUT_MS = OPERATIONAL_SEND_TIMEOUT_MS;
 export const ROUTED_DEFAULT_MAX_ROUTE_ATTEMPTS = 3;
 
@@ -46,7 +32,6 @@ type ForwardRejection = Extract<
   { outcome: 'failed' }
 >['reason'];
 
-/** Everything a later retry policy would need about one attempted routed hop. */
 export interface RoutedHop {
   message: RideMessage<unknown>;
   route: GatewayRouteCandidate;
@@ -55,9 +40,7 @@ export interface RoutedHop {
 
 export type RoutedSendResult =
   | ({ status: 'sent' } & RoutedHop)
-  /** sendTo() did not settle in time: the send may or may not have happened. */
   | ({ status: 'send_timeout' } & RoutedHop)
-  /** sendTo() rejected (e.g. the endpoint is no longer a confirmed connection). */
   | ({ status: 'transport_error'; error: string } & RoutedHop)
   | {
       status: 'not_sent';
@@ -76,26 +59,20 @@ export type RoutedForwardResult =
 
 export interface RoutedForwarderOptions {
   localNodeId: string;
-  /** The only transport this forwarder sends on, e.g. NEARBY_TRANSPORT_ID. */
   transportId: string;
   transport: Pick<TargetedTransport<string>, 'sendTo'>;
   gatewayState: GatewayState;
   linkIdentities: DirectLinkIdentityMap;
-  /** Local monotonic clock (state freshness). */
   monotonicClock: () => number;
-  /** Protocol wall clock (message expiry). */
   wallClock: () => number;
   sendTimeoutMs?: number;
   maxRouteAttempts?: number;
 }
 
 export interface RoutedForwarder {
-  /** Originates routed forwarding of a message this node created, optionally toward one gateway. */
   sendOriginated(message: RideMessage<unknown>, gatewayNodeId?: string): Promise<RoutedSendResult>;
-  /** Handles an accepted routed message: gateway reached, or forward exactly one hop. */
   forwardAccepted(accepted: AcceptedIngress): Promise<RoutedForwardResult>;
 }
-
 
 export function createRoutedForwarder({
   localNodeId,
@@ -122,7 +99,6 @@ export function createRoutedForwarder({
     now,
   });
 
-  /** One targeted send of `message` along `route`, or a fail-closed result. */
   const transmit = async (
     message: RideMessage<unknown>,
     route: GatewayRouteCandidate,
@@ -189,7 +165,6 @@ export function createRoutedForwarder({
       let lastFailure: RoutedSendResult | undefined;
       for (let attempt = 0; attempt < maxRouteAttempts; attempt++) {
         const now = monotonicClock();
-        // Direct previous hop from verified link identity, never message.originId.
         const previousHop = resolvePreviousHop(source, linkIdentities, now);
         const decision = decideGatewayForward(
           message,

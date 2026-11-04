@@ -11,18 +11,12 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-/**
- * Replays synthetic 100 Hz accelerometer / gyroscope traces plus 1 Hz GNSS fixes through the
- * detector. These prove the decision logic only. They are NOT crash-data validation: the thresholds
- * still need tuning on real rides.
- */
 class CrashDetectorCoreTest {
-
   private val t0 = 1_800_000_000_000L
   private val g = STANDARD_GRAVITY
 
   private val upright = doubleArrayOf(0.0, 0.0, g)
-  private val sideways = doubleArrayOf(g, 0.0, 0.0) // bike on its side: gravity along phone x
+  private val sideways = doubleArrayOf(g, 0.0, 0.0)
 
   private fun noise(t: Long, salt: Int): Double {
     val x = sin(((t - t0) / 10.0) * 127.1 + salt * 311.7) * 43758.5453
@@ -46,7 +40,6 @@ class CrashDetectorCoreTest {
     val accel: (Long) -> DoubleArray,
     val gyro: (Long) -> DoubleArray,
     val gravity: (Long) -> DoubleArray,
-    /** Ground speed in m/s at t, or null for "no fix". Sampled once per second. */
     val speed: (Long) -> Double?,
   )
 
@@ -82,7 +75,6 @@ class CrashDetectorCoreTest {
           quietGyro(t)
         }
       },
-      // The fused sensor reports the settled direction once the tumble is over.
       gravity = { t -> if (t < impactAt + 1200) upright else finalGravity },
       speed = speed@{ t ->
         if (speedBefore == null) return@speed null
@@ -132,7 +124,6 @@ class CrashDetectorCoreTest {
     return core to rec
   }
 
-  /** Steps the detector through [from, to) at 100 Hz, 1 Hz fixes and a 100 ms tick. */
   private fun run(
     core: CrashDetectorCore,
     profile: Profile,
@@ -224,7 +215,6 @@ class CrashDetectorCoreTest {
     assertEquals(CrashConfidence.HIGH, countdown.confidence)
     assertEquals("SEVERE", countdown.severity)
     assertEquals(40_000L, countdown.countdownMs)
-    // Confirmed ~5-6 s after the impact (4 s of rest after the tumble settles).
     val started = countdown.countdownEndsAt!! - 40_000
     assertTrue(started - (t0 + 10_000) in 4_500..8_000)
 
@@ -258,7 +248,6 @@ class CrashDetectorCoreTest {
     assertTrue(cancelled)
     assertTrue(rec.sos.isEmpty())
     assertTrue(rec.states.any { it.phase == CrashPhase.CANCELLED && it.cancelReason == "user" })
-    // After the 60 s cooldown it returns to idle.
     assertEquals(CrashPhase.IDLE, core.getState().phase)
   }
 
@@ -444,8 +433,6 @@ class CrashDetectorCoreTest {
 
   @Test
   fun gravitySensorWinsWhenAccelerometerMeanDisagrees() {
-    // Accelerometer says "sideways" but the fused sensor says the phone is back upright:
-    // the pipeline must trust the fused sensor and reject.
     val (core, rec) = detector()
     val base = crashProfile()
     val disagree = Profile(base.accel, base.gyro, { upright }, base.speed)
@@ -456,7 +443,6 @@ class CrashDetectorCoreTest {
   @Test
   fun calibrationPinsReferenceAndReportsTheShift() {
     val (core, rec) = detector()
-    // Phone mounted tilted 30 deg from the learned attitude.
     val tilted30 = doubleArrayOf(g * sin(Math.toRadians(30.0)), 0.0, g * cos(Math.toRadians(30.0)))
     run(core, Profile(::ridingAccel, ::quietGyro, { upright }, { 20.0 }), t0, t0 + 3_000)
     core.startCalibration(t0 + 3_000)

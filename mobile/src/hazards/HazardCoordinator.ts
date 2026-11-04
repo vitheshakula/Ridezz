@@ -25,17 +25,14 @@ export interface HazardCoordinatorOptions {
     shouldAnnounce: boolean,
   ) => void;
   onLocalSendResult: (packet: HazardPacket, outcomes: readonly HazardSendOutcome[]) => void;
-  /** Optional deterministic clock for policy tests; production uses Date.now. */
   clock?: () => number;
 }
 
 export interface HazardCoordinator {
   submitLocal(packet: HazardPacket): void;
-  /** Subscribes to both transports. Repeated calls share one active subscription set. */
   subscribe(): () => void;
 }
 
-/** Owns v1 hazard protocol, policy, and cross-transport routing without presentation effects. */
 export function createHazardCoordinator({
   senderId,
   nearbyTransport,
@@ -66,7 +63,6 @@ export function createHazardCoordinator({
 
     onIncomingAccepted(packet, ingress, decision.shouldAnnounce);
 
-    // Preserve Phase 1 relay invocation order and best-effort error handling.
     if (decision.relayLiveKit) {
       sendLiveKit(packet).catch(() => {});
     }
@@ -94,7 +90,6 @@ export function createHazardCoordinator({
           },
         );
 
-      // Preserve Phase 1 invocation order: Nearby first, then LiveKit when online.
       const sends = decision.sendNearby ? [attempt('mesh', sendNearby(packet))] : [];
       if (decision.sendLiveKit) {
         sends.push(attempt('cloud', sendLiveKit(packet)));

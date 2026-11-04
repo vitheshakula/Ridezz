@@ -1,5 +1,11 @@
-import { createPersistentOutbox, type PersistentOutboxStore } from '../src/connectivity/persistentOutbox';
-import { createReliableDeliveryEngine, type ReliableDeliveryEvent } from '../src/connectivity/reliableDeliveryEngine';
+import {
+  createPersistentOutbox,
+  type PersistentOutboxStore,
+} from '../src/connectivity/persistentOutbox';
+import {
+  createReliableDeliveryEngine,
+  type ReliableDeliveryEvent,
+} from '../src/connectivity/reliableDeliveryEngine';
 import { createRideMessage } from '../src/connectivity/protocol/rideMessage';
 
 const NOW = 1_700_000_000_000;
@@ -46,7 +52,11 @@ describe('ReliableDeliveryEngine', () => {
     const attempt = jest.fn(async () => outcomes.shift()!);
     const events: ReliableDeliveryEvent[] = [];
     const outbox = createPersistentOutbox({ store: memoryStore(), random: () => 0 });
-    const engine = createReliableDeliveryEngine({ outbox, attempt, onEvent: event => events.push(event) });
+    const engine = createReliableDeliveryEngine({
+      outbox,
+      attempt,
+      onEvent: event => events.push(event),
+    });
     await engine.start();
     await engine.submit(message());
     await jest.advanceTimersByTimeAsync(0);
@@ -63,9 +73,10 @@ describe('ReliableDeliveryEngine', () => {
   test('connectivity recovery triggers due work without creating concurrent duplicate attempts', async () => {
     let resolveAttempt: (() => void) | undefined;
     const attempt = jest.fn(
-      () => new Promise<{ state: 'retry'; reason: string }>(resolve => {
-        resolveAttempt = () => resolve({ state: 'retry', reason: 'offline' });
-      }),
+      () =>
+        new Promise<{ state: 'retry'; reason: string }>(resolve => {
+          resolveAttempt = () => resolve({ state: 'retry', reason: 'offline' });
+        }),
     );
     const engine = createReliableDeliveryEngine({
       outbox: createPersistentOutbox({ store: memoryStore(), random: () => 0 }),

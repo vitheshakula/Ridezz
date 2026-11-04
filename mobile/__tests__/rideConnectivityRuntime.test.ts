@@ -6,9 +6,7 @@ import { createRideMessageIdGenerator } from '../src/connectivity/protocol/rideM
 import { createRideMessage, type RideMessage } from '../src/connectivity/protocol/rideMessage';
 import { serializeRideMessage } from '../src/connectivity/protocol/rideMessageCodec';
 import { HEARTBEAT_INTERVAL_MS } from '../src/connectivity/protocol/heartbeat';
-import {
-  GATEWAY_ADVERTISEMENT_INTERVAL_MS,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { GATEWAY_ADVERTISEMENT_INTERVAL_MS } from '../src/connectivity/protocol/gatewayAdvertisement';
 
 const WALL = 1_700_000_000_000;
 const MONO = 50_000;
@@ -18,7 +16,6 @@ const GW = 'rider-c';
 
 const ep = (nodeId: string) => `endpoint-${nodeId.slice(-1).toUpperCase()}`;
 
-/** Deterministic stand-in for crypto.getRandomValues: a global counter in the first 4 bytes. */
 let counter = 0;
 function secureIds() {
   return jest.fn(
@@ -36,11 +33,6 @@ interface Delivery {
   payload: string;
 }
 
-/**
- * Simulated Nearby neighbourhood of real runtimes. The harness only moves packets: broadcast
- * reaches every neighbour's registered onPayloadFrom listener; sendTo reaches the neighbour that
- * owns the endpoint. All protocol behaviour comes from the runtimes.
- */
 function createNetwork() {
   const listeners = new Map<string, (source: { endpointId: string }, payload: string) => void>();
   const edges = new Set<string>();
@@ -81,7 +73,6 @@ function createNetwork() {
         unsubscribes.push(unsubscribe);
         return unsubscribe;
       }),
-      /** The Phase 1 receive path: the protocol runtime must never use it. */
       onPayload: jest.fn(),
     };
     const generateMessageId = secureIds();
@@ -113,8 +104,7 @@ function createNetwork() {
       unsubscribes,
       generateMessageId,
       setReachable: (value: boolean) => (reachable = value),
-      receives: () =>
-        events.flatMap(e => (e.kind === 'receive' ? [e.result] : [])),
+      receives: () => events.flatMap(e => (e.kind === 'receive' ? [e.result] : [])),
     };
     nodes.set(id, node);
     return node;
@@ -125,7 +115,6 @@ function createNetwork() {
     connect(x: string, y: string) {
       edges.add([x, y].sort().join('|'));
     },
-    /** Delivers queued packets until every delivery has been processed by its runtime. */
     async settle() {
       for (let round = 0; round < 200; round++) {
         while (queue.length > 0) {
@@ -148,10 +137,8 @@ function createNetwork() {
 
 type SimNode = ReturnType<ReturnType<typeof createNetwork>['makeNode']>;
 
-/** Test-side inspection of a captured packet (protocol validation happens inside the runtimes). */
 const decode = (payload: string) => JSON.parse(payload) as RideMessage<unknown>;
 
-/** Types of a node's broadcasts other than heartbeats and gateway advertisements. */
 function dataPlaneBroadcasts(node: SimNode) {
   return node.transport.broadcast.mock.calls
     .map(([payload]) => decode(payload).type)
@@ -214,7 +201,7 @@ describe('runtime lifecycle', () => {
       hopCount: 0,
       maxHops: 0,
     });
-    expect(a.generateMessageId).toHaveBeenCalledTimes(1); // heartbeat only; no advertisement
+    expect(a.generateMessageId).toHaveBeenCalledTimes(1);
     expect(a.runtime.running).toBe(true);
   });
 
@@ -228,7 +215,7 @@ describe('runtime lifecycle', () => {
     await jest.advanceTimersByTimeAsync(HEARTBEAT_INTERVAL_MS);
 
     expect(a.transport.onPayloadFrom).toHaveBeenCalledTimes(1);
-    expect(a.transport.broadcast).toHaveBeenCalledTimes(2); // immediate + one interval
+    expect(a.transport.broadcast).toHaveBeenCalledTimes(2);
   });
 
   test('stop unsubscribes once, leaves no timers and does no further work', async () => {
@@ -260,7 +247,7 @@ describe('runtime lifecycle', () => {
       status: 'runtime_not_running',
     });
     expect(a.transport.sendTo).not.toHaveBeenCalled();
-    a.runtime.stop(); // stopping an idle runtime is safe
+    a.runtime.stop();
   });
 
   test('every own heartbeat and advertisement id comes from the secure generator', async () => {
@@ -288,7 +275,6 @@ describe('runtime lifecycle', () => {
     const heard = (n: SimNode) =>
       n.receives().flatMap(r => (r.stage === 'heartbeat' ? [r.result] : []));
     expect(heard(b)).toMatchObject([{ observed: true, nodeId: 'rider-a' }]);
-    // The other ride's runtime rejects this ride's traffic: no shared state.
     expect(bOtherRide.receives()).toEqual([{ stage: 'ingress_rejected', reason: 'wrong_ride' }]);
   });
 
@@ -340,7 +326,6 @@ describe('A ↔ B heartbeats through the runtimes', () => {
     expect(a.receives()).toMatchObject([
       { stage: 'heartbeat', result: { nodeId: 'rider-b', link: { change: 'new_link' } } },
     ]);
-    // Heartbeats are never relayed.
     expect(a.transport.broadcast).toHaveBeenCalledTimes(1);
     expect(b.transport.broadcast).toHaveBeenCalledTimes(1);
   });
@@ -432,8 +417,9 @@ describe('A ↔ B ↔ C: gateway discovery and routed delivery through the runti
 
     expect(ownAdvertisements(c)).toHaveLength(1);
     const cycles = c.events.filter(e => e.kind === 'gateway_advertisement_cycle');
-    expect(cycles.slice(1).every(e => e.outcome.ok && e.outcome.value.status === 'not_reachable'))
-      .toBe(true);
+    expect(
+      cycles.slice(1).every(e => e.outcome.ok && e.outcome.value.status === 'not_reachable'),
+    ).toBe(true);
   });
 
   test('full path: A → B → C gateway_reached, targeted only, same id', async () => {

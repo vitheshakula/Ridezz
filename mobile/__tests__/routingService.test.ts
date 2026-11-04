@@ -30,7 +30,12 @@ describe('fetchRoadRouteDetailed', () => {
         code: 'Ok',
         routes: [
           {
-            geometry: { coordinates: [[78.4, 17.3], [78.5, 17.4]] },
+            geometry: {
+              coordinates: [
+                [78.4, 17.3],
+                [78.5, 17.4],
+              ],
+            },
             distance: 1200,
             duration: 300,
           },
@@ -46,7 +51,10 @@ describe('fetchRoadRouteDetailed', () => {
     ).resolves.toEqual({
       ok: true,
       route: {
-        coordinates: [[78.4, 17.3], [78.5, 17.4]],
+        coordinates: [
+          [78.4, 17.3],
+          [78.5, 17.4],
+        ],
         distanceMeters: 1200,
         durationSeconds: 300,
       },

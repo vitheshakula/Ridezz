@@ -1,7 +1,3 @@
-# Spoken hazard phrases for the offline recognizer.
-# Each entry: (name, rule phrase, 'spoken phrase|spoken phrase|...'). The rule phrase is a phrase that
-# HAZARD_RULES (src/services/SpeechHazardService.ts) already maps to a hazard type, so every spoken
-# variant ends up as that hazard. Used by make_grammar.py to build assets/vosk-grammar.json.
 CATS = [
 ("missed turn","missed turn","""missed turn|missed the turn|we missed the turn|you missed the turn|I missed the turn|you missed our turn|turn back|we need to turn back|you need to turn back"""),
 ("wrong turn","wrong turn","""wrong turn|took a wrong turn|we took a wrong turn"""),

@@ -10,7 +10,6 @@ import android.os.Bundle
 import android.os.Looper
 import androidx.core.content.ContextCompat
 
-/** Why GNSS is or is not feeding the detector. Surfaced to JS as a plain string. */
 enum class GnssStatus(val wire: String) {
   ACTIVE("active"),
   PERMISSION_MISSING("permission_missing"),
@@ -19,26 +18,14 @@ enum class GnssStatus(val wire: String) {
   STOPPED("stopped"),
 }
 
-/**
- * 1 Hz GPS fixes for the crash pipeline's speed correlation (stage 4), delivered on the sensor
- * thread's looper so the detector stays single-threaded. Timestamps use the same elapsed-realtime
- * timeline as the sensors via [EpochClock].
- *
- * Deliberately separate from the JS location-sharing watch: that one uses a 15 m distance filter
- * and a 4 s interval and stops delivering once the bike stops, which is exactly the moment this
- * needs a fresh speed. Both read the same GNSS hardware, so the extra cost is small. Fixes are used
- * in memory only; nothing is logged or stored here.
- */
 class GnssSpeedProvider(
   context: Context,
   private val clock: EpochClock,
   private val onFix: (t: Long, speedMps: Double?, lat: Double, lon: Double, bearingDeg: Double?) -> Unit,
   private val onStatus: (GnssStatus) -> Unit,
 ) : LocationListener {
-
   companion object {
     private const val MIN_TIME_MS = 1_000L
-    /** Fixes less accurate than this (m) are ignored: their speed is not trustworthy. */
     private const val MAX_ACCURACY_M = 100f
   }
 
@@ -79,7 +66,6 @@ class GnssSpeedProvider(
     try {
       locationManager.removeUpdates(this)
     } catch (e: SecurityException) {
-      // Permission revoked while running: nothing left to remove.
     }
   }
 

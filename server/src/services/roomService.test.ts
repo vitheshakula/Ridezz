@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { PrismaClient, Room } from '@prisma/client';
-import {
-  createOrReuseHostedRoom,
-  findRoomForJoin,
-  updateRoomDestination,
-} from './roomService';
+import { createOrReuseHostedRoom, findRoomForJoin, updateRoomDestination } from './roomService';
 
 const destination = { name: 'Golconda Fort', lat: 17.3833, lng: 78.4011 };
 
@@ -176,8 +172,14 @@ describe('findRoomForJoin', () => {
       room: { findUnique: async () => found },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await findRoomForJoin(prisma, '54321', 'host-1'), { room: found, isHost: true });
-    assert.deepEqual(await findRoomForJoin(prisma, '54321', 'guest-1'), { room: found, isHost: false });
+    assert.deepEqual(await findRoomForJoin(prisma, '54321', 'host-1'), {
+      room: found,
+      isHost: true,
+    });
+    assert.deepEqual(await findRoomForJoin(prisma, '54321', 'guest-1'), {
+      room: found,
+      isHost: false,
+    });
   });
 
   it('returns null when the room does not exist', async () => {
@@ -239,7 +241,9 @@ describe('updateRoomDestination', () => {
       },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await updateRoomDestination(prisma, '99999', 'host-1', destination), { kind: 'not_found' });
+    assert.deepEqual(await updateRoomDestination(prisma, '99999', 'host-1', destination), {
+      kind: 'not_found',
+    });
     assert.equal(updated, false);
   });
 
@@ -255,7 +259,9 @@ describe('updateRoomDestination', () => {
       },
     } as unknown as PrismaClient;
 
-    assert.deepEqual(await updateRoomDestination(prisma, '54321', 'guest-1', destination), { kind: 'forbidden' });
+    assert.deepEqual(await updateRoomDestination(prisma, '54321', 'guest-1', destination), {
+      kind: 'forbidden',
+    });
     assert.equal(updated, false);
   });
 });

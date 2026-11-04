@@ -1,13 +1,5 @@
 package com.rideaze.mobile.crash
 
-/**
- * Fixed-capacity circular buffer of 3-axis samples (t, x, y, z) kept in primitive arrays, so
- * sampling at 100-200 Hz allocates nothing. The oldest sample is overwritten when full. Index 0 is
- * the oldest retained sample.
- *
- * Capacity [IMU_RING_CAPACITY] holds just over 3 s at 200 Hz, so the seconds before an impact are
- * still available when the pipeline evaluates it. Not thread-safe: one thread owns it.
- */
 class SampleRing(private val capacity: Int = IMU_RING_CAPACITY) {
   private val ts = LongArray(capacity)
   private val xs = DoubleArray(capacity)
@@ -50,7 +42,6 @@ class SampleRing(private val capacity: Int = IMU_RING_CAPACITY) {
     return Math.sqrt(xs[i] * xs[i] + ys[i] * ys[i] + zs[i] * zs[i])
   }
 
-  /** Index of the first sample with time >= [sinceMs], or [size] if there is none. */
   fun firstIndexAtOrAfter(sinceMs: Long): Int {
     var i = size
     while (i > 0 && ts[at(i - 1)] >= sinceMs) {
@@ -60,7 +51,6 @@ class SampleRing(private val capacity: Int = IMU_RING_CAPACITY) {
   }
 
   companion object {
-    /** ~3.2 s at 200 Hz, ~6.4 s at the 100 Hz the app actually requests. */
     const val IMU_RING_CAPACITY = 640
   }
 }

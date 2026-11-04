@@ -1,35 +1,3 @@
-/**
- * Hermes on this stack provides `TextEncoder` natively but not `TextDecoder`
- * (confirmed on-device: `typeof TextEncoder === 'function'`, `typeof
- * TextDecoder === 'undefined'`) — React Native's own core polyfills don't
- * provide either (checked node_modules/react-native/Libraries/Core).
- * livekit-client references `TextDecoder` while decoding incoming protocol
- * messages, reached during livekit-client's module evaluation via the same
- * dependency chain as `DOMException` (see ./domException.ts) — so this must
- * be in place before livekit-client is imported by anything, not just
- * before it's used.
- *
- * This is a hand-written UTF-8-only implementation, which is normally worth
- * avoiding in favor of a vetted package. We tried the obvious one first —
- * `@livekit/react-native` already vendors `FastestSmallestTextEncoderDecoder`
- * (CC0-1.0) as `./polyfills/EncoderDecoderTogether.min.js`, and we depended
- * on the same npm package directly. It didn't work: diffing Metro's compiled
- * bundle output against the original source showed that the line capturing
- * the existing `TextDecoder` value (`F = q.TextDecoder`) is silently dropped
- * during Metro's transform of that pre-minified file, so the polyfill's
- * `F || (q.TextDecoder = x)` assignment never runs — proven on-device via
- * `Object.getOwnPropertyDescriptor`, which showed no property was ever
- * created. That's a bug in how this project's Metro/Babel pipeline handles
- * that specific vendored file, not an import-ordering problem, and it would
- * affect @livekit/react-native's own copy of the file identically regardless
- * of import order. A direct, explicit assignment (the same pattern already
- * proven working for DOMException) sidesteps it entirely.
- *
- * Supports the `{ stream: true }` decode option, since livekit-client's data
- * stream reassembly (IncomingDataStreamManager.ts, StreamReader.ts) decodes
- * incrementally across chunk boundaries and needs multi-byte sequences split
- * across chunks to carry over correctly.
- */
 /* eslint-disable no-bitwise -- bit ops are the actual UTF-8 codec, not incidental */
 
 class RidezzTextEncoder {
@@ -42,7 +10,6 @@ class RidezzTextEncoder {
     for (let i = 0; i < str.length; i++) {
       let codePoint = str.codePointAt(i)!;
       if (codePoint > 0xffff) {
-        // codePointAt already consumed the low surrogate; skip it.
         i++;
       }
 
@@ -88,18 +55,13 @@ class RidezzTextDecoder {
   constructor(label: string = 'utf-8', options: TextDecoderOptions = {}) {
     const normalized = label.toLowerCase();
     if (!['utf-8', 'utf8', 'unicode-1-1-utf-8'].includes(normalized)) {
-      throw new RangeError(
-        `Ridezz's TextDecoder polyfill only supports utf-8, got "${label}"`,
-      );
+      throw new RangeError(`Ridezz's TextDecoder polyfill only supports utf-8, got "${label}"`);
     }
     this.fatal = options.fatal ?? false;
     this.ignoreBOM = options.ignoreBOM ?? false;
   }
 
-  decode(
-    input?: ArrayBuffer | ArrayBufferView,
-    options: TextDecodeOptions = {},
-  ): string {
+  decode(input?: ArrayBuffer | ArrayBufferView, options: TextDecodeOptions = {}): string {
     let bytes: number[];
     if (input === undefined) {
       bytes = this.pendingBytes;
@@ -145,7 +107,6 @@ class RidezzTextDecoder {
       }
 
       if (i + length > bytes.length) {
-        // Sequence is cut off by the end of this chunk.
         if (options.stream) {
           this.pendingBytes = bytes.slice(i);
           return result;
@@ -178,10 +139,7 @@ class RidezzTextDecoder {
 
       if (codePoint > 0xffff) {
         codePoint -= 0x10000;
-        result += String.fromCharCode(
-          0xd800 + (codePoint >> 10),
-          0xdc00 + (codePoint & 0x3ff),
-        );
+        result += String.fromCharCode(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff));
       } else {
         result += String.fromCharCode(codePoint);
       }

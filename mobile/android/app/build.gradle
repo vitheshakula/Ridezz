@@ -2,14 +2,6 @@ apply plugin: "com.android.application"
 apply plugin: "org.jetbrains.kotlin.android"
 apply plugin: "com.facebook.react"
 
-/**
- * Environments. Each product flavor (dev, staging, prod) reads its own env file from mobile/.
- * react-native-config turns that file into BuildConfig fields, which the JS side reads through
- * src/config/appConfig.ts. Copy the matching `.env.<flavor>.example` to `.env.<flavor>` first.
- *
- * react-native-config picks the file from the *task name* (e.g. installDevDebug -> .env.dev), so a
- * build must always name its flavor -- see the guard below.
- */
 def appFlavors = ["dev", "staging", "prod"]
 project.ext.envConfigFiles = [
     dev    : ".env.dev",
@@ -17,9 +9,6 @@ project.ext.envConfigFiles = [
     prod   : ".env.prod",
 ]
 
-// Fail fast on builds that would silently pick the wrong env file: a flavorless task such as
-// `assembleRelease` would build every flavor against the same (default) file, and naming two
-// flavors in one invocation would build both against the first one's file.
 def appBuildTask = ~/(?i)(assemble|bundle|install)(debug|debugoptimized|release)?/
 def requestedTasks = gradle.startParameter.taskNames.collect { it.tokenize(':').last() }
 if (requestedTasks.any { it ==~ appBuildTask }) {
@@ -38,76 +27,14 @@ if (requestedFlavors.size() > 1) {
 
 apply from: project(':react-native-config').projectDir.getPath() + "/dotenv.gradle"
 
-
-/**
- * This is the configuration block to customize your React Native Android app.
- * By default you don't need to apply any configuration, just uncomment the lines you need.
- */
 react {
-    /* Folders */
-    //   The root of your project, i.e. where "package.json" lives. Default is '../..'
-    // root = file("../../")
-    //   The folder where the react-native NPM package is. Default is ../../node_modules/react-native
-    // reactNativeDir = file("../../node_modules/react-native")
-    //   The folder where the react-native Codegen package is. Default is ../../node_modules/@react-native/codegen
-    // codegenDir = file("../../node_modules/@react-native/codegen")
-    //   The cli.js file which is the React Native CLI entrypoint. Default is ../../node_modules/react-native/cli.js
-    // cliFile = file("../../node_modules/react-native/cli.js")
-
-    /* Variants */
-    //   The list of variants to that are debuggable. For those we're going to
-    //   skip the bundling of the JS bundle and the assets. Default is "debug", "debugOptimized".
-    //   If you add flavors like lite, prod, etc. you'll have to list your debuggableVariants.
-    // debuggableVariants = ["liteDebug", "liteDebugOptimized", "prodDebug", "prodDebugOptimized"]
     debuggableVariants = appFlavors.collectMany { [it + "Debug", it + "DebugOptimized"] }
 
-    /* Bundling */
-    //   A list containing the node command and its flags. Default is just 'node'.
-    // nodeExecutableAndArgs = ["node"]
-    //
-    //   The command to run when bundling. By default is 'bundle'
-    // bundleCommand = "ram-bundle"
-    //
-    //   The path to the CLI configuration file. Default is empty.
-    // bundleConfig = file(../rn-cli.config.js)
-    //
-    //   The name of the generated asset file containing your JS bundle
-    // bundleAssetName = "MyApplication.android.bundle"
-    //
-    //   The entry file for bundle generation. Default is 'index.android.js' or 'index.js'
-    // entryFile = file("../js/MyApplication.android.js")
-    //
-    //   A list of extra flags to pass to the 'bundle' commands.
-    //   See https://github.com/react-native-community/cli/blob/main/docs/commands.md#bundle
-    // extraPackagerArgs = []
-
-    /* Hermes Commands */
-    //   The hermes compiler command to run. By default it is 'hermesc'
-    // hermesCommand = "$rootDir/my-custom-hermesc/bin/hermesc"
-    //
-    //   The list of flags to pass to the Hermes compiler. By default is "-O", "-output-source-map"
-    // hermesFlags = ["-O", "-output-source-map"]
-
-    /* Autolinking */
     autolinkLibrariesWithApp()
 }
 
-/**
- * Set this to true to Run Proguard on Release builds to minify the Java bytecode.
- */
 def enableProguardInReleaseBuilds = false
 
-/**
- * The preferred build flavor of JavaScriptCore (JSC)
- *
- * For example, to use the international variant, you can use:
- * `def jscFlavor = io.github.react-native-community:jsc-android-intl:2026004.+`
- *
- * The international variant includes ICU i18n library and necessary data
- * allowing to use e.g. `Date.toLocaleString` and `String.localeCompare` that
- * give correct results when using with locales other than en-US. Note that
- * this variant is about 6MiB larger per architecture than default.
- */
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 android {
@@ -122,8 +49,6 @@ android {
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
         versionName "1.0"
-        // BuildConfig lives in the namespace, not the (suffixed) applicationId; tell
-        // react-native-config where to find it.
         resValue "string", "build_config_package", "com.rideaze.mobile"
     }
 
@@ -133,7 +58,6 @@ android {
 
     flavorDimensions "environment"
     productFlavors {
-        // Installs side by side with the others thanks to its own application id.
         dev {
             dimension "environment"
             applicationIdSuffix ".dev"
@@ -146,7 +70,6 @@ android {
             versionNameSuffix "-staging"
             resValue "string", "app_name", "Rideaze Staging"
         }
-        // The real app: plain com.rideaze.mobile, the only id that ever goes to the Play Store.
         prod {
             dimension "environment"
             resValue "string", "app_name", "Rideaze"
@@ -165,8 +88,6 @@ android {
             signingConfig signingConfigs.debug
         }
         release {
-            // Caution! In production, you need to generate your own keystore file.
-            // see https://reactnative.dev/docs/signed-apk-android.
             signingConfig signingConfigs.debug
             minifyEnabled enableProguardInReleaseBuilds
             proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
@@ -175,7 +96,6 @@ android {
 }
 
 dependencies {
-    // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
     if (hermesEnabled.toBoolean()) {
@@ -184,12 +104,9 @@ dependencies {
         implementation jscFlavor
     }
 
-    // Offline on-device speech recognition for hazard-word detection (VoiceHazardModule).
     implementation 'com.alphacephei:vosk-android:0.3.47'
 
-    // Offline rider-to-rider hazard mesh (NearbyMeshModule). Needs Google Play Services on the phone.
     implementation 'com.google.android.gms:play-services-nearby:19.3.0'
 
-    // JVM unit tests for the pure-Kotlin crash detection pipeline (app/src/test).
     testImplementation 'junit:junit:4.13.2'
 }

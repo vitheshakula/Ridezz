@@ -1,15 +1,15 @@
 import { haversineDistanceMeters, nearestUnvisited, sortByDistance } from '../src/utils/geoMath';
 
 const HYDERABAD = { latitude: 17.385, longitude: 78.4867 };
-const GOLCONDA_FORT = { latitude: 17.3833, longitude: 78.4011 }; // ~9.1km from Hyderabad center
-const CHARMINAR = { latitude: 17.3616, longitude: 78.4747 }; // ~3km from Hyderabad center
+const GOLCONDA_FORT = { latitude: 17.3833, longitude: 78.4011 };
+const CHARMINAR = { latitude: 17.3616, longitude: 78.4747 };
 
 describe('haversineDistanceMeters', () => {
   it('is zero for the same point', () => {
     expect(haversineDistanceMeters(HYDERABAD, HYDERABAD)).toBe(0);
   });
 
-  it('is about 111.2km per degree of latitude at the equator (the formula\'s own constant)', () => {
+  it("is about 111.2km per degree of latitude at the equator (the formula's own constant)", () => {
     const a = { latitude: 0, longitude: 0 };
     const b = { latitude: 1, longitude: 0 };
     expect(haversineDistanceMeters(a, b)).toBeCloseTo(111_195, -2);
@@ -33,7 +33,6 @@ describe('haversineDistanceMeters', () => {
   it('handles crossing the antimeridian without blowing up', () => {
     const a = { latitude: 0, longitude: 179.9 };
     const b = { latitude: 0, longitude: -179.9 };
-    // 0.2 degrees apart the short way, not 359.8 degrees the long way.
     expect(haversineDistanceMeters(a, b)).toBeLessThan(30_000);
   });
 

@@ -141,7 +141,6 @@ describe('GatewayState: freshness and pruning', () => {
 
     gw.prune(T0 + FRESH);
 
-    // Querying earlier proves removal: an unpruned rider-c would look fresh at T0 + 1.
     expect(gw.getGateways(T0 + 6_001).map(g => g.nodeId)).toEqual(['rider-d']);
     expect(gw.observe('rider-c', 'transport-x', 1, T0 + FRESH)).toMatchObject({
       change: 'new_gateway',

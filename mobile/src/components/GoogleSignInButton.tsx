@@ -7,10 +7,8 @@ import { font, homeRadius } from '../homeTheme';
 import { describeAuthError, errorCode } from '../utils/authErrors';
 
 interface GoogleSignInButtonProps {
-  /** 'login' signs in an existing account only; 'signup' creates one if needed. */
   mode: GoogleMode;
   navigation?: { navigate: (screen: 'JoinScreen' | 'SignupPage') => void };
-  /** Disables the button while the surrounding form is busy. */
   disabled?: boolean;
   label?: string;
 }
@@ -32,14 +30,13 @@ export function GoogleSignInButton({
     try {
       const result = await loginWithGoogle(mode);
       if (!result) {
-        return; // backed out of the account picker -- nothing to report
+        return;
       }
       await login(result.token, result.user);
       navigation?.navigate('JoinScreen');
     } catch (error) {
       const message = describeAuthError(error, 'Google sign-in failed. Please try again.');
       if (mode === 'login' && errorCode(error) === 'ACCOUNT_NOT_FOUND') {
-        // Not a failure so much as a fork in the road: offer the way forward.
         Alert.alert('No account found', message, [
           { text: 'Cancel', style: 'cancel' },
           { text: 'Create account', onPress: () => navigation?.navigate('SignupPage') },

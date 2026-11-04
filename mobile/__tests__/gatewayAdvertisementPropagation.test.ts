@@ -48,11 +48,6 @@ interface Delivery {
   payload: string;
 }
 
-/**
- * A simulated Nearby neighbourhood. broadcast() reaches every neighbour; sendTo() reaches only the
- * neighbour owning that endpoint. Deliveries are queued and drained in order through each node's
- * real receive pipeline; nothing is suppressed by the simulator.
- */
 function createNetwork() {
   const nodes = new Map<string, ReturnType<typeof makeNode>>();
   const edges = new Set<string>();
@@ -127,7 +122,6 @@ function createNetwork() {
     connect(x: string, y: string) {
       edges.add([x, y].sort().join('|'));
     },
-    /** Drains every queued delivery, including those caused by earlier deliveries. */
     async settle(maxDeliveries = 500) {
       let delivered = 0;
       while (queue.length > 0) {
@@ -171,7 +165,6 @@ function application(originId: string, maxHops = 4) {
   });
 }
 
-/** Every node broadcasts one direct heartbeat; links and presence form naturally. */
 async function heartbeatAll(net: Network) {
   for (const node of net.nodes.values()) {
     await node.transport.broadcast(serializeRideMessage(heartbeat(node.id)));
@@ -179,14 +172,12 @@ async function heartbeatAll(net: Network) {
   await net.settle();
 }
 
-/** Ingress-accepted deliveries of message `id` at node `to`. */
 function acceptedAt(net: Network, to: string, id: string) {
   return net.log.filter(
     e => e.to === to && e.result.stage !== 'ingress_rejected' && decode(e.payload).id === id,
   );
 }
 
-/** Broadcasts by `node` of message `id` (its own relays). */
 function broadcastsOf(node: SimNode, id: string) {
   return node.transport.broadcast.mock.calls
     .map(([payload]) => decode(payload))
@@ -218,7 +209,6 @@ describe('A ↔ B ↔ C: automatic gateway discovery through the receivers', () 
     await c.transport.broadcast(serializeRideMessage(g1));
     await net.settle();
 
-    // B: accepted once from endpoint-C, recorded C direct, relayed G1 (same id, origin, hop 1).
     expect(acceptedAt(net, 'rider-b', g1.id)).toHaveLength(1);
     expect(acceptedAt(net, 'rider-b', g1.id)[0]).toMatchObject({
       from: GW,
@@ -230,7 +220,6 @@ describe('A ↔ B ↔ C: automatic gateway discovery through the receivers', () 
     });
     expect(broadcastsOf(b, g1.id)).toEqual([{ ...g1, hopCount: 1 }]);
 
-    // A: accepted once from endpoint-B, direct sender resolved to B, recorded C via B at hop 1.
     expect(acceptedAt(net, 'rider-a', g1.id)).toHaveLength(1);
     expect(acceptedAt(net, 'rider-a', g1.id)[0]).toMatchObject({
       from: 'rider-b',
@@ -240,7 +229,6 @@ describe('A ↔ B ↔ C: automatic gateway discovery through the receivers', () 
       },
     });
 
-    // Echoes: B's relay reaches C (own message), A's relay reaches B (already seen).
     expect(net.log).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -256,7 +244,6 @@ describe('A ↔ B ↔ C: automatic gateway discovery through the receivers', () 
       ]),
     );
 
-    // A now has a routable gateway without any manual insertion.
     const choice = selectGatewayForwardingRoute(
       getGatewayRouteCandidates({
         localNodeId: 'rider-a',
@@ -336,12 +323,10 @@ describe('flood termination', () => {
     const delivered = await net.settle();
 
     const g1Deliveries = net.log.filter(e => decode(e.payload).type === 'gateway_advertisement');
-    // Only one advertisement id ever exists: relays never mint new ids.
     expect(new Set(g1Deliveries.map(e => decode(e.payload).id))).toEqual(new Set([g1.id]));
     expect(acceptedAt(net, 'rider-a', g1.id)).toHaveLength(1);
     expect(acceptedAt(net, 'rider-b', g1.id)).toHaveLength(1);
     expect(acceptedAt(net, GW, g1.id)).toHaveLength(0);
-    // Each node relays once; every other copy is rejected by ingress.
     expect(broadcastsOf(a, g1.id)).toHaveLength(1);
     expect(broadcastsOf(b, g1.id)).toHaveLength(1);
     const rejected = g1Deliveries.filter(e => e.result.stage === 'ingress_rejected');
@@ -351,13 +336,11 @@ describe('flood termination', () => {
       'local_origin',
       'local_origin',
     ]);
-    // Bounded: C's 2 + A's 2 + B's 2 deliveries, hop counts within the advertisement limit.
     expect(g1Deliveries).toHaveLength(6);
     expect(Math.max(...g1Deliveries.map(e => decode(e.payload).hopCount))).toBeLessThanOrEqual(
       GATEWAY_ADVERTISEMENT_MAX_HOPS,
     );
     expect(delivered).toBe(6);
-    // Both A and B learned C directly (hop 0).
     for (const node of [a, b]) {
       expect(node.gateways.getGateway(GW, MONO)?.observations.map(o => o.hopCount)).toEqual([0]);
     }
@@ -365,7 +348,6 @@ describe('flood termination', () => {
 });
 
 describe('advertisement relay failures and refusals', () => {
-  /** B with neighbours A and C linked by heartbeats, and an optional broadcast override. */
   async function nodeB(options: NodeOptions = {}) {
     const net = createNetwork();
     const b = net.makeNode('rider-b', options);
@@ -430,7 +412,7 @@ describe('advertisement relay failures and refusals', () => {
     expect(await b.receive(GW, serializeRideMessage(advertisement('rider-b')))).toMatchObject({
       reason: 'local_origin',
     });
-    expect(b.transport.broadcast).toHaveBeenCalledTimes(1); // only the first copy
+    expect(b.transport.broadcast).toHaveBeenCalledTimes(1);
   });
 
   test('an expired advertisement is rejected at ingress', async () => {
@@ -489,7 +471,7 @@ describe('advertisement relay failures and refusals', () => {
       let settled: unknown;
       b.receive(GW, serializeRideMessage(advertisement(GW))).then(r => (settled = r));
       await Promise.resolve();
-      expect(b.gateways.isKnownGateway(GW, MONO)).toBe(true); // before the relay settles
+      expect(b.gateways.isKnownGateway(GW, MONO)).toBe(true);
 
       await jest.advanceTimersByTimeAsync(OPERATIONAL_SEND_TIMEOUT_MS - 1);
       expect(settled).toBeUndefined();

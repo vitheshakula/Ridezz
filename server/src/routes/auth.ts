@@ -12,28 +12,33 @@ import { signAuthToken } from '../auth/tokens';
 import type { GoogleIdentity, GoogleVerifier } from '../auth/google';
 import type { Env } from '../config/env';
 import { asyncHandler, logRequestError } from '../http';
-import { loginWithPassword, prepareCurrentUser, prepareSessionUser, registerWithPassword } from '../services/authService';
+import {
+  loginWithPassword,
+  prepareCurrentUser,
+  prepareSessionUser,
+  registerWithPassword,
+} from '../services/authService';
 import { reconcileGoogleAccount } from '../services/googleAuthService';
 
 interface AuthRouterDeps {
   prisma: PrismaClient;
   env: Env;
   requireAuth: RequestHandler;
-  /** Absent when GOOGLE_CLIENT_ID isn't configured; Google endpoints then answer 503. */
   verifyGoogleIdToken?: GoogleVerifier;
 }
 
-export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken }: AuthRouterDeps): Router {
+export function createAuthRouter({
+  prisma,
+  env,
+  requireAuth,
+  verifyGoogleIdToken,
+}: AuthRouterDeps): Router {
   const router = Router();
 
-  // Every way of signing in ends here, so this is where a rider from before room codes existed is
-  // given theirs: whoever gets a session gets a room code with it.
   const session = async (account: User) => {
     const user = await prepareSessionUser(prisma, account);
     return { token: signAuthToken(user.id, env.jwtSecret), user };
   };
-
-  // ---- Email + password -------------------------------------------------------------------
 
   router.post(
     ['/signup', '/register'],
@@ -80,7 +85,9 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
 
       const result = await loginWithPassword(prisma, cleanEmail, password);
       if (result.kind === 'google_only') {
-        return res.status(401).json({ message: 'This account uses Google sign-in. Tap "Continue with Google".' });
+        return res
+          .status(401)
+          .json({ message: 'This account uses Google sign-in. Tap "Continue with Google".' });
       }
       if (result.kind === 'invalid_credentials') {
         return res.status(401).json({ message: 'Invalid credentials.' });
@@ -89,9 +96,6 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
     }),
   );
 
-  // ---- Google -----------------------------------------------------------------------------
-
-  /** The public web client id the app must request its Google token for. Not a secret. */
   router.get('/google/config', (_req, res) => {
     if (!env.googleClientId) {
       return res.status(503).json({ message: 'Google sign-in is not configured on the server.' });
@@ -140,13 +144,13 @@ export function createAuthRouter({ prisma, env, requireAuth, verifyGoogleIdToken
         });
       }
       if (result.kind === 'conflict') {
-        return res.status(409).json({ message: 'This email is already linked to a different Google account.' });
+        return res
+          .status(409)
+          .json({ message: 'This email is already linked to a different Google account.' });
       }
       return res.status(200).json(await session(result.user));
     }),
   );
-
-  // ---- Session ----------------------------------------------------------------------------
 
   router.get(
     '/me',

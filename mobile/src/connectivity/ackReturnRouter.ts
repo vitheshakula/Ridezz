@@ -14,16 +14,23 @@ export type AckReturnResult =
   | { readonly status: 'origin_reached'; readonly acknowledgement: RideMessage<JsonValue> }
   | { readonly status: 'forwarded'; readonly acknowledgement: RideMessage<JsonValue> }
   | { readonly status: 'send_timeout'; readonly acknowledgement: RideMessage<JsonValue> }
-  | { readonly status: 'transport_error'; readonly acknowledgement: RideMessage<JsonValue>; readonly error: string }
+  | {
+      readonly status: 'transport_error';
+      readonly acknowledgement: RideMessage<JsonValue>;
+      readonly error: string;
+    }
   | {
       readonly status: 'not_forwarded';
-      readonly reason: 'invalid_ack' | 'unknown_return_route' | 'expired' | 'hop_limit' | 'encode_failed';
+      readonly reason:
+        | 'invalid_ack'
+        | 'unknown_return_route'
+        | 'expired'
+        | 'hop_limit'
+        | 'encode_failed';
     };
 
 export interface AckReturnRouter {
-  /** Records the direct previous hop for one routed application message. */
   remember(message: RideMessage<JsonValue>, source: TransportEndpointSource): void;
-  /** Routes a newly generated or received ACK one step back toward the original sender. */
   route(acknowledgement: RideMessage<JsonValue>): Promise<AckReturnResult>;
   clear(): void;
 }

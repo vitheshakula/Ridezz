@@ -36,37 +36,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import org.json.JSONObject
 
-/**
- * Offline rider-to-rider hazard transport over Google Nearby Connections (P2P_CLUSTER: many-to-many).
- *
- * Every rider advertises AND discovers under one service id. The advertised endpoint name carries
- * the room code and a per-session rider id ("ROOM|riderId|name"), so riders only connect to others
- * in the same room. To avoid both sides dialling each other at once, only the side with the smaller
- * rider id opens the connection. Once connected, a hazard packet is one small byte payload sent to
- * every connected rider -- no polling, no advertising tricks.
- *
- * Emits `onHazardReceived` (raw packet JSON), `onMeshStatus` (JSON: active, peers, error), and
- * `onPeerCountChanged` (JSON: peerCount) every time a rider connects or disconnects. Logs under
- * tag "NearbyMesh" (`adb logcat -s NearbyMesh`).
- *
- * Endpoint-aware interface (Ride Connectivity Protocol): every received bytes payload is ALSO
- * emitted as `onPayloadReceivedFrom` (JSON: endpointId, payload), and `sendPayloadTo` sends to one
- * confirmed endpoint. Phase 1 consumes `onHazardReceived` only; the protocol layer must consume
- * `onPayloadReceivedFrom` only, or each packet is processed twice. endpointId is a transport-local
- * Nearby endpoint id, never a Rideaze node id.
- *
- * Connection lifecycle: discovered -> (dialled: `connecting`) -> initiated: `pending` ->
- * STATUS_OK: `connected`. Only `connected` endpoints count as peers or receive payloads; failure,
- * disconnect and stop remove an endpoint from every collection.
- *
- * Limits: single hop here (the JS layer relays between riders and to/from the cloud room), and the
- * radio range is whatever Bluetooth/BLE/Wi-Fi give the phones -- typically tens of metres outdoors,
- * less with phones in pockets/helmets. Requires Google Play Services, Bluetooth on, and the runtime
- * permissions granted by the JS caller (see requiredPermissions()).
- */
 class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   ReactContextBaseJavaModule(reactContext) {
-
   companion object {
     private const val TAG = "NearbyMesh"
     private const val SERVICE_ID = "com.ridezz.mobile.mesh"
@@ -84,13 +55,9 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
   @Volatile private var riderId: String = ""
   @Volatile private var lastError: String? = null
 
-  /** Confirmed connections (STATUS_OK). The only valid peers and send targets. */
   private val connected = ConcurrentHashMap<String, Peer>()
-  /** Initiated and accepted, awaiting the connection result. Not yet a peer or send target. */
   private val pending = ConcurrentHashMap<String, Peer>()
-  /** Same-room endpoints seen by discovery -> their rider id. */
   private val discovered = ConcurrentHashMap<String, String>()
-  /** Endpoints with a connection attempt in flight. */
   private val connecting = ConcurrentHashMap.newKeySet<String>()
 
   private val retryTick =
@@ -121,7 +88,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       return
     }
 
-    stopInternal() // idempotent restart
+    stopInternal()
     val nearby = Nearby.getConnectionsClient(reactContext)
     client = nearby
     room = roomCode.trim().uppercase()
@@ -172,7 +139,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     promise.resolve(null)
   }
 
-  /** Sends [payloadJson] (a HazardPacket) to every rider currently connected over the mesh. */
   @ReactMethod
   fun broadcastHazard(payloadJson: String, promise: Promise) {
     val nearby = client
@@ -197,11 +163,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       }
   }
 
-  /**
-   * Sends [payload] to exactly one confirmed endpoint. Rejects, and never falls back to broadcast,
-   * when the session is inactive or [endpointId] is empty, pending, unknown or disconnected.
-   * Resolving means the Nearby send Task succeeded; it is not Rideaze delivery acknowledgement.
-   */
   @ReactMethod
   fun sendPayloadTo(endpointId: String, payload: String, promise: Promise) {
     val nearby = client
@@ -230,8 +191,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       }
   }
 
-  // --- discovery ---------------------------------------------------------------------------
-
   private val discoveryCallback =
     object : EndpointDiscoveryCallback() {
       override fun onEndpointFound(endpointId: String, info: DiscoveredEndpointInfo) {
@@ -248,8 +207,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       }
     }
 
-  /** Dials every discovered same-room rider we are not yet connected to -- but only those with a
-   * larger id than ours, so exactly one side of each pair initiates. */
   private fun connectToDiscovered() {
     val nearby = client ?: return
     for ((endpointId, remoteId) in discovered) {
@@ -269,8 +226,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
     }
   }
 
-  // --- connections -------------------------------------------------------------------------
-
   private val lifecycle =
     object : ConnectionLifecycleCallback() {
       override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
@@ -281,7 +236,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
           connecting.remove(endpointId)
           return
         }
-        // Pending until onConnectionResult reports STATUS_OK; not a peer or send target yet.
         pending[endpointId] = Peer(parsed.third)
         client
           ?.acceptConnection(endpointId, payloadCallback)
@@ -320,9 +274,7 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
         val bytes = payload.asBytes() ?: return
         val json = String(bytes, Charsets.UTF_8)
         Log.d(TAG, "hazard received from $endpointId: $json")
-        // Phase 1 event, unchanged shape (raw payload string).
         emit("onHazardReceived", json)
-        // Endpoint-aware event for the connectivity protocol; the same payload with its sender.
         emit(
           "onPayloadReceivedFrom",
           JSONObject().put("endpointId", endpointId).put("payload", json).toString(),
@@ -332,9 +284,6 @@ class NearbyMeshModule(private val reactContext: ReactApplicationContext) :
       override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {}
     }
 
-  // --- helpers -----------------------------------------------------------------------------
-
-  /** "ROOM|riderId|name" -> (room, riderId, name), or null if it isn't one of ours. */
   private fun parseEndpointName(endpointName: String): Triple<String, String, String>? {
     val parts = endpointName.split('|', limit = 3)
     return if (parts.size == 3 && parts[1].isNotEmpty()) Triple(parts[0], parts[1], parts[2]) else null

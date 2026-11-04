@@ -34,7 +34,10 @@ describe('classifyConnectionTransition', () => {
 
   it('returns null for repeated Reconnecting states (no duplicate cue for the same drop)', () => {
     expect(
-      classifyConnectionTransition(ConnectionState.Reconnecting, ConnectionState.SignalReconnecting),
+      classifyConnectionTransition(
+        ConnectionState.Reconnecting,
+        ConnectionState.SignalReconnecting,
+      ),
     ).toBeNull();
   });
 

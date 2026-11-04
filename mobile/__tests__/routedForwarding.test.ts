@@ -14,9 +14,7 @@ import { createPeerTable } from '../src/connectivity/peerTable';
 import { createRideMessageIngress } from '../src/connectivity/rideMessageIngress';
 import { createSeenMessageCache } from '../src/connectivity/protocol/seenMessageCache';
 import { createHeartbeatMessage } from '../src/connectivity/protocol/heartbeat';
-import {
-  createGatewayAdvertisementMessage,
-} from '../src/connectivity/protocol/gatewayAdvertisement';
+import { createGatewayAdvertisementMessage } from '../src/connectivity/protocol/gatewayAdvertisement';
 import {
   createRideMessage,
   withGatewayRouting,
@@ -33,7 +31,6 @@ const RIDE = '12345';
 const NEARBY = 'nearby';
 const GW = 'rider-c';
 
-/** How every other node sees `nodeId` on Nearby: rider-a -> endpoint-A. */
 const ep = (nodeId: string) => `endpoint-${nodeId.slice(-1).toUpperCase()}`;
 
 let ids = 0;
@@ -49,7 +46,6 @@ function makeNode(id: string, clocks = { mono: () => MONO, wall: () => WALL + 50
   const peers = createPeerTable({ localNodeId: id });
   const links = createDirectLinkIdentityMap({ localNodeId: id });
   const gateways = createGatewayState({ localNodeId: id });
-  // The targeted transport mock: sendTo records and resolves; broadcast must never be used.
   const transport = {
     sendTo: jest.fn((_endpointId: string, _payload: string) => Promise.resolve()),
     broadcast: jest.fn((_payload: string) => Promise.resolve()),
@@ -76,7 +72,6 @@ function makeNode(id: string, clocks = { mono: () => MONO, wall: () => WALL + 50
     monotonicClock: clocks.mono,
     wallClock: clocks.wall,
   });
-  /** A payload arriving from `fromNodeId`'s Nearby endpoint. */
   const receive = (fromNodeId: string, payload: string | RideMessage<unknown>) =>
     receiver.handlePayload(
       { endpointId: ep(fromNodeId) },
@@ -109,13 +104,11 @@ function application(originId: string, overrides: AppOverrides = {}) {
   });
 }
 
-/** Direct heartbeats in both directions between two nodes. */
 async function link(x: Node, y: Node) {
   expect(await x.receive(y.id, heartbeat(y.id))).toMatchObject({ stage: 'heartbeat' });
   expect(await y.receive(x.id, heartbeat(x.id))).toMatchObject({ stage: 'heartbeat' });
 }
 
-/** A ↔ B ↔ C, C the gateway; B's receiver relays C's advert and A gets B's actual broadcast. */
 async function abc() {
   const a = makeNode('rider-a');
   const b = makeNode('rider-b');
@@ -138,14 +131,12 @@ async function abc() {
   return { a, b, c };
 }
 
-/** Types of everything a node broadcast that is NOT a gateway advertisement (must stay empty). */
 function nonAdvertisementBroadcasts(node: Node) {
   return node.transport.broadcast.mock.calls
     .map(([payload]) => parseRideMessage(payload, WALL + 50)?.type ?? 'unparseable')
     .filter(type => type !== 'gateway_advertisement');
 }
 
-/** The single payload a node handed to sendTo (asserting exactly one targeted send). */
 function onlySend(node: Node) {
   expect(node.transport.sendTo).toHaveBeenCalledTimes(1);
   const [endpointId, payload] = node.transport.sendTo.mock.calls[0];
@@ -158,7 +149,6 @@ describe('end to end: A ↔ B ↔ C(gateway) over targeted Nearby sends', () => 
     const original = application('rider-a');
     const snapshot = JSON.stringify(original);
 
-    // A originates.
     const atA = await a.forwarder.sendOriginated(original);
     expect(atA).toMatchObject({
       status: 'sent',
@@ -174,7 +164,6 @@ describe('end to end: A ↔ B ↔ C(gateway) over targeted Nearby sends', () => 
     });
     expect(JSON.stringify(original)).toBe(snapshot);
 
-    // B receives from endpoint-A: previous hop A, 1 < 2, forwards to endpoint-C.
     const atB = await b.receive('rider-a', fromA.payload);
     expect(atB).toMatchObject({
       stage: 'routed',
@@ -189,7 +178,6 @@ describe('end to end: A ↔ B ↔ C(gateway) over targeted Nearby sends', () => 
       payload: original.payload,
     });
 
-    // C receives from endpoint-B: it is the target gateway.
     const atC = await c.receive('rider-b', fromB.payload);
     expect(atC).toMatchObject({
       stage: 'routed',
@@ -245,7 +233,7 @@ describe('fail-closed cases', () => {
     a.links.observe(NEARBY, 'endpoint-B', 'rider-b', MONO);
     a.gateways.observe(GW, NEARBY, 1, MONO, 'rider-b');
 
-    mono = MONO + 15_000; // link (15 s) stale, gateway observation (25 s) fresh
+    mono = MONO + 15_000;
     expect(a.gateways.isKnownGateway(GW, mono)).toBe(true);
     expect(await a.forwarder.sendOriginated(application('rider-a'))).toEqual({
       status: 'not_sent',
@@ -261,8 +249,8 @@ describe('fail-closed cases', () => {
     const real = a.links.getLinksForNode;
     jest
       .spyOn(a.links, 'getLinksForNode')
-      .mockImplementationOnce(real) // route selection sees the link
-      .mockImplementationOnce(() => Object.freeze([])); // endpoint resolution does not
+      .mockImplementationOnce(real)
+      .mockImplementationOnce(() => Object.freeze([]));
 
     expect(await a.forwarder.sendOriginated(application('rider-a'))).toMatchObject({
       status: 'not_sent',
@@ -277,7 +265,7 @@ describe('fail-closed cases', () => {
     a.links.observe('future-ble', 'AA:BB', 'rider-b', MONO);
     a.gateways.observe(GW, 'future-ble', 1, MONO, 'rider-b');
     a.links.observe(NEARBY, 'endpoint-D', 'rider-d', MONO);
-    a.gateways.observe(GW, NEARBY, 2, MONO, 'rider-d'); // a worse Nearby route exists
+    a.gateways.observe(GW, NEARBY, 2, MONO, 'rider-d');
 
     expect(await a.forwarder.sendOriginated(application('rider-a'))).toMatchObject({
       status: 'sent',
@@ -313,7 +301,7 @@ describe('fail-closed cases', () => {
       stage: 'ingress_rejected',
       reason: 'local_origin',
     });
-    expect(b.transport.sendTo).toHaveBeenCalledTimes(1); // only the first valid copy
+    expect(b.transport.sendTo).toHaveBeenCalledTimes(1);
   });
 
   test('an expired routed packet is rejected at ingress and never forwarded', async () => {
@@ -360,7 +348,7 @@ describe('fail-closed cases', () => {
     const { b } = await abc();
     const routed = withGatewayRouting(application('rider-a'), {
       targetGatewayId: GW,
-      forwarderDistance: 1, // B's own distance is 1: no progress
+      forwarderDistance: 1,
     });
     expect(await b.receive('rider-a', routed)).toEqual({
       stage: 'routed',
@@ -476,7 +464,6 @@ describe('send failures', () => {
     } finally {
       jest.useRealTimers();
     }
-    // Jest fails a test on an unhandled rejection surfacing in a real event-loop turn.
     for (let i = 0; i < 3; i++) {
       await new Promise<void>(resolve => setImmediate(() => resolve()));
     }
@@ -584,7 +571,6 @@ describe('subscription and isolation', () => {
         });
       }
       expect(() => require(module)).not.toThrow();
-      // doMock registrations outlive isolateModules; clear them so tests stay independent.
       for (const name of forbidden) {
         jest.dontMock(name);
       }

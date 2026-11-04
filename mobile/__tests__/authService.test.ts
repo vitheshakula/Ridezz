@@ -1,16 +1,14 @@
-// A module (not a script), so its helpers do not collide with other test files' globals.
 export {};
 
-/**
- * AuthService talks to axios, AsyncStorage and the native Google Sign-In module, none of which run
- * under jest, so all three are replaced. Modules are re-loaded per test because the service keeps
- * one bit of state (whether Google has been configured yet).
- */
 function load() {
   jest.resetModules();
 
   jest.doMock('axios', () => {
-    const instance = { get: jest.fn(), post: jest.fn(), interceptors: { request: { use: jest.fn() } } };
+    const instance = {
+      get: jest.fn(),
+      post: jest.fn(),
+      interceptors: { request: { use: jest.fn() } },
+    };
     return { __esModule: true, default: { create: jest.fn(() => instance) }, __instance: instance };
   });
   jest.doMock('@react-native-async-storage/async-storage', () => ({
@@ -77,14 +75,19 @@ describe('login and register', () => {
     api.post.mockResolvedValue({ data: session });
 
     await expect(service.login('  ALEX@Gmail.com ', 'secret123')).resolves.toEqual(session);
-    expect(api.post).toHaveBeenCalledWith('/auth/login', { email: 'alex@gmail.com', password: 'secret123' });
+    expect(api.post).toHaveBeenCalledWith('/auth/login', {
+      email: 'alex@gmail.com',
+      password: 'secret123',
+    });
   });
 
   it('register sends a trimmed name and normalized email and returns the server session', async () => {
     const { service, api } = load();
     api.post.mockResolvedValue({ data: session });
 
-    await expect(service.register('  Alex ', ' ALEX@gmail.com', 'secret123')).resolves.toEqual(session);
+    await expect(service.register('  Alex ', ' ALEX@gmail.com', 'secret123')).resolves.toEqual(
+      session,
+    );
     expect(api.post).toHaveBeenCalledWith('/auth/register', {
       name: 'Alex',
       email: 'alex@gmail.com',
@@ -94,7 +97,10 @@ describe('login and register', () => {
 
   it('lets a server failure through untouched, so the screen can show its message', async () => {
     const { service, api } = load();
-    const failure = Object.assign(new Error('x'), { isAxiosError: true, response: { status: 401 } });
+    const failure = Object.assign(new Error('x'), {
+      isAxiosError: true,
+      response: { status: 401 },
+    });
     api.post.mockRejectedValue(failure);
 
     await expect(service.login('a@gmail.com', 'nope')).rejects.toBe(failure);
@@ -104,7 +110,13 @@ describe('login and register', () => {
 describe('fetchProfile', () => {
   it('asks the server for the signed-in rider and returns their profile, room code included', async () => {
     const { service, api } = load();
-    const user = { id: 'u1', email: 'a@gmail.com', name: 'Alex', emailVerified: false, roomCode: '54321' };
+    const user = {
+      id: 'u1',
+      email: 'a@gmail.com',
+      name: 'Alex',
+      emailVerified: false,
+      roomCode: '54321',
+    };
     api.get.mockResolvedValue({ data: { user } });
 
     await expect(service.fetchProfile()).resolves.toEqual(user);
@@ -113,7 +125,10 @@ describe('fetchProfile', () => {
 
   it('lets a failure through untouched', async () => {
     const { service, api } = load();
-    const failure = Object.assign(new Error('x'), { isAxiosError: true, response: { status: 401 } });
+    const failure = Object.assign(new Error('x'), {
+      isAxiosError: true,
+      response: { status: 401 },
+    });
     api.get.mockRejectedValue(failure);
 
     await expect(service.fetchProfile()).rejects.toBe(failure);
@@ -121,7 +136,10 @@ describe('fetchProfile', () => {
 });
 
 describe('loginWithGoogle', () => {
-  function readyForGoogle(ctx: ReturnType<typeof load>, idToken: string | null = 'google-id-token') {
+  function readyForGoogle(
+    ctx: ReturnType<typeof load>,
+    idToken: string | null = 'google-id-token',
+  ) {
     ctx.api.get.mockResolvedValue({ data: { clientId: 'web-client-id' } });
     ctx.google.signIn.mockResolvedValue(googleSuccess(idToken));
     ctx.api.post.mockResolvedValue({ data: session });
@@ -137,8 +155,10 @@ describe('loginWithGoogle', () => {
     expect(ctx.google.configure).toHaveBeenCalledWith({ webClientId: 'web-client-id' });
     expect(ctx.google.hasPlayServices).toHaveBeenCalledWith({ showPlayServicesUpdateDialog: true });
     expect(ctx.google.signOut).toHaveBeenCalled();
-    // Only the ID token goes to our server -- the server verifies it with Google.
-    expect(ctx.api.post).toHaveBeenCalledWith('/auth/google', { idToken: 'google-id-token', mode: 'login' });
+    expect(ctx.api.post).toHaveBeenCalledWith('/auth/google', {
+      idToken: 'google-id-token',
+      mode: 'login',
+    });
 
     const order = [
       ctx.google.configure.mock.invocationCallOrder[0],
@@ -155,10 +175,16 @@ describe('loginWithGoogle', () => {
     readyForGoogle(ctx);
 
     await ctx.service.loginWithGoogle('signup');
-    expect(ctx.api.post).toHaveBeenLastCalledWith('/auth/google', { idToken: 'google-id-token', mode: 'signup' });
+    expect(ctx.api.post).toHaveBeenLastCalledWith('/auth/google', {
+      idToken: 'google-id-token',
+      mode: 'signup',
+    });
 
     await ctx.service.loginWithGoogle('login');
-    expect(ctx.api.post).toHaveBeenLastCalledWith('/auth/google', { idToken: 'google-id-token', mode: 'login' });
+    expect(ctx.api.post).toHaveBeenLastCalledWith('/auth/google', {
+      idToken: 'google-id-token',
+      mode: 'login',
+    });
   });
 
   it('configures Google once, however many times the rider signs in', async () => {
@@ -212,19 +238,28 @@ describe('loginWithGoogle', () => {
     });
 
     it('Play Services missing or out of date', async () => {
-      const { message } = await failureMessage(load(), { code: 'PLAY_SERVICES_NOT_AVAILABLE', message: 'x' });
+      const { message } = await failureMessage(load(), {
+        code: 'PLAY_SERVICES_NOT_AVAILABLE',
+        message: 'x',
+      });
       expect(message).toMatch(/Google Play Services/);
     });
 
     it('a build Google does not recognise (DEVELOPER_ERROR, code 10) points at the OAuth setup', async () => {
       const byCode = await failureMessage(load(), { code: '10', message: 'x' });
-      const byText = await failureMessage(load(), { code: 'SOMETHING', message: 'DEVELOPER_ERROR: 10' });
+      const byText = await failureMessage(load(), {
+        code: 'SOMETHING',
+        message: 'DEVELOPER_ERROR: 10',
+      });
       expect(byCode.message).toMatch(/SHA-1/);
       expect(byText.message).toMatch(/SHA-1/);
     });
 
     it('anything unrecognised becomes the generic fallback, never raw native text', async () => {
-      const { message } = await failureMessage(load(), { code: 'WEIRD_NATIVE_THING', message: 'com.google.android...Exception' });
+      const { message } = await failureMessage(load(), {
+        code: 'WEIRD_NATIVE_THING',
+        message: 'com.google.android...Exception',
+      });
       expect(message).toBe('FALLBACK');
     });
   });
@@ -240,19 +275,26 @@ describe('loginWithGoogle', () => {
 
     const thrown = await ctx.service.loginWithGoogle('login').catch((e: unknown) => e);
     expect(thrown).toBe(failure);
-    expect(ctx.errors.describeAuthError(thrown, 'FALLBACK')).toBe('Only Gmail accounts are supported.');
+    expect(ctx.errors.describeAuthError(thrown, 'FALLBACK')).toBe(
+      'Only Gmail accounts are supported.',
+    );
   });
 
   it('reports a server that has Google sign-in switched off', async () => {
     const ctx = load();
     const failure = Object.assign(new Error('x'), {
       isAxiosError: true,
-      response: { status: 503, data: { message: 'Google sign-in is not configured on the server.' } },
+      response: {
+        status: 503,
+        data: { message: 'Google sign-in is not configured on the server.' },
+      },
     });
     ctx.api.get.mockRejectedValue(failure);
 
     const thrown = await ctx.service.loginWithGoogle('login').catch((e: unknown) => e);
-    expect(ctx.errors.describeAuthError(thrown, 'FALLBACK')).toBe('Google sign-in is not configured on the server.');
+    expect(ctx.errors.describeAuthError(thrown, 'FALLBACK')).toBe(
+      'Google sign-in is not configured on the server.',
+    );
     expect(ctx.google.signIn).not.toHaveBeenCalled();
   });
 });

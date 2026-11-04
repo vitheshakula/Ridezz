@@ -2,13 +2,16 @@ import { StyleSheet } from 'react-native';
 import { spacing } from '../theme';
 import { brand, font, homeRadius, homeType } from '../homeTheme';
 
-/** Shared look for Login, Signup and Forgot Password (new design system). Style keys match what
- * those screens already reference, so their markup and test IDs are unchanged. */
 export const authStyles = StyleSheet.create({
   container: { flex: 1, backgroundColor: brand.bg },
   scrollContent: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl },
   header: { alignItems: 'center', marginBottom: spacing.xl, gap: spacing.xs },
-  appTitle: { ...homeType.headlineMedium, color: brand.textPrimary, letterSpacing: 2, marginTop: spacing.sm },
+  appTitle: {
+    ...homeType.headlineMedium,
+    color: brand.textPrimary,
+    letterSpacing: 2,
+    marginTop: spacing.sm,
+  },
   subTitle: { ...homeType.labelSmall, color: brand.primary, textTransform: 'uppercase' },
 
   card: {
@@ -19,7 +22,12 @@ export const authStyles = StyleSheet.create({
     padding: spacing.xl,
   },
   cardTitle: { ...homeType.headlineMedium, color: brand.textPrimary, marginBottom: spacing.sm },
-  label: { ...homeType.labelSmall, color: brand.outline, marginBottom: spacing.sm, marginTop: spacing.md },
+  label: {
+    ...homeType.labelSmall,
+    color: brand.outline,
+    marginBottom: spacing.sm,
+    marginTop: spacing.md,
+  },
 
   input: {
     minHeight: 52,
@@ -61,9 +69,20 @@ export const authStyles = StyleSheet.create({
     ...homeType.bodyLarge,
     color: brand.textPrimary,
   },
-  toggleBtn: { minHeight: 44, minWidth: 56, alignItems: 'center', justifyContent: 'center', paddingHorizontal: spacing.md },
+  toggleBtn: {
+    minHeight: 44,
+    minWidth: 56,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: spacing.md,
+  },
   toggleText: { ...homeType.labelMedium, color: brand.primary },
-  forgotBtn: { alignSelf: 'flex-end', minHeight: 44, justifyContent: 'center', marginBottom: spacing.md },
+  forgotBtn: {
+    alignSelf: 'flex-end',
+    minHeight: 44,
+    justifyContent: 'center',
+    marginBottom: spacing.md,
+  },
   forgotText: { ...homeType.labelMedium, color: brand.textSecondary },
 
   primaryButton: {
@@ -80,14 +99,23 @@ export const authStyles = StyleSheet.create({
   dividerRow: { flexDirection: 'row', alignItems: 'center', marginVertical: spacing.lg },
   dividerLine: { flex: 1, height: 1, backgroundColor: brand.inputBorder },
   dividerText: { ...homeType.labelSmall, color: brand.outline, marginHorizontal: spacing.md },
-  switchAuthBtn: { marginTop: spacing.lg, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
+  switchAuthBtn: {
+    marginTop: spacing.lg,
+    minHeight: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   switchAuthText: { ...homeType.bodyMedium, color: brand.textSecondary },
   linkText: { fontFamily: font.label, color: brand.primary },
 
-  // Forgot password
   centered: { justifyContent: 'center', padding: spacing.xl },
   cardCentered: { alignItems: 'center' },
-  description: { ...homeType.bodyMedium, color: brand.textSecondary, textAlign: 'center', marginBottom: spacing.xl },
+  description: {
+    ...homeType.bodyMedium,
+    color: brand.textSecondary,
+    textAlign: 'center',
+    marginBottom: spacing.xl,
+  },
   backButton: {
     minHeight: 48,
     justifyContent: 'center',

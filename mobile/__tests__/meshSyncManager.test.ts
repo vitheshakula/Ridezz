@@ -9,7 +9,12 @@ import {
 } from '../src/services/meshSyncManager';
 import { RECONNECT_FLUSH_SPACING_MS } from '../src/services/hazardSyncQueue';
 import { HAZARD_PACKET_MAX_TTL, TELEMETRY_PACKET_MAX_TTL } from '../src/types/telemetry';
-import type { HazardEventPacket, MeshPacket, RiderNode, TelemetryPingPacket } from '../src/types/telemetry';
+import type {
+  HazardEventPacket,
+  MeshPacket,
+  RiderNode,
+  TelemetryPingPacket,
+} from '../src/types/telemetry';
 
 const NOW = 1_800_000_000_000;
 const HYD: RiderNode = { riderId: 'bilal', latitude: 17.4, longitude: 78.48, timestampMs: NOW };
@@ -45,7 +50,13 @@ const ping = (over: Partial<TelemetryPingPacket> = {}): TelemetryPingPacket => (
 
 describe('createHazardEventPacket', () => {
   it('starts at max ttl with only the raiser in visitedNodes', () => {
-    const packet = createHazardEventPacket('pothole', 'alex', 'Alex', { latitude: 1, longitude: 2 }, NOW);
+    const packet = createHazardEventPacket(
+      'pothole',
+      'alex',
+      'Alex',
+      { latitude: 1, longitude: 2 },
+      NOW,
+    );
     expect(packet).toMatchObject({
       type: 'HAZARD_EVENT',
       originRiderId: 'alex',
@@ -59,8 +70,20 @@ describe('createHazardEventPacket', () => {
   });
 
   it('gives two hazards raised at different times different ids', () => {
-    const a = createHazardEventPacket('pothole', 'alex', 'Alex', { latitude: 1, longitude: 2 }, NOW);
-    const b = createHazardEventPacket('pothole', 'alex', 'Alex', { latitude: 1, longitude: 2 }, NOW + 1);
+    const a = createHazardEventPacket(
+      'pothole',
+      'alex',
+      'Alex',
+      { latitude: 1, longitude: 2 },
+      NOW,
+    );
+    const b = createHazardEventPacket(
+      'pothole',
+      'alex',
+      'Alex',
+      { latitude: 1, longitude: 2 },
+      NOW + 1,
+    );
     expect(a.hazardId).not.toBe(b.hazardId);
   });
 });
@@ -79,17 +102,30 @@ describe('shouldRelay', () => {
   });
 
   it('relays when a known rider has not seen it yet', () => {
-    const casey: RiderNode = { riderId: 'casey', latitude: 17.39, longitude: 78.49, timestampMs: NOW };
+    const casey: RiderNode = {
+      riderId: 'casey',
+      latitude: 17.39,
+      longitude: 78.49,
+      timestampMs: NOW,
+    };
     expect(shouldRelay(hazard(), 'bilal', [casey])).toBe(true);
   });
 
   it('does not relay when every known rider is already in visitedNodes', () => {
-    const casey: RiderNode = { riderId: 'casey', latitude: 17.39, longitude: 78.49, timestampMs: NOW };
+    const casey: RiderNode = {
+      riderId: 'casey',
+      latitude: 17.39,
+      longitude: 78.49,
+      timestampMs: NOW,
+    };
     expect(shouldRelay(hazard({ visitedNodes: ['alex', 'casey'] }), 'bilal', [casey])).toBe(false);
   });
 });
 
-function harness(selfRiderId: string, location: { latitude: number; longitude: number } | null = { latitude: 17.4, longitude: 78.48 }) {
+function harness(
+  selfRiderId: string,
+  location: { latitude: number; longitude: number } | null = { latitude: 17.4, longitude: 78.48 },
+) {
   const sent: MeshPacket[] = [];
   const ridersSeen: RiderNode[][] = [];
   const hazardsSeen: HazardEventPacket[] = [];
@@ -131,7 +167,7 @@ describe('telemetry duty cycle', () => {
 
     manager.stop();
     jest.advanceTimersByTime(TELEMETRY_PING_INTERVAL_MS * 3);
-    expect(sent).toHaveLength(2); // stopped -- no more pings
+    expect(sent).toHaveLength(2);
   });
 
   it('skips a ping when no GPS fix is available yet', () => {
@@ -154,9 +190,15 @@ describe('handlePacket: TELEMETRY_PING', () => {
   it('ignores a ping older than or equal to the one already known for that rider', () => {
     const { manager, ridersSeen } = harness('alex');
     manager.handlePacket(ping({ pingId: 'p1', latitude: 1, longitude: 2 }));
-    manager.handlePacket(ping({ pingId: 'p2', latitude: 9, longitude: 9 })); // same timestamp, different pingId
-    expect(manager.getKnownRiders()[0]).toEqual({ riderId: 'bilal', riderName: 'Bilal', latitude: 1, longitude: 2, timestampMs: NOW });
-    expect(ridersSeen).toHaveLength(1); // second ping did not fire another notification
+    manager.handlePacket(ping({ pingId: 'p2', latitude: 9, longitude: 9 }));
+    expect(manager.getKnownRiders()[0]).toEqual({
+      riderId: 'bilal',
+      riderName: 'Bilal',
+      latitude: 1,
+      longitude: 2,
+      timestampMs: NOW,
+    });
+    expect(ridersSeen).toHaveLength(1);
   });
 
   it('accepts a strictly newer ping and updates position', () => {
@@ -190,19 +232,33 @@ describe('handlePacket: TELEMETRY_PING', () => {
     sent.length = 0;
     ridersSeen.length = 0;
 
-    manager.handlePacket({ ...ownPing, senderId: 'bilal', ttl: ownPing.ttl - 1, visitedNodes: [...ownPing.visitedNodes, 'bilal'] });
+    manager.handlePacket({
+      ...ownPing,
+      senderId: 'bilal',
+      ttl: ownPing.ttl - 1,
+      visitedNodes: [...ownPing.visitedNodes, 'bilal'],
+    });
 
-    expect(manager.getKnownRiders()).toHaveLength(0); // never adds self as a known rider
+    expect(manager.getKnownRiders()).toHaveLength(0);
     expect(ridersSeen).toHaveLength(0);
-    expect(sent).toHaveLength(0); // and never relays its own echo onward
-    manager.stop(); // no fake timers in this describe block -- don't leak a real interval
+    expect(sent).toHaveLength(0);
+    manager.stop();
   });
 
-  it('relays a third party\'s ping onward when a known rider has not seen it, decrementing ttl', () => {
+  it("relays a third party's ping onward when a known rider has not seen it, decrementing ttl", () => {
     const { manager, sent } = harness('bilal');
-    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.4, longitude: 78.5 })); // bilal now knows casey
+    manager.handlePacket(
+      ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.4, longitude: 78.5 }),
+    );
     sent.length = 0;
-    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex', ttl: TELEMETRY_PACKET_MAX_TTL, visitedNodes: ['alex'] }));
+    manager.handlePacket(
+      ping({
+        riderId: 'alex',
+        riderName: 'Alex',
+        ttl: TELEMETRY_PACKET_MAX_TTL,
+        visitedNodes: ['alex'],
+      }),
+    );
 
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
@@ -230,33 +286,46 @@ describe('handlePacket: TELEMETRY_PING', () => {
 
   it('in a high-density mesh, only relays a ping whose ttl is still at or above the high-density floor', () => {
     const { manager, sent } = harness('bilal');
-    // Enough other known riders to cross the high-density threshold.
     for (let i = 0; i < TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 1; i++) {
-      manager.handlePacket(ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }));
+      manager.handlePacket(
+        ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }),
+      );
     }
     sent.length = 0;
 
     manager.handlePacket(
-      ping({ riderId: 'alex', riderName: 'Alex', ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1, visitedNodes: ['alex'] }),
+      ping({
+        riderId: 'alex',
+        riderName: 'Alex',
+        ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1,
+        visitedNodes: ['alex'],
+      }),
     );
-    expect(sent).toHaveLength(0); // below the high-density floor -- dropped, not relayed
+    expect(sent).toHaveLength(0);
 
     manager.handlePacket(
-      ping({ riderId: 'dana', riderName: 'Dana', ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL, visitedNodes: ['dana'] }),
+      ping({
+        riderId: 'dana',
+        riderName: 'Dana',
+        ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL,
+        visitedNodes: ['dana'],
+      }),
     );
-    expect(sent).toHaveLength(1); // at the floor -- still relayed once
+    expect(sent).toHaveLength(1);
   });
 
   it('own-position broadcasts are never throttled by high density', () => {
     const { manager, sent } = harness('alex', { latitude: 17.4, longitude: 78.48 });
     for (let i = 0; i < TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 5; i++) {
-      manager.handlePacket(ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }));
+      manager.handlePacket(
+        ping({ riderId: `r${i}`, riderName: `R${i}`, latitude: 17.4 + i * 0.001, longitude: 78.5 }),
+      );
     }
     sent.length = 0;
     manager.start();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({ type: 'TELEMETRY_PING', riderId: 'alex' });
-    manager.stop(); // no fake timers in this describe block -- don't leak a real interval
+    manager.stop();
   });
 });
 
@@ -266,7 +335,9 @@ describe('shouldRelayTelemetry', () => {
   });
 
   it('never relays a ping that has already passed through us', () => {
-    expect(shouldRelayTelemetry(ping({ visitedNodes: ['bilal', 'alex'] }), 'alex', [HYD])).toBe(false);
+    expect(shouldRelayTelemetry(ping({ visitedNodes: ['bilal', 'alex'] }), 'alex', [HYD])).toBe(
+      false,
+    );
   });
 
   it('does not relay when no known rider still needs it', () => {
@@ -274,24 +345,49 @@ describe('shouldRelayTelemetry', () => {
   });
 
   it('relays when a known rider has not seen it yet', () => {
-    const casey: RiderNode = { riderId: 'casey', latitude: 17.41, longitude: 78.49, timestampMs: NOW };
+    const casey: RiderNode = {
+      riderId: 'casey',
+      latitude: 17.41,
+      longitude: 78.49,
+      timestampMs: NOW,
+    };
     expect(shouldRelayTelemetry(ping(), 'alex', [casey])).toBe(true);
   });
 
   it('below the high-density threshold, relays even at a low ttl', () => {
-    const casey: RiderNode = { riderId: 'casey', latitude: 17.41, longitude: 78.49, timestampMs: NOW };
+    const casey: RiderNode = {
+      riderId: 'casey',
+      latitude: 17.41,
+      longitude: 78.49,
+      timestampMs: NOW,
+    };
     expect(shouldRelayTelemetry(ping({ ttl: 1 }), 'alex', [casey])).toBe(true);
   });
 
   it('above the high-density threshold, refuses to relay below the high-density floor', () => {
-    const knownRiders: RiderNode[] = Array.from({ length: TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 1 }, (_, i) => ({
-      riderId: `r${i}`,
-      latitude: 17.4 + i * 0.001,
-      longitude: 78.5,
-      timestampMs: NOW,
-    }));
-    expect(shouldRelayTelemetry(ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1 }), 'alex', knownRiders)).toBe(false);
-    expect(shouldRelayTelemetry(ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL }), 'alex', knownRiders)).toBe(true);
+    const knownRiders: RiderNode[] = Array.from(
+      { length: TELEMETRY_HIGH_DENSITY_RIDER_THRESHOLD + 1 },
+      (_, i) => ({
+        riderId: `r${i}`,
+        latitude: 17.4 + i * 0.001,
+        longitude: 78.5,
+        timestampMs: NOW,
+      }),
+    );
+    expect(
+      shouldRelayTelemetry(
+        ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL - 1 }),
+        'alex',
+        knownRiders,
+      ),
+    ).toBe(false);
+    expect(
+      shouldRelayTelemetry(
+        ping({ ttl: TELEMETRY_HIGH_DENSITY_MIN_RELAY_TTL }),
+        'alex',
+        knownRiders,
+      ),
+    ).toBe(true);
   });
 });
 
@@ -310,9 +406,17 @@ describe('handlePacket: HAZARD_EVENT', () => {
     expect(hazardsSeen).toHaveLength(1);
   });
 
-  it('updates the origin rider\'s known position from the hazard\'s own GPS fix', () => {
+  it("updates the origin rider's known position from the hazard's own GPS fix", () => {
     const { manager, ridersSeen } = harness('bilal');
-    manager.handlePacket(hazard({ originRiderId: 'alex', riderName: 'Alex', latitude: 17.5, longitude: 78.5, timestamp: NOW }));
+    manager.handlePacket(
+      hazard({
+        originRiderId: 'alex',
+        riderName: 'Alex',
+        latitude: 17.5,
+        longitude: 78.5,
+        timestamp: NOW,
+      }),
+    );
     expect(manager.getKnownRiders()).toEqual([
       { riderId: 'alex', riderName: 'Alex', latitude: 17.5, longitude: 78.5, timestampMs: NOW },
     ]);
@@ -321,24 +425,52 @@ describe('handlePacket: HAZARD_EVENT', () => {
 
   it('does not regress a rider to an older fix carried by a late-arriving hazard', () => {
     const { manager } = harness('bilal');
-    manager.handlePacket(ping({ riderId: 'alex', riderName: 'Alex', latitude: 1, longitude: 1, timestamp: NOW + 1000 }));
-    manager.handlePacket(hazard({ originRiderId: 'alex', latitude: 9, longitude: 9, timestamp: NOW }));
-    expect(manager.getKnownRiders()[0]).toEqual({ riderId: 'alex', riderName: 'Alex', latitude: 1, longitude: 1, timestampMs: NOW + 1000 });
+    manager.handlePacket(
+      ping({
+        riderId: 'alex',
+        riderName: 'Alex',
+        latitude: 1,
+        longitude: 1,
+        timestamp: NOW + 1000,
+      }),
+    );
+    manager.handlePacket(
+      hazard({ originRiderId: 'alex', latitude: 9, longitude: 9, timestamp: NOW }),
+    );
+    expect(manager.getKnownRiders()[0]).toEqual({
+      riderId: 'alex',
+      riderName: 'Alex',
+      latitude: 1,
+      longitude: 1,
+      timestampMs: NOW + 1000,
+    });
   });
 
   it('a duplicate hazard (already seen) does not re-update the rider position or re-notify', () => {
     const { manager, ridersSeen } = harness('bilal');
-    manager.handlePacket(hazard({ originRiderId: 'alex', latitude: 17.5, longitude: 78.5, timestamp: NOW }));
+    manager.handlePacket(
+      hazard({ originRiderId: 'alex', latitude: 17.5, longitude: 78.5, timestamp: NOW }),
+    );
     ridersSeen.length = 0;
-    manager.handlePacket(hazard({ originRiderId: 'alex', latitude: 99, longitude: 99, timestamp: NOW }));
+    manager.handlePacket(
+      hazard({ originRiderId: 'alex', latitude: 99, longitude: 99, timestamp: NOW }),
+    );
     expect(manager.getKnownRiders()[0]).toMatchObject({ latitude: 17.5, longitude: 78.5 });
     expect(ridersSeen).toHaveLength(0);
   });
 
   it('relays onward when a known rider has not seen it, decrementing ttl and extending visitedNodes', () => {
     const { manager, sent } = harness('bilal');
-    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW }));
-    sent.length = 0; // the setup ping itself may have been eligible to relay -- isolate the hazard assertion below
+    manager.handlePacket(
+      ping({
+        riderId: 'casey',
+        riderName: 'Casey',
+        latitude: 17.39,
+        longitude: 78.49,
+        timestamp: NOW,
+      }),
+    );
+    sent.length = 0;
     manager.handlePacket(hazard());
 
     expect(sent).toHaveLength(1);
@@ -359,7 +491,15 @@ describe('handlePacket: HAZARD_EVENT', () => {
 
   it('never relays a packet already at ttl 0', () => {
     const { manager, sent } = harness('bilal');
-    manager.handlePacket(ping({ riderId: 'casey', riderName: 'Casey', latitude: 17.39, longitude: 78.49, timestamp: NOW }));
+    manager.handlePacket(
+      ping({
+        riderId: 'casey',
+        riderName: 'Casey',
+        latitude: 17.39,
+        longitude: 78.49,
+        timestamp: NOW,
+      }),
+    );
     manager.handlePacket(hazard({ ttl: 0 }));
     expect(sent).toHaveLength(0);
   });
@@ -370,7 +510,11 @@ describe('raiseHazard', () => {
     const { manager, sent } = harness('alex');
     manager.raiseHazard('accident', { latitude: 17.4, longitude: 78.48 });
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ type: 'HAZARD_EVENT', hazardType: 'accident', originRiderId: 'alex' });
+    expect(sent[0]).toMatchObject({
+      type: 'HAZARD_EVENT',
+      hazardType: 'accident',
+      originRiderId: 'alex',
+    });
     const sentHazard = sent[0] as HazardEventPacket;
     expect(manager.getHazardQueue().hasSeen(sentHazard.hazardId)).toBe(true);
   });
@@ -381,7 +525,12 @@ describe('raiseHazard', () => {
     const raised = sent[0] as HazardEventPacket;
     sent.length = 0;
 
-    manager.handlePacket({ ...raised, senderId: 'bilal', ttl: raised.ttl - 1, visitedNodes: [...raised.visitedNodes, 'bilal'] });
+    manager.handlePacket({
+      ...raised,
+      senderId: 'bilal',
+      ttl: raised.ttl - 1,
+      visitedNodes: [...raised.visitedNodes, 'bilal'],
+    });
 
     expect(hazardsSeen).toHaveLength(0);
     expect(sent).toHaveLength(0);
@@ -394,14 +543,18 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
 
   it('announces itself with a SYNC_REQUEST only on a 0 -> positive peer-count transition', () => {
     const { manager, sent } = harness('alex');
-    manager.handlePeerCountChanged(0); // still zero, not a reconnect
+    manager.handlePeerCountChanged(0);
     expect(sent).toHaveLength(0);
 
     manager.handlePeerCountChanged(1);
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toMatchObject({ type: 'SYNC_REQUEST', riderId: 'alex', lastKnownHazardTimestamp: 0 });
+    expect(sent[0]).toMatchObject({
+      type: 'SYNC_REQUEST',
+      riderId: 'alex',
+      lastKnownHazardTimestamp: 0,
+    });
 
-    manager.handlePeerCountChanged(2); // already connected -- not a new reconnect
+    manager.handlePeerCountChanged(2);
     expect(sent).toHaveLength(1);
   });
 
@@ -424,7 +577,9 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
 
     manager.handlePacket({ type: 'SYNC_REQUEST', riderId: 'casey', lastKnownHazardTimestamp: 0 });
     expect(sent).toHaveLength(1);
-    expect((sent[0] as any).pendingHazards.map((h: HazardEventPacket) => h.hazardId)).toEqual(['h1']);
+    expect((sent[0] as any).pendingHazards.map((h: HazardEventPacket) => h.hazardId)).toEqual([
+      'h1',
+    ]);
 
     jest.advanceTimersByTime(RECONNECT_FLUSH_SPACING_MS);
     expect(sent).toHaveLength(2);
@@ -434,7 +589,6 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
     expect(sent).toHaveLength(3);
     expect((sent[2] as any).pendingHazards[0].hazardId).toBe('h3');
 
-    // caught up -- no more SYNC_RESPONSEs, even after more time passes.
     jest.advanceTimersByTime(RECONNECT_FLUSH_SPACING_MS * 3);
     expect(sent).toHaveLength(3);
   });
@@ -450,7 +604,7 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
     expect((sent[0] as any).pendingHazards[0].hazardId).toBe('missed-it');
 
     jest.advanceTimersByTime(RECONNECT_FLUSH_SPACING_MS * 3);
-    expect(sent).toHaveLength(1); // nothing further pending
+    expect(sent).toHaveLength(1);
   });
 
   it('does not flush at all when the requester has nothing pending', () => {
@@ -471,7 +625,10 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
 
   it('receiving a SYNC_RESPONSE feeds each hazard through the same path as a direct HAZARD_EVENT', () => {
     const { manager, hazardsSeen } = harness('casey');
-    manager.handlePacket({ type: 'SYNC_RESPONSE', pendingHazards: [hazard({ hazardId: 'caught-up' })] });
+    manager.handlePacket({
+      type: 'SYNC_RESPONSE',
+      pendingHazards: [hazard({ hazardId: 'caught-up' })],
+    });
     expect(hazardsSeen.map(h => h.hazardId)).toEqual(['caught-up']);
     expect(manager.getHazardQueue().hasSeen('caught-up')).toBe(true);
   });
@@ -487,6 +644,6 @@ describe('reconnect sync: handlePeerCountChanged + SYNC_REQUEST/SYNC_RESPONSE', 
     manager.stop();
 
     jest.advanceTimersByTime(RECONNECT_FLUSH_SPACING_MS * 3);
-    expect(sent).toHaveLength(1); // no further flush after stop
+    expect(sent).toHaveLength(1);
   });
 });

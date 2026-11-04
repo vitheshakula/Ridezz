@@ -12,7 +12,6 @@ interface Deferred {
   reject(error: unknown): void;
 }
 
-/** Records every lifecycle call in order; each call settles only when the test says so. */
 function lifecycleHarness({ withClient = true } = {}) {
   const calls: string[] = [];
   const pending: Record<string, Deferred[]> = {};
@@ -71,7 +70,6 @@ function lifecycleHarness({ withClient = true } = {}) {
     log,
     callbacks,
     settle: () => jest.advanceTimersByTimeAsync(0),
-    // Each first lets queued lifecycle calls reach the fakes, then settles the oldest pending one.
     resolve: async (name: string) => {
       await jest.advanceTimersByTimeAsync(0);
       next(name).resolve();
@@ -154,7 +152,6 @@ describe('ride mesh session owner: protocol mode', () => {
     expect(cb.onError).toHaveBeenCalledWith('Bluetooth is off. Turn it on for the offline mesh.');
     expect(cb.onStarted).not.toHaveBeenCalled();
 
-    // No duplicate start before the retry interval.
     await jest.advanceTimersByTimeAsync(RIDE_MESH_RETRY_MS - 1);
     expect(h.client.start).toHaveBeenCalledTimes(1);
     await jest.advanceTimersByTimeAsync(1);
@@ -196,7 +193,9 @@ describe('ride mesh session owner: Phase 1 fallback', () => {
       roomCode: 'ABC123',
       riderName: 'Alex',
     });
-    expect(h.log).toHaveBeenCalledWith(expect.stringContaining('protocol off: initialization_error'));
+    expect(h.log).toHaveBeenCalledWith(
+      expect.stringContaining('protocol off: initialization_error'),
+    );
 
     await h.resolve('fallback.start');
     expect(cb.onStarted).toHaveBeenCalledTimes(1);
@@ -214,7 +213,10 @@ describe('ride mesh session owner: Phase 1 fallback', () => {
     await h.settle();
     await h.reject('client.start', clientError('initialization_error'));
 
-    await h.reject('fallback.start', { code: 'mesh_start_failed', message: 'startDiscovery: busy' });
+    await h.reject('fallback.start', {
+      code: 'mesh_start_failed',
+      message: 'startDiscovery: busy',
+    });
     expect(cb.onError).toHaveBeenCalledWith('startDiscovery: busy');
     await jest.advanceTimersByTimeAsync(RIDE_MESH_RETRY_MS);
     expect(h.fallbackTransport.start).toHaveBeenCalledTimes(2);
@@ -258,7 +260,7 @@ describe('ride mesh session owner: rapid transitions', () => {
 
     dispose();
     await h.settle();
-    expect(h.client.stop).not.toHaveBeenCalled(); // queued behind the pending start
+    expect(h.client.stop).not.toHaveBeenCalled();
 
     await h.resolve('client.start');
     expect(cb.onStarted).not.toHaveBeenCalled();
@@ -274,7 +276,7 @@ describe('ride mesh session owner: rapid transitions', () => {
     const third = h.callbacks();
 
     const disposeFirst = h.owner.start(first);
-    await h.settle(); // first start is in flight
+    await h.settle();
     disposeFirst();
     const disposeSecond = h.owner.start(second);
     await h.settle();
@@ -308,9 +310,9 @@ describe('ride mesh session owner: rapid transitions', () => {
     const last = h.callbacks();
 
     const disposeFirst = h.owner.start(first);
-    await h.settle(); // first start in flight
+    await h.settle();
     disposeFirst();
-    h.owner.start(skipped)(); // queued behind the first start and stop, then disposed
+    h.owner.start(skipped)();
     h.owner.start(last);
     await h.resolve('client.start');
 
@@ -326,7 +328,7 @@ describe('ride mesh session owner: rapid transitions', () => {
     const dispose = h.owner.start(h.callbacks());
     await h.settle();
     await h.reject('client.start', clientError('initialization_error'));
-    dispose(); // fallback start still pending
+    dispose();
     const next = h.callbacks();
     h.owner.start(next);
     await h.resolve('fallback.start');
@@ -353,7 +355,7 @@ describe('ride mesh session owner: rapid transitions', () => {
     expect(first.onStopping).toHaveBeenCalledTimes(1);
     expect(h.calls).toEqual(['client.start', 'client.stop', 'client.start']);
 
-    disposeFirst(); // the superseded screen's own cleanup is a no-op
+    disposeFirst();
     await h.settle();
     expect(first.onStopping).toHaveBeenCalledTimes(1);
     expect(h.client.stop).toHaveBeenCalledTimes(1);
@@ -392,7 +394,12 @@ describe('ride mesh session owner: rapid transitions', () => {
 
 describe('app ride mesh session (real client and runtime, mocked native modules)', () => {
   const originalOS = Platform.OS;
-  const EVENTS = ['onPayloadReceivedFrom', 'onHazardReceived', 'onMeshStatus', 'onPeerCountChanged'];
+  const EVENTS = [
+    'onPayloadReceivedFrom',
+    'onHazardReceived',
+    'onMeshStatus',
+    'onPeerCountChanged',
+  ];
   let service: typeof import('../src/services/rideConnectivityService');
   let startMeshSession: jest.Mock;
   let stopMeshSession: jest.Mock;
@@ -456,9 +463,7 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
 
   test('one application-wide client instance', () => {
     expect(service.getAppRideConnectivityClient()).toBe(service.getAppRideConnectivityClient());
-    expect(
-      (service as Record<string, unknown>).createAppRideConnectivityClient,
-    ).toBeUndefined();
+    expect((service as Record<string, unknown>).createAppRideConnectivityClient).toBeUndefined();
   });
 
   test('starts native Nearby once, adds exactly one protocol receiver, and cleans every listener', async () => {
@@ -471,10 +476,10 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
     expect(cb.onStarted).toHaveBeenCalledWith('protocol');
     expect(counts()).toEqual({
       ...before,
-      onPayloadReceivedFrom: before.onPayloadReceivedFrom + 1, // the runtime's single receiver
-      onMeshStatus: before.onMeshStatus + 1, // client observation only
+      onPayloadReceivedFrom: before.onPayloadReceivedFrom + 1,
+      onMeshStatus: before.onMeshStatus + 1,
       onPeerCountChanged: before.onPeerCountChanged + 1,
-      onHazardReceived: before.onHazardReceived, // Phase 1 receive paths are untouched
+      onHazardReceived: before.onHazardReceived,
     });
 
     dispose();
@@ -514,7 +519,7 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
 
     expect(cb.onError).toHaveBeenCalledWith('Bluetooth is off. Turn it on for the offline mesh.');
     expect(cb.onStarted).not.toHaveBeenCalled();
-    expect(counts()).toEqual(before); // a failed start leaves no runtime or client listeners
+    expect(counts()).toEqual(before);
 
     await jest.advanceTimersByTimeAsync(RIDE_MESH_RETRY_MS);
     expect(startMeshSession).toHaveBeenCalledTimes(2);
@@ -533,7 +538,6 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
     await jest.advanceTimersByTimeAsync(0);
 
     expect(live.onStarted).toHaveBeenCalledTimes(1);
-    // Disposed-before-start sessions never reach native; the live one starts exactly once.
     expect(nativeCalls).toEqual(['start']);
     expect(counts().onPayloadReceivedFrom).toBe(before.onPayloadReceivedFrom + 1);
 
@@ -548,7 +552,9 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
       jest.doMock('../src/connectivity/rideConnectivityLifecycle', () => ({
         ...jest.requireActual('../src/connectivity/rideConnectivityLifecycle'),
         createMonotonicClock: () => {
-          throw new TypeError('performance.now is unavailable: no monotonic clock for the protocol');
+          throw new TypeError(
+            'performance.now is unavailable: no monotonic clock for the protocol',
+          );
         },
       }));
     });
@@ -557,15 +563,14 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
     const dispose = service.startAppRideMeshSession(cb);
     await jest.advanceTimersByTimeAsync(0);
 
-    // The client starts and (on runtime failure) stops Nearby; the owner then restarts it alone.
     expect(nativeCalls).toEqual(['start', 'stop', 'start']);
     expect(cb.onStarted).toHaveBeenCalledTimes(1);
     expect(cb.onStarted).toHaveBeenCalledWith('phase1_only');
     expect(cb.onError).not.toHaveBeenCalled();
-    expect(counts()).toEqual(before); // no protocol receiver, no client listeners left
+    expect(counts()).toEqual(before);
 
     await jest.advanceTimersByTimeAsync(RIDE_MESH_RETRY_MS * 3);
-    expect(startMeshSession).toHaveBeenCalledTimes(2); // no flapping
+    expect(startMeshSession).toHaveBeenCalledTimes(2);
 
     dispose();
     await jest.advanceTimersByTimeAsync(0);
@@ -574,7 +579,6 @@ describe('app ride mesh session (real client and runtime, mocked native modules)
 });
 
 describe('single Nearby lifecycle owner (source guard)', () => {
-  // No @types/node in this project (see voskGrammar.test); jest runs from the mobile/ root.
   const fs: {
     readFileSync(file: string, encoding: 'utf8'): string;
     readdirSync(
@@ -601,8 +605,8 @@ describe('single Nearby lifecycle owner (source guard)', () => {
 
   test('only the connectivity composition starts or stops Nearby', () => {
     const allowed = new Set([
-      'src/services/rideConnectivityService.ts', // the client's transport wrapper
-      'src/services/NearbyMeshService.ts', // deprecated delegating wrapper, unused
+      'src/services/rideConnectivityService.ts',
+      'src/services/NearbyMeshService.ts',
     ]);
     const files = sourceFiles('src');
     expect(files).toContain('src/screens/RideScreen.tsx');

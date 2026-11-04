@@ -4,26 +4,24 @@ import { HAZARD_LABELS, type HazardPacket } from '../services/SpeechHazardServic
 import { brand, font, homeType } from '../homeTheme';
 import { CRITICAL_HAZARDS, HazardGlyph } from './HazardIcons';
 
-/** How long a hazard banner stays up before it dismisses itself. */
 export const HAZARD_BANNER_MS = 5000;
-/** Longer for a dictated voice note (see JarvisVoiceService) -- there's real sentence-length text
- * to actually read, not a one-word label. */
 export const VOICE_NOTE_BANNER_MS = 10000;
 
 export type HazardBannerKind = 'sent' | 'received';
 
 interface HazardAlertBannerProps {
   packet: HazardPacket;
-  /** 'sent': this rider's own detected hazard, shown as immediate send confirmation.
-   * 'received': a hazard that arrived from another rider, over the cloud or the mesh. */
   kind: HazardBannerKind;
   top: number;
   onDismiss: () => void;
 }
 
-export default function HazardAlertBanner({ packet, kind, top, onDismiss }: HazardAlertBannerProps) {
-  // 'info' is a dictated voice note (see JarvisVoiceService): no fixed HAZARD_LABELS entry (it's
-  // never raised from ambient speech), so the banner shows the actual words instead.
+export default function HazardAlertBanner({
+  packet,
+  kind,
+  top,
+  onDismiss,
+}: HazardAlertBannerProps) {
   const isVoiceNote = packet.hazard === 'info';
 
   useEffect(() => {
@@ -33,12 +31,20 @@ export default function HazardAlertBanner({ packet, kind, top, onDismiss }: Haza
 
   const label = isVoiceNote ? packet.message || 'Voice note' : HAZARD_LABELS[packet.hazard];
   const isSent = kind === 'sent';
-  // Received alerts: red for critical categories, amber for cautions (including voice notes).
-  // Sent: green confirmation.
-  const tone = isSent ? brand.success : CRITICAL_HAZARDS.has(packet.hazard) ? brand.danger : brand.warning;
+  const tone = isSent
+    ? brand.success
+    : CRITICAL_HAZARDS.has(packet.hazard)
+    ? brand.danger
+    : brand.warning;
   const heading = isVoiceNote
-    ? isSent ? 'MESSAGE SENT' : 'VOICE NOTE'
-    : isSent ? 'HAZARD SENT' : CRITICAL_HAZARDS.has(packet.hazard) ? 'CRITICAL HAZARD' : 'ROAD HAZARD';
+    ? isSent
+      ? 'MESSAGE SENT'
+      : 'VOICE NOTE'
+    : isSent
+    ? 'HAZARD SENT'
+    : CRITICAL_HAZARDS.has(packet.hazard)
+    ? 'CRITICAL HAZARD'
+    : 'ROAD HAZARD';
 
   return (
     <Pressable
@@ -46,9 +52,7 @@ export default function HazardAlertBanner({ packet, kind, top, onDismiss }: Haza
       onPress={onDismiss}
       accessibilityRole="alert"
       accessibilityLiveRegion="assertive"
-      accessibilityLabel={
-        isSent ? `Hazard sent: ${label}` : `${packet.senderName}: ${label}`
-      }
+      accessibilityLabel={isSent ? `Hazard sent: ${label}` : `${packet.senderName}: ${label}`}
     >
       <View style={[styles.glyph, { backgroundColor: tone }]}>
         <HazardGlyph type={packet.hazard} size={28} color={brand.darkest} />
@@ -82,7 +86,13 @@ const styles = StyleSheet.create({
     padding: 12,
     backgroundColor: brand.card,
   },
-  glyph: { width: 48, height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  glyph: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   text: { flex: 1 },
   heading: { ...homeType.labelSmall },
   label: { fontFamily: font.heading, fontSize: 20, lineHeight: 26, color: brand.textPrimary },

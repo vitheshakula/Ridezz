@@ -21,7 +21,7 @@ OUT = "android/app/src/main/assets/vosk-grammar.json"
 SetLogLevel(-1)
 _model = Model(MODEL)
 
-class vocab:  # "is this word in the bundled Vosk model?"
+class vocab:
     def __contains__(self, w):
         return _model.vosk_model_find_word(w) >= 0
 vocab = vocab()

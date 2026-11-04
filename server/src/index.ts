@@ -14,10 +14,13 @@ const app = createApp({
   verifyGoogleIdToken: env.googleClientId ? createGoogleVerifier(env.googleClientId) : undefined,
 });
 
-// Explicitly bind to '0.0.0.0' for cloud platform compatibility
 app.listen(env.port, '0.0.0.0', () => {
   console.log(`🚀 Ridezz Server running on port ${env.port}`);
-  console.log(env.googleClientId ? 'Google sign-in: enabled' : 'Google sign-in: disabled (GOOGLE_CLIENT_ID not set)');
+  console.log(
+    env.googleClientId
+      ? 'Google sign-in: enabled'
+      : 'Google sign-in: disabled (GOOGLE_CLIENT_ID not set)',
+  );
   console.log(
     env.allowedEmails
       ? `Access: private testing, ${env.allowedEmails.size} allowed address(es)`

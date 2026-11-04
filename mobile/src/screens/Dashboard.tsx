@@ -6,14 +6,16 @@ import { brand, homeRadius, homeType } from '../homeTheme';
 import { LockIcon, MicIcon, PinIcon } from '../components/HomeIcons';
 import { BrandHeader } from '../components/BrandHeader';
 
-const FEATURES: Array<{ Icon: React.ComponentType<{ size?: number; color: string }>; label: string; color: string }> = [
+const FEATURES: Array<{
+  Icon: React.ComponentType<{ size?: number; color: string }>;
+  label: string;
+  color: string;
+}> = [
   { Icon: MicIcon, label: 'Full-duplex voice, up to 10 riders', color: brand.primary },
   { Icon: PinIcon, label: 'Live group location on the map', color: brand.secondary },
   { Icon: LockIcon, label: 'Keeps talking with the phone locked', color: brand.tertiary },
 ];
 
-/** Unauthenticated landing screen -- Sign In / Create Account. Only ever reached
- * while logged out: App.tsx routes any logged-in user straight to JoinScreen. */
 export const Dashboard = ({ navigation }: any) => {
   const insets = useSafeAreaInsets();
 
@@ -69,7 +71,13 @@ export const Dashboard = ({ navigation }: any) => {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: brand.bg },
-  content: { flexGrow: 1, justifyContent: 'center', paddingHorizontal: spacing.xl, paddingTop: spacing.xxl, gap: spacing.xl },
+  content: {
+    flexGrow: 1,
+    justifyContent: 'center',
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.xxl,
+    gap: spacing.xl,
+  },
   hero: { gap: spacing.sm },
   heroTitle: { ...homeType.displayLarge, color: brand.textPrimary },
   heroSubtitle: { ...homeType.bodyMedium, color: brand.textSecondary },

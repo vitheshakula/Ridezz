@@ -11,7 +11,6 @@ import com.livekit.reactnative.audio.AudioType
 import com.rideaze.mobile.crash.CrashDetectionPackage
 
 class MainApplication : Application(), ReactApplication {
-
   override val reactHost: ReactHost by lazy {
     getDefaultReactHost(
       context = applicationContext,
@@ -31,7 +30,6 @@ class MainApplication : Application(), ReactApplication {
 
   override fun onCreate() {
     super.onCreate()
-    // Must run before any other RN initialization.
     LiveKitReactNative.setup(this, AudioType.CommunicationAudioType())
     loadReactNative(this)
   }

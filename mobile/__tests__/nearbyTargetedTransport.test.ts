@@ -174,7 +174,6 @@ describe('nearbyTransport endpoint-aware interface', () => {
       const offPhase1 = mod.nearbyTransport.onPayload(phase1);
       const offProtocol = mod.nearbyTransport.onPayloadFrom(protocol);
 
-      // Native emits both events for one received payload.
       DeviceEventEmitter.emit('onHazardReceived', 'packet');
       emitFrom('endpoint-B', 'packet');
 
@@ -238,7 +237,7 @@ describe('nearbyTransport endpoint-aware interface', () => {
     });
 
     test('is independent of the Phase 1 broadcast queue', async () => {
-      broadcastHazard.mockImplementation(() => new Promise<void>(() => {})); // never settles
+      broadcastHazard.mockImplementation(() => new Promise<void>(() => {}));
       mod.nearbyTransport.broadcast('stuck broadcast').catch(() => {});
       await Promise.resolve();
 

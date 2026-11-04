@@ -6,7 +6,11 @@ import type { Env } from '../config/env';
 import { logRequestError } from '../http';
 import { parseDestination } from '../rooms/destination';
 import { createLiveKitToken } from '../services/livekitService';
-import { createOrReuseHostedRoom, findRoomForJoin, updateRoomDestination } from '../services/roomService';
+import {
+  createOrReuseHostedRoom,
+  findRoomForJoin,
+  updateRoomDestination,
+} from '../services/roomService';
 
 interface RoomsRouterDeps {
   prisma: PrismaClient;
@@ -14,14 +18,14 @@ interface RoomsRouterDeps {
   requireAuth: RequestHandler;
 }
 
-/** The name shown to the room: what the rider typed, else the name on their account. */
 function displayName(requested: unknown, fallback: string): string {
   const trimmed = typeof requested === 'string' ? requested.trim().slice(0, NAME_MAX_LENGTH) : '';
   return trimmed || fallback;
 }
 
-/** The parts of a room every create/join/update response repeats. */
-function destinationFields(room: Pick<Room, 'destinationName' | 'destinationLat' | 'destinationLng'>) {
+function destinationFields(
+  room: Pick<Room, 'destinationName' | 'destinationLat' | 'destinationLng'>,
+) {
   return {
     destinationName: room.destinationName,
     destinationLat: room.destinationLat,
@@ -32,15 +36,8 @@ function destinationFields(room: Pick<Room, 'destinationName' | 'destinationLat'
 export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps): Router {
   const router = Router();
 
-  // Every room route needs a signed-in rider: it hands out a LiveKit token that can publish audio.
   router.use(requireAuth);
 
-  // Starts a ride hosted by the signed-in rider, optionally with a destination, and returns a token
-  // to join it. A missing or out-of-range destination just means "no destination".
-  //
-  // The room's code is the host's permanent 5-digit room code -- nothing random is generated. A
-  // rider therefore hosts the same room every time, so hosting again reuses it (with the new
-  // destination, or none) rather than creating another.
   router.post('/create', async (req, res) => {
     try {
       const user = req.user!;
@@ -54,8 +51,6 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         destination,
       });
       if (result.kind === 'ownership_conflict') {
-        // Room codes only ever come from riders' own codes, so this shouldn't happen -- but hosting
-        // another rider's room must be impossible, not merely unlikely.
         return res.status(409).json({ message: 'That room code is already in use.' });
       }
       const { room } = result;
@@ -74,7 +69,6 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
     }
   });
 
-  // Validates a room code (a host's 5-digit code) and returns a token to join that room.
   router.post('/join', async (req, res) => {
     try {
       const { roomCode } = req.body ?? {};
@@ -106,7 +100,6 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
     }
   });
 
-  // Changes where the ride is headed. Only the rider who created the room may do it.
   router.patch('/:roomCode/destination', async (req, res) => {
     try {
       const code = req.params.roomCode?.trim().toUpperCase();
@@ -124,7 +117,9 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
         return res.status(404).json({ message: 'Ride room not found.' });
       }
       if (result.kind === 'forbidden') {
-        return res.status(403).json({ message: 'Only the ride creator can change the destination.' });
+        return res
+          .status(403)
+          .json({ message: 'Only the ride creator can change the destination.' });
       }
 
       return res.status(200).json(destinationFields(result.room));

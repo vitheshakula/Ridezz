@@ -13,14 +13,13 @@ interface BottomNavProps {
   onProfile: () => void;
 }
 
-/** Bottom navigation for the logged-in area. Only lists destinations that exist
- * (Rides = JoinScreen, Profile = ProfileScreen) -- no placeholder tabs. */
 export function BottomNav({ active, onRides, onProfile }: BottomNavProps) {
   const insets = useSafeAreaInsets();
-  const items: Array<{ key: NavTab; label: string; onPress: () => void; Icon: typeof PersonIcon }> = [
-    { key: 'rides', label: 'Rides', onPress: onRides, Icon: RidesIcon },
-    { key: 'profile', label: 'Profile', onPress: onProfile, Icon: PersonIcon },
-  ];
+  const items: Array<{ key: NavTab; label: string; onPress: () => void; Icon: typeof PersonIcon }> =
+    [
+      { key: 'rides', label: 'Rides', onPress: onRides, Icon: RidesIcon },
+      { key: 'profile', label: 'Profile', onPress: onProfile, Icon: PersonIcon },
+    ];
 
   return (
     <View style={[styles.bar, { paddingBottom: insets.bottom + spacing.sm }]}>

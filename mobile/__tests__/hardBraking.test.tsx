@@ -62,7 +62,11 @@ describe('brake packet', () => {
   test('rejects wrong length, magic, version, checksum and empty sender', () => {
     const good = encodeBrakePacket(alertOf());
     expect(decodeBrakePacket(good.slice(0, 23))).toBeNull();
-    for (const [index, value] of [[0, 0x00], [1, 0x20], [10, good[10] ^ 0x01]] as const) {
+    for (const [index, value] of [
+      [0, 0x00],
+      [1, 0x20],
+      [10, (good[10] + 1) % 256],
+    ] as const) {
       const bad = good.slice();
       bad[index] = value;
       expect(decodeBrakePacket(bad)).toBeNull();
@@ -125,8 +129,13 @@ describe('brake coordinator', () => {
     };
   }
 
-  const { senderId: _unused, ...local } = alertOf();
-  void _unused;
+  const local: Omit<BrakeAlert, 'senderId'> = {
+    seq: 7,
+    timestamp: NOW,
+    speedKmh: 62.4,
+    peakDecelG: 0.82,
+    headingDeg: 271,
+  };
 
   test('a local alert goes to the mesh at once, and to the cloud only when online', async () => {
     const offline = setup({ online: false });
@@ -134,7 +143,10 @@ describe('brake coordinator', () => {
     expect(offline.nearby.broadcast).toHaveBeenCalledTimes(1);
     expect(offline.liveKit.broadcast).not.toHaveBeenCalled();
     const sent = (offline.nearby.broadcast.mock.calls as unknown as string[][])[0][0];
-    expect(decodeBrakePacket(base64ToBytes(sent)!)).toMatchObject({ senderId: 'me000001', hops: 3 });
+    expect(decodeBrakePacket(base64ToBytes(sent)!)).toMatchObject({
+      senderId: 'me000001',
+      hops: 3,
+    });
 
     const online = setup({ online: true });
     const outcomes = await online.coordinator.submitLocal(local);
@@ -172,7 +184,6 @@ describe('brake coordinator', () => {
     s.hearNearby(alertOf({ timestamp: NOW + 11_000, seq: 9 }));
     expect(s.onPeerBraking).not.toHaveBeenCalled();
     expect(() => {
-      // Hazard-style JSON and noise must pass through harmlessly.
       s.nearby.onPayload.mock.calls[0][0]('{"v":1,"hazard":"fuel"}');
       s.nearby.onPayload.mock.calls[0][0]('!!!!');
     }).not.toThrow();
@@ -223,21 +234,33 @@ describe('braking bridge decoding', () => {
   });
 
   test('decodes a well-formed event', () => {
-    expect(decodeHardBraking(raw())).toMatchObject({ seq: 1, speedKmh: 54, headingDeg: 90, source: 'imu' });
+    expect(decodeHardBraking(raw())).toMatchObject({
+      seq: 1,
+      speedKmh: 54,
+      headingDeg: 90,
+      source: 'imu',
+    });
   });
 
   test('drops an out-of-range heading and rejects malformed payloads', () => {
     expect(decodeHardBraking(raw({ headingDeg: 400 }))?.headingDeg).toBeNull();
     expect(decodeHardBraking(raw({ headingDeg: null }))?.headingDeg).toBeNull();
-    for (const bad of [null, 'x', raw({ source: 'magic' }), raw({ peakDecelG: 0 }), raw({ speedKmh: -1 }), raw({ seq: 'a' })]) {
+    for (const bad of [
+      null,
+      'x',
+      raw({ source: 'magic' }),
+      raw({ peakDecelG: 0 }),
+      raw({ speedKmh: -1 }),
+      raw({ seq: 'a' }),
+    ]) {
       expect(decodeHardBraking(bad)).toBeNull();
     }
   });
 
   test('describes decisions', () => {
-    expect(describeBrakingDecision({ outcome: 'rejected', reason: 'low_speed', peakDecelG: 0.7 })).toBe(
-      'rejected (low_speed), peak 0.70 g',
-    );
+    expect(
+      describeBrakingDecision({ outcome: 'rejected', reason: 'low_speed', peakDecelG: 0.7 }),
+    ).toBe('rejected (low_speed), peak 0.70 g');
     expect(describeBrakingDecision({ outcome: 'confirmed', dropMps: 5 })).toContain('18 km/h');
   });
 

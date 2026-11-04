@@ -1,23 +1,18 @@
-import {
-  RoomEvent,
-  type DataPacket_Kind,
-  type Participant,
-  type Room,
-} from 'livekit-client';
+import { RoomEvent, type DataPacket_Kind, type Participant, type Room } from 'livekit-client';
 import type { BroadcastTransport, TransportCapabilities } from './Transport';
 
 export const LIVEKIT_HAZARD_TOPIC = 'ridezz.hazard';
 
-export const LIVEKIT_HAZARD_TRANSPORT_CAPABILITIES: Readonly<TransportCapabilities> =
-  Object.freeze({
+export const LIVEKIT_HAZARD_TRANSPORT_CAPABILITIES: Readonly<TransportCapabilities> = Object.freeze(
+  {
     broadcast: true,
     targeted: false,
     peerIdentity: false,
     linkMetrics: false,
     deliveryAck: false,
-  });
+  },
+);
 
-/** Room-bound adapter for reliable hazard data. Payload interpretation remains protocol-owned. */
 export function createLiveKitHazardTransport(
   room: Room,
 ): BroadcastTransport<Uint8Array<ArrayBuffer>> {

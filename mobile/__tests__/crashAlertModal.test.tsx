@@ -1,11 +1,5 @@
 import React from 'react';
-import {
-  DeviceEventEmitter,
-  NativeModules,
-  StyleSheet,
-  Platform,
-  Vibration,
-} from 'react-native';
+import { DeviceEventEmitter, NativeModules, StyleSheet, Platform, Vibration } from 'react-native';
 import ReactTestRenderer from 'react-test-renderer';
 import CrashAlertModal, {
   MOTION_NOTICE_MS,
@@ -17,7 +11,7 @@ import type { CrashState } from '../src/crash/crashTypes';
 import { useCrashDetection } from '../src/crash/useCrashDetection';
 
 const T0 = 1_700_000_000_000;
-const TOTAL = 40_000; // 10 s quick-cancel + 30 s check-in
+const TOTAL = 40_000;
 
 type Renderer = ReactTestRenderer.ReactTestRenderer;
 
@@ -55,9 +49,7 @@ function render(state: CrashState) {
   };
   let tree!: Renderer;
   ReactTestRenderer.act(() => {
-    tree = ReactTestRenderer.create(
-      <CrashAlertModal top={100} state={state} {...props} />,
-    );
+    tree = ReactTestRenderer.create(<CrashAlertModal top={100} state={state} {...props} />);
   });
   const rerender = (next: CrashState) =>
     ReactTestRenderer.act(() => {
@@ -74,9 +66,7 @@ describe('CrashAlertModal', () => {
     jest.useFakeTimers();
     jest.setSystemTime(T0);
     vibrate = jest.spyOn(Vibration, 'vibrate').mockImplementation(() => {});
-    cancelVibration = jest
-      .spyOn(Vibration, 'cancel')
-      .mockImplementation(() => {});
+    cancelVibration = jest.spyOn(Vibration, 'cancel').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -101,12 +91,7 @@ describe('CrashAlertModal', () => {
     it('counts down per second and shrinks the progress bar', () => {
       const { tree } = render(countdown());
       const barWidth = () =>
-        parseFloat(
-          String(
-            StyleSheet.flatten(byId(tree, 'crash-progress')[0].props.style)
-              .width,
-          ),
-        );
+        parseFloat(String(StyleSheet.flatten(byId(tree, 'crash-progress')[0].props.style).width));
       expect(barWidth()).toBeCloseTo(100, 0);
       advance(3000);
       expect(byId(tree, 'crash-seconds')[0].props.children).toBe(7);
@@ -120,7 +105,6 @@ describe('CrashAlertModal', () => {
       expect(props.onCancel).toHaveBeenCalledTimes(1);
       expect(props.onSendNow).not.toHaveBeenCalled();
 
-      // The native side answers with a cancelled state; the overlay goes away and stops buzzing.
       rerender({ phase: 'cancelled', cancelReason: 'user' });
       expect(cancelVibration).toHaveBeenCalled();
       expect(tree.toJSON()).toBeNull();
@@ -210,9 +194,7 @@ describe('CrashAlertModal', () => {
     });
 
     it('shows nothing after a manual cancel', () => {
-      expect(
-        render({ phase: 'cancelled', cancelReason: 'user' }).tree.toJSON(),
-      ).toBeNull();
+      expect(render({ phase: 'cancelled', cancelReason: 'user' }).tree.toJSON()).toBeNull();
     });
   });
 });
@@ -319,7 +301,7 @@ describe('CrashAlertModal wired to the native crash bridge', () => {
     const onSos = jest.fn();
     const tree = await mount(onSos);
     advance(TOTAL);
-    expect(onSos).not.toHaveBeenCalled(); // native owns the clock; JS sends on its event
+    expect(onSos).not.toHaveBeenCalled();
     await ReactTestRenderer.act(async () => {
       DeviceEventEmitter.emit('onCountdownExpired', sosPayload);
     });
