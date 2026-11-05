@@ -8,15 +8,16 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
+  id            String         @id @default(uuid())
   riderName     String
-  email         String   @unique
+  email         String         @unique
   password      String?
-  googleId      String?  @unique
-  emailVerified Boolean  @default(false)
-  roomCode      String?  @unique
-  createdAt     DateTime @default(now())
+  googleId      String?        @unique
+  emailVerified Boolean        @default(false)
+  roomCode      String?        @unique
+  createdAt     DateTime       @default(now())
   rooms         Room[]
+  refreshTokens RefreshToken[]
 }
 
 model Room {
@@ -31,4 +32,19 @@ model Room {
   destinationLng  Float?
 
   @@index([hostId])
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  familyId  String
+  tokenHash String    @unique
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+  usedAt    DateTime?
+  revokedAt DateTime?
+
+  @@index([userId])
+  @@index([familyId])
 }

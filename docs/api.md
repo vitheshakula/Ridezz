@@ -11,10 +11,10 @@ The machine-readable OpenAPI 3.1 document is served at `GET /api/v1/openapi.json
 
 | Topic          | Behaviour                                                                                         |
 | -------------- | ------------------------------------------------------------------------------------------------- |
-| Authentication | `Authorization: Bearer <token>`, using the `token` returned by any sign-in endpoint (HS256 JWT). |
+| Authentication | `Authorization: Bearer <token>`, using the access `token` from a sign-in or refresh response (HS256 JWT). See *Sessions*. |
 | Errors         | Every error body is `{ "message": string, "code": string }`. Show `message` to riders; branch on `code`. |
 | Request IDs    | Send `x-request-id` (1-128 chars of `A-Z a-z 0-9 . _ : -`) or the server generates one. It is echoed in the response header and in every log line for that request. |
-| Rate limits    | Sign-in/sign-up and room joins each have a per-IP limit (`AUTH_RATE_LIMIT_MAX` per `AUTH_RATE_LIMIT_WINDOW_MS`), and password sign-in also has a per-email limit (`AUTH_ACCOUNT_RATE_LIMIT_MAX`). Exceeding either returns `429 RATE_LIMITED`. Limit headers follow the IETF draft-7 `RateLimit` format. |
+| Rate limits    | Per IP: sign-in, sign-up, Google sign-in and refresh (`AUTH_RATE_LIMIT_MAX` per `AUTH_RATE_LIMIT_WINDOW_MS`), and room joins (same numbers, separate counter). Per email: password sign-in (`AUTH_ACCOUNT_RATE_LIMIT_MAX`). Per rider: room joins (`ROOM_JOIN_RIDER_RATE_LIMIT_MAX`). Exceeding any returns `429 RATE_LIMITED`. Counters are shared across instances when `REDIS_URL` is set. Limit headers follow the IETF draft-7 `RateLimit` format. |
 | Allow list     | When `ALLOWED_EMAILS` is set, any other address gets `403` and its existing tokens stop working.  |
 | Unknown routes | `404 NOT_FOUND`.                                                                                  |
 | Server errors  | `500 INTERNAL_ERROR`. Details are only logged, never returned.                                    |
@@ -25,7 +25,8 @@ The machine-readable OpenAPI 3.1 document is served at `GET /api/v1/openapi.json
 | ---------------------------- | ------ | --------------------------------------------------------- |
 | `INVALID_REQUEST`            | 4xx    | Malformed JSON, oversized body or other unparseable input |
 | `VALIDATION_FAILED`          | 400    | A field is missing or invalid                             |
-| `UNAUTHENTICATED`            | 401    | Missing, invalid or expired token                         |
+| `UNAUTHENTICATED`            | 401    | Missing, invalid or expired access token: refresh and retry |
+| `SESSION_EXPIRED`            | 401    | Refresh token unknown, expired, reused or revoked: sign in again |
 | `INVALID_CREDENTIALS`        | 401    | Wrong email or password                                   |
 | `GOOGLE_ONLY_ACCOUNT`        | 401    | The account signs in with Google                          |
 | `GOOGLE_TOKEN_REJECTED`      | 401    | Google did not accept the ID token                        |
@@ -55,8 +56,13 @@ interface User {
   roomCode: string | null;
 }
 
-interface Session {
+interface SessionTokens {
   token: string;
+  refreshToken: string;
+  expiresIn: number;
+}
+
+interface Session extends SessionTokens {
   user: User;
 }
 
@@ -130,6 +136,38 @@ Request: `{ "idToken": string, "mode"?: "login" | "signup" }` (default `login`).
 | 409    | The email is already linked to a different Google account                       |
 | 503    | Google sign-in is not configured (`GOOGLE_SIGN_IN_DISABLED`), or Google is unreachable after retries (`SERVICE_UNAVAILABLE`) |
 
+### Sessions
+
+Every sign-in returns a short-lived **access token** (`token`) and a **refresh token**.
+
+| Prefix    | Access token lifetime            | Refresh token lifetime          |
+| --------- | -------------------------------- | ------------------------------- |
+| `/api/v1` | `ACCESS_TOKEN_TTL_SECONDS` (15 min) | `REFRESH_TOKEN_TTL_DAYS` (30 days) |
+| `/api`    | 30 days (older app builds that cannot refresh) | Same                 |
+
+When a call answers `401 UNAUTHENTICATED`, call `POST /auth/refresh` once and retry the call
+with the new access token. Refresh tokens rotate: each works exactly once and the response
+carries its replacement. Presenting a refresh token that was already used revokes every token
+from that sign-in, so a stolen token stops working as soon as either party uses it (logged as
+`refresh_token_reuse_detected`). A token revoked by logout is simply rejected. Refresh
+tokens are stored only as SHA-256 hashes. Other devices of the same rider are not affected.
+
+### `POST /api/auth/refresh`
+
+Request: `{ "refreshToken": string }`
+
+| Status | Body / meaning                                                          |
+| ------ | ----------------------------------------------------------------------- |
+| 200    | `SessionTokens`                                                         |
+| 400    | Missing or malformed refresh token                                      |
+| 401    | `SESSION_EXPIRED`: unknown, expired, reused, revoked, or no longer allowed |
+
+### `POST /api/auth/logout`
+
+Request: `{ "refreshToken": string }`. Revokes the refresh token and every token from the same
+sign-in. Always answers `204`, including for unknown tokens. The access token stays valid until
+it expires (at most 15 minutes under `/api/v1`).
+
 ### `GET /api/auth/me` and `GET /api/user/profile`
 
 Auth required. `200 { "user": User }`, or `401` without a valid token.
@@ -161,7 +199,7 @@ Request: `{ "roomCode": string, "riderName"?: string }`
 | 200    | `RoomAccess` (`isHost` is true for the creator)  |
 | 400    | Invalid room code                                |
 | 404    | Room not found                                   |
-| 429    | Rate limit exceeded                              |
+| 429    | Per-IP or per-rider join limit exceeded          |
 
 ### `PATCH /api/rooms/:roomCode/destination`
 

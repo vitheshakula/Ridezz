@@ -4,6 +4,7 @@ export const ErrorCode = {
   InvalidRequest: 'INVALID_REQUEST',
   ValidationFailed: 'VALIDATION_FAILED',
   Unauthenticated: 'UNAUTHENTICATED',
+  SessionExpired: 'SESSION_EXPIRED',
   InvalidCredentials: 'INVALID_CREDENTIALS',
   GoogleOnlyAccount: 'GOOGLE_ONLY_ACCOUNT',
   GoogleTokenRejected: 'GOOGLE_TOKEN_REJECTED',

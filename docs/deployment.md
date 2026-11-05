@@ -20,12 +20,22 @@ database. Never share secrets or data between environments.
 | `ridezz-api-staging` | `ridezz-db-staging` | Automatically from `master` once all CI checks pass  |
 | `ridezz-api`         | `ridezz-db`         | Manually, after the same commit has been checked on staging |
 
+Each environment also has a Key Value (Redis) instance for shared rate-limit counters, wired
+in as `REDIS_URL`.
+
 Each deploy runs `npm ci && npm run build`, then `npm run prisma:migrate:deploy` as the
 pre-deploy step (a failed migration stops the deploy), then starts the new instance and only
 routes traffic to it once `GET /health/ready` answers `200`. `JWT_SECRET` is generated per
-environment; the LiveKit, Google and allow-list values are entered in the Render dashboard
-(`sync: false`) and never committed. Choose paid plans for production, since free instances
-sleep and free databases expire.
+environment; the LiveKit, Google, Sentry and allow-list values are entered in the Render
+dashboard (`sync: false`) and never committed. Choose paid plans for production, since free
+instances sleep and free databases expire.
+
+### Least-privilege database access
+
+Render's generated `DATABASE_URL` belongs to the database owner. To run the server with a
+data-only role, create the roles as described in `docs/database.md`, then in the dashboard set
+`DATABASE_URL` to the `ridezz_app` connection string and `MIGRATION_DATABASE_URL` to the owner's.
+Migrations keep running as the owner; the server can no longer change the schema.
 
 ## Server release
 
@@ -87,12 +97,14 @@ release build type still uses the public debug keystore.
 | Response times               | `durationMs` on every `http_request` log line; Render's response-time metrics |
 | CPU, memory                  | Render service metrics                                                 |
 | Database load, connections   | Render PostgreSQL metrics                                              |
-| Errors                       | `level` `error` / `fatal` log lines, each with a `requestId`           |
+| Errors                       | Sentry (with `SENTRY_DSN`), plus `level` `error` / `fatal` log lines, each with a `requestId` |
+| Security events              | `refresh_token_reuse_detected` warnings (a refresh token was replayed) |
+| Rate-limit store             | `cache` in `GET /health/ready`; `redis_error` log lines                |
 | Business events              | `user_registered`, `user_signed_in`, `user_sign_in_failed`, `room_hosted`, `room_joined`, `room_destination_updated` |
 
 Alerts to configure in Render: failed deploys, failed health checks and service restarts (email
 or Slack notifications). For log-based alerts (for example more than five `error` lines in five
 minutes), forward the log stream to a log provider such as Better Stack, Datadog or Grafana Loki.
 
-Not yet in place: an error-tracking service (Sentry or similar) for the server and the app, and
-distributed tracing.
+In Sentry, alert on new issues and on spikes in event volume. Not yet in place: error tracking in
+the mobile app (it needs the native Sentry SDK and an Android build) and distributed tracing.

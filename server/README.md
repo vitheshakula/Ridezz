@@ -40,7 +40,8 @@ deployed), are read only in `src/config/env.ts`, and are validated at startup.
 | ----------------------------- | -------- | ------------- | -------------------------------------------------------------- |
 | `APP_ENV`                     | No       | `development` | `development`, `test`, `staging` or `production`               |
 | `JWT_SECRET`                  | Yes      |               | Signs login tokens; at least 32 characters                     |
-| `DATABASE_URL`                | Yes      |               | PostgreSQL URL; add `sslmode=require` and `connection_limit` as needed |
+| `DATABASE_URL`                | Yes      |               | PostgreSQL URL the server runs with; add `sslmode=require` and `connection_limit` |
+| `MIGRATION_DATABASE_URL`      | No       | `DATABASE_URL` | Owner role used only by `npm run prisma:migrate:deploy` (see `docs/database.md`) |
 | `LIVEKIT_API_KEY`             | Yes      |               | LiveKit project key                                            |
 | `LIVEKIT_API_SECRET`          | Yes      |               | LiveKit project secret                                         |
 | `LIVEKIT_URL`                 | Yes      |               | LiveKit WebSocket URL (`ws://` or `wss://`)                    |
@@ -51,6 +52,12 @@ deployed), are read only in `src/config/env.ts`, and are validated at startup.
 | `AUTH_RATE_LIMIT_WINDOW_MS`   | No       | `900000`      | Window for both rate limits                                    |
 | `AUTH_RATE_LIMIT_MAX`         | No       | `100`         | Sign-in/sign-up and room-join requests per IP per window       |
 | `AUTH_ACCOUNT_RATE_LIMIT_MAX` | No       | `10`          | Password sign-in attempts per email per window                 |
+| `ROOM_JOIN_RIDER_RATE_LIMIT_MAX` | No    | `30`          | Room joins per signed-in rider per window                      |
+| `REDIS_URL`                   | No       |               | `redis://` or `rediss://`; shares rate-limit counters across instances. Unset: in-memory per instance |
+| `ACCESS_TOKEN_TTL_SECONDS`    | No       | `900`         | Access token lifetime under `/api/v1`                          |
+| `REFRESH_TOKEN_TTL_DAYS`      | No       | `30`          | Refresh token lifetime                                         |
+| `SENTRY_DSN`                  | No       |               | Enables error tracking in Sentry                               |
+| `SENTRY_RELEASE`              | No       | `RENDER_GIT_COMMIT` | Release name attached to Sentry events                   |
 | `ALLOWED_EMAILS`              | No       |               | Allow list; unset means any Gmail account                      |
 | `GOOGLE_CLIENT_ID`            | No       |               | Enables Google sign-in                                         |
 
@@ -61,7 +68,8 @@ deployed), are read only in `src/config/env.ts`, and are validated at startup.
 | `src/routes`         | Controllers: parse input, call a service, map the result to HTTP     |
 | `src/services`       | Business use cases on top of Prisma                                  |
 | `src/auth`, `src/rooms` | Pure domain rules: validation, tokens, room codes, destinations   |
-| `src/integrations`   | Shared helpers for external calls (retry with backoff and jitter)    |
+| `src/integrations`   | External services: retry with backoff, Redis rate-limit store, Sentry error tracking |
+| `src/rateLimit.ts`   | The one rate-limiter factory every limit is built with               |
 | `src/config`         | Environment parsing and Passport setup                               |
 | `src/errors.ts`      | Error codes and the `{ message, code }` error body                   |
 | `src/http.ts`        | Request IDs, request logging, central error handler                  |
@@ -74,12 +82,18 @@ See [`docs/architecture/backend.md`](../docs/architecture/backend.md) for the de
 ## Operations
 
 - **Health checks:** `GET /health` (process is up) and `GET /health/ready` (database reachable,
-  `503` otherwise). Point the platform's health check at `/health/ready`.
+  `503` otherwise; also reports `cache: ok | unavailable` when Redis is configured, without failing
+  on it). Point the platform's health check at `/health/ready`.
+- **Rate limits** fail open: if Redis is unreachable, requests are served and `redis_error` is
+  logged, rather than the API going down with the cache.
+- **Error tracking:** with `SENTRY_DSN` set, unexpected errors and fatal events go to Sentry with
+  the request id, method, path and user id only. Request bodies, headers, cookies, query strings
+  and emails are never sent.
 - **Logging:** one JSON object per line on stdout/stderr with `timestamp`, `level`, `event` and,
   for requests, the `requestId`. Set `LOG_LEVEL` to `debug`, `info` (default), `warn`, `error` or
   `fatal`. Headers, query strings, bodies, tokens and database credentials are never logged.
 - **Shutdown:** `SIGTERM` and `SIGINT` stop accepting connections, finish in-flight requests and
-  disconnect from the database, forcing an exit after `SHUTDOWN_TIMEOUT_MS` (default 10 s).
+  disconnect from the database and Redis, flush pending Sentry events, forcing an exit after `SHUTDOWN_TIMEOUT_MS` (default 10 s).
 - **Configuration** is validated at startup; the process exits with a `server_config_invalid` log
   line when anything required is missing or malformed.
 
@@ -124,7 +138,8 @@ use `db push` or `migrate reset`.
 ## Authentication
 
 The full request/response reference is in [`docs/api.md`](../docs/api.md), and the machine-readable
-OpenAPI document is served at `GET /api/v1/openapi.json`. Tokens last 30 days.
+OpenAPI document is served at `GET /api/v1/openapi.json`. Access tokens last 15 minutes (30 days on
+the legacy `/api` prefix) and are renewed with rotating refresh tokens; see *Sessions* there.
 
 - **Passwords** are stored only as bcrypt hashes (cost 10).
 - **Email + password accounts are unverified** (`emailVerified: false`): a Gmail-shaped address

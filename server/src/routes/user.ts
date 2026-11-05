@@ -1,6 +1,5 @@
 import { Router, type RequestHandler } from 'express';
 import type { PrismaClient } from '@prisma/client';
-import { asyncHandler } from '../http';
 import { prepareCurrentUser } from '../services/authService';
 
 interface UserRouterDeps {
@@ -13,12 +12,9 @@ export function createUserRouter({ prisma, requireAuth }: UserRouterDeps): Route
 
   router.use(requireAuth);
 
-  router.get(
-    '/profile',
-    asyncHandler(async (req, res) => {
-      return res.json({ user: await prepareCurrentUser(prisma, req.user!) });
-    }),
-  );
+  router.get('/profile', async (req, res) => {
+    return res.json({ user: await prepareCurrentUser(prisma, req.user!) });
+  });
 
   return router;
 }

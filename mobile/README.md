@@ -101,6 +101,17 @@ Kotlin unit tests for the crash-detection pipeline run with
 
 Design notes for the connectivity layer are in `../docs/architecture`.
 
+## Sessions
+
+`src/services/AuthService.ts` stores the access token and refresh token
+(`src/services/sessionTokens.ts`). When the server answers `401`, the API client refreshes once,
+shared between all requests that failed at the same moment, and retries them. If the refresh token
+is rejected, the tokens are cleared and `AuthContext` signs the rider out; if the server is merely
+unreachable, the session is kept. Logging out revokes the refresh token on the server.
+
+Point `API_URL` at `/api/v1` to get 15-minute access tokens. An `.env` that still ends in `/api`
+works too, with 30-day access tokens.
+
 ## Logging
 
 Use `createLogger(scope)` from `src/utils/logger.ts`, never `console` directly (ESLint enforces

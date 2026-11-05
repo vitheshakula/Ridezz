@@ -27,6 +27,11 @@ export default tseslint.config(
     rules: { 'no-console': 'off', '@typescript-eslint/no-explicit-any': 'off' },
   },
   {
+    files: ['scripts/**/*.mjs'],
+    languageOptions: { globals: globals.node },
+    rules: { 'no-console': 'off' },
+  },
+  {
     files: ['*.js'],
     languageOptions: { globals: globals.node, sourceType: 'commonjs' },
   },

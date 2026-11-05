@@ -15,7 +15,11 @@ jest.mock('../src/services/AuthService', () => ({
 }));
 
 const service = AuthService as jest.Mocked<typeof AuthService>;
-const session = { token: 'app-jwt', user: { id: 'u1', email: 'a@gmail.com', name: 'Alex' } };
+const session = {
+  token: 'app-jwt',
+  refreshToken: 'app-refresh',
+  user: { id: 'u1', email: 'a@gmail.com', name: 'Alex' },
+};
 
 let renderer: ReactTestRenderer.ReactTestRenderer;
 const navigation = { navigate: jest.fn() };
@@ -97,7 +101,7 @@ describe('LoginPage', () => {
     await press(pressable(root, 'login-submit'));
 
     expect(service.login).toHaveBeenCalledWith('alex@gmail.com', 'longenough1');
-    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user);
+    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user, session.refreshToken);
     expect(navigation.navigate).toHaveBeenCalledWith('JoinScreen');
   });
 
@@ -158,7 +162,7 @@ describe('SignupPage', () => {
     await press(pressable(root, 'signup-submit'));
 
     expect(service.register).toHaveBeenCalledWith('Alex', 'alex@gmail.com', 'longenough1');
-    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user);
+    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user, session.refreshToken);
     expect(navigation.navigate).toHaveBeenCalledWith('JoinScreen');
   });
 
@@ -205,7 +209,7 @@ describe('GoogleSignInButton', () => {
     const root = render(<GoogleSignInButton mode="login" navigation={navigation} />);
     await press(button(root, 'Sign in with Google'));
 
-    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user);
+    expect(mockSignIn).toHaveBeenCalledWith(session.token, session.user, session.refreshToken);
     expect(navigation.navigate).toHaveBeenCalledWith('JoinScreen');
   });
 

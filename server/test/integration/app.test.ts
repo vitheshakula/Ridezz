@@ -828,6 +828,17 @@ describe('private testing allowlist (ALLOWED_EMAILS)', () => {
       401,
     );
   });
+
+  it('refuses to refresh the session of someone who is not listed', async () => {
+    const { body } = await post('/api/v1/auth/signup', {
+      name: 'Unlisted',
+      email: nextEmail(),
+      password: 'longenough1',
+    });
+    const refresh = await ask('POST', '/api/v1/auth/refresh', { refreshToken: body.refreshToken });
+    assert.equal(refresh.status, 401);
+    assert.equal(refresh.body.code, 'SESSION_EXPIRED');
+  });
 });
 
 describe('ride destination, host and LiveKit metadata', () => {
@@ -1509,5 +1520,150 @@ describe('versioned API prefix', () => {
     const versioned = await get('/api/v1/auth/me', signup.body.token);
     assert.equal(legacy.status, 200);
     assert.deepEqual(versioned.body, legacy.body);
+  });
+});
+
+describe('refresh tokens', () => {
+  async function signUp(prefix = '/api/v1') {
+    const res = await post(`${prefix}/auth/signup`, {
+      name: 'Refresher',
+      email: nextEmail(),
+      password: 'longenough1',
+    });
+    assert.equal(res.status, 201);
+    return res.body as {
+      token: string;
+      refreshToken: string;
+      expiresIn: number;
+      user: { id: string };
+    };
+  }
+
+  it('issues a short-lived access token and a refresh token under /api/v1', async () => {
+    const session = await signUp();
+    assert.equal(session.expiresIn, 900);
+    assert.match(session.refreshToken, /^[A-Za-z0-9_-]{43}$/);
+    const claims = jwt.decode(session.token) as { exp: number; iat: number };
+    assert.equal(claims.exp - claims.iat, 900);
+  });
+
+  it('keeps 30-day access tokens on the legacy /api prefix for older app builds', async () => {
+    const session = await signUp('/api');
+    assert.equal(session.expiresIn, 30 * 24 * 60 * 60);
+    assert.equal(typeof session.refreshToken, 'string');
+  });
+
+  it('stores only a hash of the refresh token', async () => {
+    const session = await signUp();
+    const stored = await prisma.refreshToken.findMany({ where: { userId: session.user.id } });
+    assert.equal(stored.length, 1);
+    assert.notEqual(stored[0].tokenHash, session.refreshToken);
+    assert.equal(stored[0].tokenHash.length, 64);
+  });
+
+  it('rotates: a refresh returns new tokens that work, and the old refresh token stops working', async () => {
+    const session = await signUp();
+    const refreshed = await post('/api/v1/auth/refresh', { refreshToken: session.refreshToken });
+    assert.equal(refreshed.status, 200);
+    assert.notEqual(refreshed.body.refreshToken, session.refreshToken);
+    assert.equal(refreshed.body.expiresIn, 900);
+    assert.equal(refreshed.body.user, undefined);
+
+    const me = await get('/api/v1/auth/me', refreshed.body.token);
+    assert.equal(me.status, 200);
+    assert.equal(me.body.user.id, session.user.id);
+
+    const next = await post('/api/v1/auth/refresh', { refreshToken: refreshed.body.refreshToken });
+    assert.equal(next.status, 200);
+  });
+
+  it('revokes the whole sign-in when a used refresh token is presented again', async () => {
+    const session = await signUp();
+    const first = await post('/api/v1/auth/refresh', { refreshToken: session.refreshToken });
+    assert.equal(first.status, 200);
+
+    const replay = await post('/api/v1/auth/refresh', { refreshToken: session.refreshToken });
+    assert.equal(replay.status, 401);
+    assert.deepEqual(replay.body, {
+      message: 'Your session has expired. Please sign in again.',
+      code: 'SESSION_EXPIRED',
+    });
+
+    const legitimate = await post('/api/v1/auth/refresh', {
+      refreshToken: first.body.refreshToken,
+    });
+    assert.equal(legitimate.status, 401, 'the attacker and the rider both lose the stolen family');
+  });
+
+  it('keeps other sign-ins of the same rider working after a reuse', async () => {
+    const email = nextEmail();
+    const created = await post('/api/v1/auth/signup', {
+      name: 'TwoPhones',
+      email,
+      password: 'longenough1',
+    });
+    const otherDevice = await post('/api/v1/auth/login', { email, password: 'longenough1' });
+    await post('/api/v1/auth/refresh', { refreshToken: created.body.refreshToken });
+    await post('/api/v1/auth/refresh', { refreshToken: created.body.refreshToken });
+
+    const stillValid = await post('/api/v1/auth/refresh', {
+      refreshToken: otherDevice.body.refreshToken,
+    });
+    assert.equal(stillValid.status, 200);
+  });
+
+  it('rejects unknown, malformed and expired refresh tokens', async () => {
+    const unknown = await post('/api/v1/auth/refresh', { refreshToken: 'A'.repeat(43) });
+    assert.equal(unknown.status, 401);
+    assert.equal(unknown.body.code, 'SESSION_EXPIRED');
+
+    for (const refreshToken of [undefined, '', 'short', 42, 'A'.repeat(44)]) {
+      const malformed = await post('/api/v1/auth/refresh', { refreshToken });
+      assert.equal(malformed.status, 400);
+      assert.equal(malformed.body.code, 'VALIDATION_FAILED');
+    }
+
+    const session = await signUp();
+    await prisma.refreshToken.updateMany({
+      where: { userId: session.user.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    const expired = await post('/api/v1/auth/refresh', { refreshToken: session.refreshToken });
+    assert.equal(expired.status, 401);
+  });
+
+  it('logout revokes the refresh token and is idempotent', async () => {
+    const session = await signUp();
+    const logout = await post('/api/v1/auth/logout', { refreshToken: session.refreshToken });
+    assert.equal(logout.status, 204);
+    assert.equal(
+      (await post('/api/v1/auth/logout', { refreshToken: session.refreshToken })).status,
+      204,
+    );
+    assert.equal((await post('/api/v1/auth/logout', {})).status, 204);
+
+    const refresh = await post('/api/v1/auth/refresh', { refreshToken: session.refreshToken });
+    assert.equal(refresh.status, 401);
+  });
+
+  it('removes a rider’s refresh tokens when the account is deleted', async () => {
+    const session = await signUp();
+    await prisma.user.delete({ where: { id: session.user.id } });
+    assert.equal(await prisma.refreshToken.count({ where: { userId: session.user.id } }), 0);
+  });
+
+  it('cleans up the rider’s expired refresh tokens at the next sign-in', async () => {
+    const email = nextEmail();
+    const first = await post('/api/v1/auth/signup', {
+      name: 'Cleaner',
+      email,
+      password: 'longenough1',
+    });
+    await prisma.refreshToken.updateMany({
+      where: { userId: first.body.user.id },
+      data: { expiresAt: new Date(Date.now() - 1000) },
+    });
+    await post('/api/v1/auth/login', { email, password: 'longenough1' });
+    assert.equal(await prisma.refreshToken.count({ where: { userId: first.body.user.id } }), 1);
   });
 });

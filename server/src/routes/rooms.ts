@@ -18,6 +18,7 @@ interface RoomsRouterDeps {
   prisma: PrismaClient;
   env: Env;
   requireAuth: RequestHandler;
+  joinLimiter?: RequestHandler;
 }
 
 type RoomHandler = (req: Request, res: Response) => Promise<unknown>;
@@ -52,7 +53,14 @@ function withFailureMessage(event: string, message: string, handler: RoomHandler
   };
 }
 
-export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps): Router {
+const passThrough: RequestHandler = (_req, _res, next) => next();
+
+export function createRoomsRouter({
+  prisma,
+  env,
+  requireAuth,
+  joinLimiter = passThrough,
+}: RoomsRouterDeps): Router {
   const router = Router();
 
   const roomAccess = async (room: Room, riderName: string, userId: string, isHost: boolean) => ({
@@ -91,6 +99,7 @@ export function createRoomsRouter({ prisma, env, requireAuth }: RoomsRouterDeps)
 
   router.post(
     '/join',
+    joinLimiter,
     withFailureMessage('room_join_error', 'Failed to join room.', async (req, res) => {
       const code = normalizeRoomCode(req.body?.roomCode);
       if (!isRoomCode(code)) {

@@ -81,10 +81,10 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 48 | Met | `requireAuth` on every user and room route; allow list re-checked per request |
 | 49 | Met | Host status computed on the server from the token's user, ignoring body fields (tested) |
 | 50 | Met | bcrypt, cost 10 |
-| 51 | Partial | 30-day expiry, no refresh tokens (decision 5) |
+| 51 | Met | 15-minute access tokens, rotating single-use refresh tokens with reuse detection (decision 5) |
 | 52 | Met | Per-account limit on password sign-in, per-IP limits on all sign-in routes |
-| 53 | Met | Rate limits on sign-in, sign-up, Google sign-in and room joins |
-| 54 | Partial | LiveKit tokens grant one room for 6 hours; the server and its migrations share one database role |
+| 53 | Met | Rate limits on sign-in, sign-up, Google sign-in, refresh and room joins (per IP and per rider) |
+| 54 | Met | Data-only `ridezz_app` role for the server, owner role only for migrations (`docs/database.md`); LiveKit tokens grant one room for 6 hours |
 
 ## 6. Security best practices
 
@@ -115,7 +115,7 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 72 | Met | `x-request-id` accepted or generated, echoed, and logged with each request |
 | 73 | Met | Registration, sign-in (success and failure), room hosted/joined, destination changed |
 | 74 | Met | Only user ids and room codes are logged, never emails, passwords or tokens |
-| 75 | Gap | No error-tracking service (Sentry or similar) |
+| 75 | Met | Sentry behind `SENTRY_DSN`, with request id and user id only (`src/integrations/errorTracker.ts`) |
 | 76 | Met | `durationMs` per request; platform response-time metrics |
 | 77 | Met | Render service and database metrics (`docs/deployment.md`) |
 | 78 | Met | `/health` and `/health/ready` |
@@ -128,7 +128,7 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 80 | Met | Async I/O throughout; bcrypt uses its async API |
 | 81 | Met | The only sync crypto (`hashSync` for the dummy hash) runs once at startup |
 | 82 | N/A | Every request is a few indexed single-row reads; nothing worth caching (decision 7) |
-| 83 | N/A | As 82; Redis would be added first for shared rate-limit counters (decision 9) |
+| 83 | Met | Redis is used where it pays off: shared rate-limit counters (decision 9) |
 | 84 | Met | Indexed single-row queries only |
 | 85 | N/A | No collection endpoints |
 | 86 | N/A | No long-running work |
@@ -137,13 +137,13 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 89 | Met | No unbounded in-memory state; timers are `unref`ed |
 | 90 | Met | `SIGTERM`/`SIGINT` handling with timeout (`src/index.ts`) |
 | 91 | Met | Stateless JWT auth, no sessions |
-| 92 | Partial | Can run multiple instances, but rate-limit counters are per instance (decision 9) |
+| 92 | Met | Stateless instances; rate-limit counters shared through Redis (decision 9) |
 
 ## 9. External service and integration management
 
 | # | Status | Evidence |
 | - | ------ | -------- |
-| 93 | Met | Google in `src/auth/google.ts`, LiveKit in `src/services/livekitService.ts` |
+| 93 | Met | Google in `src/auth/google.ts`, LiveKit in `src/services/livekitService.ts`, Redis and Sentry in `src/integrations` |
 | 94 | Met | 5 s Google timeout |
 | 95 | Met | Exponential backoff with full jitter |
 | 96 | Met | 3 attempts maximum; permanent errors not retried |
@@ -161,7 +161,7 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 103 | Met | `src/**/*.test.ts` |
 | 104 | Met | `test/integration` against a real PostgreSQL database |
 | 105 | Met | Every endpoint is exercised over HTTP |
-| 106 | Met | Tokens (expired, forged, `alg: none`, wrong secret), allow list, host-only updates |
+| 106 | Met | Tokens (expired, forged, `alg: none`, wrong secret), refresh rotation and reuse, allow list, host-only updates |
 | 107 | Met | Missing, wrong-typed, oversized and malformed inputs |
 | 108 | Met | Google unreachable, database unavailable, unexpected exceptions |
 | 109 | Met | OpenAPI contract test against the mounted routes and error codes |
@@ -192,7 +192,7 @@ Status of `server/` against the CDE backend checklist (153 practices).
 | 124 | Met | `npm audit`, dependency review |
 | 125 | Met | `depcheck` reports no unused packages |
 | 126 | Met | Small dependency set; no utility libraries for things the platform provides |
-| 127 | Partial | Dependabot and `npm outdated` surface deprecations; Express 5 and Prisma 6 upgrades are not done yet |
+| 127 | Partial | Express 5 done; Prisma stays on 5 until the Prisma 7 migration (decision 12) |
 
 ## 13. Background jobs and asynchronous processing
 
@@ -232,10 +232,6 @@ Status of `server/` against the CDE backend checklist (153 practices).
 
 | # | Item | Suggested next step |
 | - | ---- | ------------------- |
-| 51 | No refresh tokens | Short-lived access tokens plus rotating refresh tokens before public launch |
-| 75 | No error tracking | Add Sentry (server and app) behind an optional `SENTRY_DSN` |
-| 79 | Log-based alerts | Forward Render logs to a log provider and alert on `error`/`fatal` |
-| 92 | Per-instance rate limits | Redis store for `express-rate-limit` when running more than one instance |
-| 127 | Major upgrades | Plan Express 5 and Prisma 6 upgrades |
-| 54 | Shared database role | Give the running server a role limited to reading and writing data, and run migrations with a separate owner role |
+| 79 | Log-based alerts | Forward Render logs to a log provider and alert on `error`/`fatal`, and set Sentry alert rules |
+| 127 | Prisma 7 | Migrate to Prisma 7 (driver adapter, `prisma.config.ts`) as its own change |
 | 153 | Branch protection | Protect `master`: require PRs, one approval and passing CI and Security checks |

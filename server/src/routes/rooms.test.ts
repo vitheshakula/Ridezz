@@ -4,26 +4,9 @@ import type { AddressInfo } from 'node:net';
 import { describe, it } from 'node:test';
 import type { PrismaClient } from '@prisma/client';
 import express, { type Express, type RequestHandler } from 'express';
-import type { Env } from '../config/env';
 import { errorHandler, notFoundHandler } from '../http';
 import { createRoomsRouter } from './rooms';
-
-const TEST_ENV: Env = {
-  appEnv: 'test',
-  port: 5000,
-  logLevel: 'info',
-  shutdownTimeoutMs: 10_000,
-  jwtSecret: 'test-secret'.padEnd(40, 'x'),
-  googleClientId: null,
-  allowedEmails: null,
-  corsOrigins: null,
-  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100, perAccountMax: 1000 },
-  livekit: {
-    apiKey: 'test-key',
-    apiSecret: 'test-secret',
-    url: 'wss://livekit.test',
-  },
-};
+import { TEST_ENV } from '../testing/testEnv';
 
 interface Reply {
   status: number;

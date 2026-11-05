@@ -8,6 +8,14 @@ All notable changes are recorded here. The format follows
 
 ### Added
 
+- Refresh tokens: `/api/v1` sign-ins return a 15-minute access token and a rotating, single-use
+  refresh token (`POST /auth/refresh`, `POST /auth/logout`). Reusing a refresh token revokes the
+  whole sign-in. The app refreshes silently on `401` and retries the request.
+- Optional Redis store (`REDIS_URL`) that shares rate-limit counters across instances, failing
+  open if Redis is down; readiness reports its state.
+- Per-rider limit on room joins (`ROOM_JOIN_RIDER_RATE_LIMIT_MAX`) and a rate limit on refresh.
+- Optional Sentry error tracking (`SENTRY_DSN`) without request bodies, headers or emails.
+- `MIGRATION_DATABASE_URL`, so the server can run with a data-only database role.
 - Versioned API under `/api/v1`; `/api` stays as an alias for existing app builds.
 - Every error response carries a stable `code` next to `message`.
 - OpenAPI 3.1 document at `/api/v1/openapi.json`, with a contract test against the mounted routes.
@@ -35,6 +43,9 @@ All notable changes are recorded here. The format follows
 
 ### Changed
 
+- Express 5. Async route errors reach the central handler natively, so `asyncHandler` is gone.
+- All rate limits are built by one factory (`src/rateLimit.ts`).
+- Test configuration is shared from `src/testing/testEnv.ts`.
 - The app reads configuration through `react-native-config` instead of `react-native-dotenv`.
 - Prettier `printWidth` is 100 and applies to both packages; ESLint now also covers the server.
 - Server integration tests moved to `server/test/integration`.

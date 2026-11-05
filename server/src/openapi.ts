@@ -2,6 +2,7 @@ const errorCodes = [
   'INVALID_REQUEST',
   'VALIDATION_FAILED',
   'UNAUTHENTICATED',
+  'SESSION_EXPIRED',
   'INVALID_CREDENTIALS',
   'GOOGLE_ONLY_ACCOUNT',
   'GOOGLE_TOKEN_REJECTED',
@@ -130,6 +131,30 @@ export const openApiDocument = {
         },
       },
     },
+    '/auth/refresh': {
+      post: {
+        summary: 'Exchange a refresh token for a new access token and refresh token',
+        description:
+          'Refresh tokens rotate: each one works once. Presenting a used token revokes every token ' +
+          'from the same sign-in.',
+        security: [],
+        requestBody: { required: true, ...json(ref('RefreshRequest')) },
+        responses: {
+          '200': ok('New tokens', ref('SessionTokens')),
+          '400': error('Missing or malformed refresh token'),
+          '401': error('Refresh token unknown, expired, reused or revoked (SESSION_EXPIRED)'),
+          ...commonErrors,
+        },
+      },
+    },
+    '/auth/logout': {
+      post: {
+        summary: 'Revoke the refresh token and every token from the same sign-in',
+        security: [],
+        requestBody: { required: true, ...json(ref('RefreshRequest')) },
+        responses: { '204': { description: 'Signed out (also returned for unknown tokens)' } },
+      },
+    },
     '/auth/me': {
       get: {
         summary: 'The signed-in rider',
@@ -245,13 +270,28 @@ export const openApiDocument = {
         required: ['user'],
         properties: { user: ref('User') },
       },
-      Session: {
+      SessionTokens: {
         type: 'object',
-        required: ['token', 'user'],
+        required: ['token', 'refreshToken', 'expiresIn'],
         properties: {
-          token: { type: 'string', description: 'JWT, valid for 30 days' },
-          user: ref('User'),
+          token: {
+            type: 'string',
+            description: 'Access token (JWT). 15 minutes under /api/v1, 30 days under /api',
+          },
+          refreshToken: { type: 'string', description: 'Opaque, single-use, valid for 30 days' },
+          expiresIn: { type: 'integer', description: 'Access token lifetime in seconds' },
         },
+      },
+      Session: {
+        allOf: [
+          ref('SessionTokens'),
+          { type: 'object', required: ['user'], properties: { user: ref('User') } },
+        ],
+      },
+      RefreshRequest: {
+        type: 'object',
+        required: ['refreshToken'],
+        properties: { refreshToken: { type: 'string' } },
       },
       Destination: {
         type: 'object',

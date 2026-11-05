@@ -6,25 +6,10 @@ import type { PrismaClient } from '@prisma/client';
 import express, { type Express } from 'express';
 import { createApp } from './app';
 import { GoogleUnavailableError } from './auth/google';
+import { signAuthToken } from './auth/tokens';
 import type { Env } from './config/env';
-import { asyncHandler, errorHandler, requestIdMiddleware } from './http';
-
-const TEST_ENV: Env = {
-  appEnv: 'test',
-  port: 5000,
-  logLevel: 'info',
-  shutdownTimeoutMs: 10_000,
-  jwtSecret: 'test-secret'.padEnd(40, 'x'),
-  googleClientId: null,
-  allowedEmails: null,
-  corsOrigins: null,
-  authRateLimit: { windowMs: 15 * 60 * 1000, max: 100, perAccountMax: 1000 },
-  livekit: {
-    apiKey: 'test-key',
-    apiSecret: 'test-secret',
-    url: 'wss://livekit.test',
-  },
-};
+import { errorHandler, requestIdMiddleware } from './http';
+import { TEST_ENV } from './testing/testEnv';
 
 async function withServer<T>(app: Express, run: (baseUrl: string) => Promise<T>): Promise<T> {
   const server = await new Promise<Server>(resolve => {
@@ -123,7 +108,7 @@ describe('HTTP security middleware', () => {
   });
 
   it('rate-limits sensitive auth and room-join routes with a generic JSON response', async () => {
-    const authRateLimit = { windowMs: 60_000, max: 2, perAccountMax: 1000 };
+    const authRateLimit = { windowMs: 60_000, max: 2, perAccountMax: 1000, perRiderJoinMax: 1000 };
     await withServer(testApp({ authRateLimit }), async baseUrl => {
       for (let attempt = 0; attempt < 2; attempt++) {
         const response = await fetch(`${baseUrl}/api/auth/login`, {
@@ -237,14 +222,11 @@ describe('central error handler', () => {
     const app = express();
     app.use(requestIdMiddleware);
     app.use(express.json());
-    app.get(
-      '/unexpected',
-      asyncHandler(async () => {
-        throw new Error(
-          'private stack detail postgresql://private-user:private-password@db.example/ridezz Bearer secret-token',
-        );
-      }),
-    );
+    app.get('/unexpected', async () => {
+      throw new Error(
+        'private stack detail postgresql://private-user:private-password@db.example/ridezz Bearer secret-token',
+      );
+    });
     app.get('/client-error', (_req, _res, next) => {
       const error = Object.assign(new Error('private client detail'), { status: 422 });
       next(error);
@@ -361,7 +343,7 @@ describe('environment-aware CORS', () => {
 
 describe('per-account sign-in limit', () => {
   it('limits repeated attempts for one email across client addresses', async () => {
-    const authRateLimit = { windowMs: 60_000, max: 1000, perAccountMax: 2 };
+    const authRateLimit = { windowMs: 60_000, max: 1000, perAccountMax: 2, perRiderJoinMax: 1000 };
     await withServer(testApp({ authRateLimit }), async baseUrl => {
       const attempt = (email: string, forwardedFor: string) =>
         fetch(`${baseUrl}/api/auth/login`, {
@@ -405,5 +387,43 @@ describe('Google sign-in when Google is unreachable', () => {
     } finally {
       console.error = originalConsoleError;
     }
+  });
+});
+
+describe('per-rider join limit', () => {
+  it('limits one rider guessing room codes from many addresses', async () => {
+    const rider = {
+      id: 'rider-1',
+      email: 'rider@gmail.com',
+      riderName: 'Rider',
+      emailVerified: true,
+      roomCode: '54321',
+    };
+    const prisma = {
+      user: { findUnique: async () => rider },
+      room: { findUnique: async () => null },
+    } as unknown as PrismaClient;
+    const env = {
+      ...TEST_ENV,
+      authRateLimit: { windowMs: 60_000, max: 1000, perAccountMax: 1000, perRiderJoinMax: 2 },
+    };
+    const token = signAuthToken(rider.id, env.jwtSecret, 60);
+    await withServer(createApp({ prisma, env }), async baseUrl => {
+      const join = (address: string) =>
+        fetch(`${baseUrl}/api/v1/rooms/join`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+            'x-forwarded-for': address,
+          },
+          body: JSON.stringify({ roomCode: '12345' }),
+        });
+      assert.equal((await join('198.51.100.1')).status, 404);
+      assert.equal((await join('198.51.100.2')).status, 404);
+      const limited = await join('198.51.100.3');
+      assert.equal(limited.status, 429);
+      assert.equal(((await limited.json()) as { code: string }).code, 'RATE_LIMITED');
+    });
   });
 });

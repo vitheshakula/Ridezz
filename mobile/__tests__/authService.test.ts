@@ -7,7 +7,8 @@ function load() {
     const instance = {
       get: jest.fn(),
       post: jest.fn(),
-      interceptors: { request: { use: jest.fn() } },
+      request: jest.fn(),
+      interceptors: { request: { use: jest.fn() }, response: { use: jest.fn() } },
     };
     return { __esModule: true, default: { create: jest.fn(() => instance) }, __instance: instance };
   });
@@ -37,6 +38,8 @@ function load() {
     storage: require('@react-native-async-storage/async-storage').default,
     google: require('@react-native-google-signin/google-signin').GoogleSignin,
     errors: require('../src/utils/authErrors') as typeof import('../src/utils/authErrors'),
+    sessionTokens:
+      require('../src/services/sessionTokens') as typeof import('../src/services/sessionTokens'),
   };
 }
 
@@ -296,5 +299,134 @@ describe('loginWithGoogle', () => {
       'Google sign-in is not configured on the server.',
     );
     expect(ctx.google.signIn).not.toHaveBeenCalled();
+  });
+});
+
+describe('refreshing an expired access token', () => {
+  const unauthorized = (url: string, extra: Record<string, unknown> = {}) => ({
+    response: { status: 401 },
+    config: { url, headers: {}, ...extra },
+  });
+
+  function withStoredRefreshToken(storage: any, refreshToken: string | null) {
+    storage.getItem.mockImplementation(async (key: string) =>
+      key === '@ridezz_refresh_token' ? refreshToken : 'old-access',
+    );
+  }
+
+  it('registers the retry handler on the API client', () => {
+    const { service, api } = load();
+    expect(api.interceptors.response.use).toHaveBeenCalledWith(
+      expect.any(Function),
+      service.retryAfterRefresh,
+    );
+  });
+
+  it('refreshes, stores the rotated tokens, and retries the request once', async () => {
+    const { service, api, storage, sessionTokens } = load();
+    withStoredRefreshToken(storage, 'refresh-1');
+    api.post.mockResolvedValue({
+      data: { token: 'new-access', refreshToken: 'refresh-2', expiresIn: 900 },
+    });
+    api.request.mockResolvedValue({ data: 'retried' });
+    const events: unknown[] = [];
+    sessionTokens.onSessionEvent(event => events.push(event));
+
+    await expect(service.retryAfterRefresh(unauthorized('/rooms/join') as any)).resolves.toEqual({
+      data: 'retried',
+    });
+
+    expect(api.post).toHaveBeenCalledWith('/auth/refresh', { refreshToken: 'refresh-1' });
+    expect(storage.setItem).toHaveBeenCalledWith('@ridezz_jwt_token', 'new-access');
+    expect(storage.setItem).toHaveBeenCalledWith('@ridezz_refresh_token', 'refresh-2');
+    expect(api.request).toHaveBeenCalledWith(
+      expect.objectContaining({
+        url: '/rooms/join',
+        _authRetried: true,
+        headers: { Authorization: 'Bearer new-access' },
+      }),
+    );
+    expect(events).toEqual([{ type: 'refreshed', token: 'new-access' }]);
+  });
+
+  it('shares one refresh between requests that fail at the same time', async () => {
+    const { service, api, storage } = load();
+    withStoredRefreshToken(storage, 'refresh-1');
+    api.post.mockResolvedValue({
+      data: { token: 'new-access', refreshToken: 'refresh-2', expiresIn: 900 },
+    });
+    api.request.mockResolvedValue({ data: 'ok' });
+
+    await Promise.all([
+      service.retryAfterRefresh(unauthorized('/user/profile') as any),
+      service.retryAfterRefresh(unauthorized('/rooms/create') as any),
+    ]);
+
+    expect(api.post).toHaveBeenCalledTimes(1);
+    expect(api.request).toHaveBeenCalledTimes(2);
+  });
+
+  it('signs the rider out when the server rejects the refresh token', async () => {
+    const { service, api, storage, sessionTokens } = load();
+    withStoredRefreshToken(storage, 'refresh-1');
+    api.post.mockRejectedValue({ response: { status: 401 } });
+    const events: unknown[] = [];
+    sessionTokens.onSessionEvent(event => events.push(event));
+    const original = unauthorized('/user/profile');
+
+    await expect(service.retryAfterRefresh(original as any)).rejects.toBe(original);
+
+    expect(storage.removeItem).toHaveBeenCalledWith('@ridezz_jwt_token');
+    expect(storage.removeItem).toHaveBeenCalledWith('@ridezz_refresh_token');
+    expect(events).toEqual([{ type: 'expired' }]);
+    expect(api.request).not.toHaveBeenCalled();
+  });
+
+  it('keeps the session when the refresh fails because the server is unreachable', async () => {
+    const { service, api, storage, sessionTokens } = load();
+    withStoredRefreshToken(storage, 'refresh-1');
+    api.post.mockRejectedValue({ code: 'ECONNABORTED' });
+    const events: unknown[] = [];
+    sessionTokens.onSessionEvent(event => events.push(event));
+    const original = unauthorized('/user/profile');
+
+    await expect(service.retryAfterRefresh(original as any)).rejects.toBe(original);
+
+    expect(storage.removeItem).not.toHaveBeenCalled();
+    expect(events).toEqual([]);
+  });
+
+  it('does not refresh without a stored refresh token, for sign-in calls, or twice', async () => {
+    const { service, api, storage } = load();
+    withStoredRefreshToken(storage, null);
+    await expect(
+      service.retryAfterRefresh(unauthorized('/user/profile') as any),
+    ).rejects.toBeTruthy();
+
+    withStoredRefreshToken(storage, 'refresh-1');
+    await expect(
+      service.retryAfterRefresh(unauthorized('/auth/login') as any),
+    ).rejects.toBeTruthy();
+    await expect(
+      service.retryAfterRefresh(unauthorized('/user/profile', { _authRetried: true }) as any),
+    ).rejects.toBeTruthy();
+    await expect(
+      service.retryAfterRefresh({ response: { status: 500 }, config: { headers: {} } } as any),
+    ).rejects.toBeTruthy();
+
+    expect(api.post).not.toHaveBeenCalled();
+    expect(api.request).not.toHaveBeenCalled();
+  });
+
+  it('revokes the refresh token on the server when signing out, even if that call fails', async () => {
+    const { service, api, storage } = load();
+    withStoredRefreshToken(storage, 'refresh-1');
+    api.post.mockRejectedValue(new Error('offline'));
+
+    await service.revokeSession();
+
+    expect(api.post).toHaveBeenCalledWith('/auth/logout', { refreshToken: 'refresh-1' });
+    expect(storage.removeItem).toHaveBeenCalledWith('@ridezz_jwt_token');
+    expect(storage.removeItem).toHaveBeenCalledWith('@ridezz_refresh_token');
   });
 });

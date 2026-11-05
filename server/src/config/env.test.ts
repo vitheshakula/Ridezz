@@ -44,8 +44,60 @@ describe('loadEnv', () => {
     assert.equal(result.jwtSecret, SECRET);
     assert.equal(result.googleClientId, 'my-client-id');
     assert.deepEqual([...result.corsOrigins!], ['https://app.example', 'https://admin.example']);
-    assert.deepEqual(result.authRateLimit, { windowMs: 60000, max: 25, perAccountMax: 10 });
+    assert.deepEqual(result.authRateLimit, {
+      windowMs: 60000,
+      max: 25,
+      perAccountMax: 10,
+      perRiderJoinMax: 30,
+    });
     assert.deepEqual(result.livekit, { apiKey: 'k', apiSecret: 's', url: 'wss://x.example' });
+  });
+
+  it('defaults and validates session lifetimes', () => {
+    assert.deepEqual(loadEnv(env()).sessions, {
+      accessTokenTtlSeconds: 900,
+      refreshTokenTtlSeconds: 30 * 86_400,
+    });
+    assert.deepEqual(
+      loadEnv(env({ ACCESS_TOKEN_TTL_SECONDS: '300', REFRESH_TOKEN_TTL_DAYS: '7' })).sessions,
+      { accessTokenTtlSeconds: 300, refreshTokenTtlSeconds: 7 * 86_400 },
+    );
+    assert.throws(
+      () => loadEnv(env({ ACCESS_TOKEN_TTL_SECONDS: '0' })),
+      /ACCESS_TOKEN_TTL_SECONDS/,
+    );
+    assert.throws(() => loadEnv(env({ REFRESH_TOKEN_TTL_DAYS: 'week' })), /REFRESH_TOKEN_TTL_DAYS/);
+  });
+
+  it('reads optional Redis and Sentry settings and rejects malformed ones', () => {
+    const defaults = loadEnv(env());
+    assert.equal(defaults.redisUrl, null);
+    assert.equal(defaults.sentry, null);
+
+    const configured = loadEnv(
+      env({
+        REDIS_URL: ' rediss://default:pw@cache.internal:6379 ',
+        SENTRY_DSN: 'https://abc@o1.ingest.sentry.io/2',
+        RENDER_GIT_COMMIT: 'deadbeef',
+      }),
+    );
+    assert.equal(configured.redisUrl, 'rediss://default:pw@cache.internal:6379');
+    assert.deepEqual(configured.sentry, {
+      dsn: 'https://abc@o1.ingest.sentry.io/2',
+      release: 'deadbeef',
+    });
+    assert.equal(
+      loadEnv(env({ SENTRY_DSN: 'https://abc@o1.ingest.sentry.io/2', SENTRY_RELEASE: 'v1.2.0' }))
+        .sentry?.release,
+      'v1.2.0',
+    );
+
+    assert.throws(() => loadEnv(env({ REDIS_URL: 'http://cache:6379' })), /REDIS_URL/);
+    assert.throws(() => loadEnv(env({ SENTRY_DSN: 'not a url' })), /SENTRY_DSN/);
+    assert.throws(
+      () => loadEnv(env({ SENTRY_DSN: 'https://o1.ingest.sentry.io/2' })),
+      /SENTRY_DSN/,
+    );
   });
 
   it('defaults and validates the log level and shutdown timeout', () => {
@@ -74,7 +126,12 @@ describe('loadEnv', () => {
   it('uses prototype-friendly defaults for CORS and rate limiting', () => {
     const result = loadEnv(env());
     assert.equal(result.corsOrigins, null);
-    assert.deepEqual(result.authRateLimit, { windowMs: 900000, max: 100, perAccountMax: 10 });
+    assert.deepEqual(result.authRateLimit, {
+      windowMs: 900000,
+      max: 100,
+      perAccountMax: 10,
+      perRiderJoinMax: 30,
+    });
   });
 });
 

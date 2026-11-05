@@ -45,7 +45,7 @@ export const LoginPage = ({ navigation }: any) => {
     setIsLoading(true);
     try {
       const result = await loginRequest(email, password);
-      await login(result.token, result.user);
+      await login(result.token, result.user, result.refreshToken);
       navigation?.navigate('JoinScreen');
     } catch (error) {
       setFormError(describeAuthError(error, 'Sign in failed. Please try again.'));

@@ -32,7 +32,7 @@ export function GoogleSignInButton({
       if (!result) {
         return;
       }
-      await login(result.token, result.user);
+      await login(result.token, result.user, result.refreshToken);
       navigation?.navigate('JoinScreen');
     } catch (error) {
       const message = describeAuthError(error, 'Google sign-in failed. Please try again.');

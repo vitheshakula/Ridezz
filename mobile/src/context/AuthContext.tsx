@@ -7,7 +7,8 @@ import React, {
   ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { TOKEN_KEY, type RiderUser } from '../services/AuthService';
+import { revokeSession, type RiderUser } from '../services/AuthService';
+import { onSessionEvent, readAccessToken, saveTokens } from '../services/sessionTokens';
 import { parseStoredUser } from '../utils/authStorage';
 import { createLogger } from '../utils/logger';
 
@@ -19,7 +20,7 @@ interface AuthContextType {
   token: string | null;
   user: RiderUser | null;
   isLoading: boolean;
-  login: (token: string, userData: RiderUser) => Promise<void>;
+  login: (token: string, userData: RiderUser, refreshToken?: string) => Promise<void>;
   updateUser: (userData: RiderUser) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -36,7 +37,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   useEffect(() => {
     const restoreSession = async () => {
       try {
-        const storedToken = await AsyncStorage.getItem(TOKEN_KEY);
+        const storedToken = await readAccessToken();
         const storedUser = await AsyncStorage.getItem(USER_KEY);
 
         const restoredUser = parseStoredUser(storedUser);
@@ -54,9 +55,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     restoreSession();
   }, []);
 
-  const login = async (newToken: string, userData: RiderUser) => {
+  useEffect(
+    () =>
+      onSessionEvent(event => {
+        if (event.type === 'refreshed') {
+          setToken(event.token);
+          return;
+        }
+        setToken(null);
+        setUser(null);
+        AsyncStorage.removeItem(USER_KEY).catch(error =>
+          log.error('Failed to clear the expired session profile:', error),
+        );
+      }),
+    [],
+  );
+
+  const login = async (newToken: string, userData: RiderUser, refreshToken?: string) => {
     try {
-      await AsyncStorage.setItem(TOKEN_KEY, newToken);
+      await saveTokens({ token: newToken, refreshToken: refreshToken ?? null });
       await AsyncStorage.setItem(USER_KEY, JSON.stringify(userData));
       setToken(newToken);
       setUser(userData);
@@ -76,7 +93,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const logout = async () => {
     try {
-      await AsyncStorage.removeItem(TOKEN_KEY);
+      await revokeSession();
       await AsyncStorage.removeItem(USER_KEY);
       setToken(null);
       setUser(null);

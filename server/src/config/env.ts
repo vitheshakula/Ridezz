@@ -11,7 +11,10 @@ export interface Env {
   googleClientId: string | null;
   allowedEmails: ReadonlySet<string> | null;
   corsOrigins: ReadonlySet<string> | null;
-  authRateLimit: { windowMs: number; max: number; perAccountMax: number };
+  redisUrl: string | null;
+  sentry: { dsn: string; release: string | null } | null;
+  authRateLimit: { windowMs: number; max: number; perAccountMax: number; perRiderJoinMax: number };
+  sessions: { accessTokenTtlSeconds: number; refreshTokenTtlSeconds: number };
   livekit: { apiKey: string; apiSecret: string; url: string };
 }
 
@@ -22,6 +25,10 @@ const DEFAULT_SHUTDOWN_TIMEOUT_MS = 10_000;
 const DEFAULT_AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 const DEFAULT_AUTH_RATE_LIMIT_MAX = 100;
 const DEFAULT_AUTH_ACCOUNT_RATE_LIMIT_MAX = 10;
+const DEFAULT_ROOM_JOIN_RIDER_RATE_LIMIT_MAX = 30;
+const DEFAULT_ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+const DEFAULT_REFRESH_TOKEN_TTL_DAYS = 30;
+const SECONDS_PER_DAY = 24 * 60 * 60;
 const APP_ENVS: readonly AppEnv[] = ['development', 'test', 'staging', 'production'];
 
 function requireNonBlank(source: NodeJS.ProcessEnv, name: string): string {
@@ -103,6 +110,39 @@ function parseAppEnv(raw: string | undefined): AppEnv {
   return appEnv;
 }
 
+function parseRedisUrl(raw: string | undefined): string | null {
+  const value = raw?.trim();
+  if (!value) {
+    return null;
+  }
+  try {
+    const url = new URL(value);
+    if ((url.protocol !== 'redis:' && url.protocol !== 'rediss:') || !url.hostname) {
+      throw new Error('unsupported protocol');
+    }
+  } catch {
+    throw new Error('REDIS_URL must be a redis:// or rediss:// URL.');
+  }
+  return value;
+}
+
+function parseSentry(source: NodeJS.ProcessEnv): Env['sentry'] {
+  const dsn = source.SENTRY_DSN?.trim();
+  if (!dsn) {
+    return null;
+  }
+  try {
+    const url = new URL(dsn);
+    if (url.protocol !== 'https:' || !url.username) {
+      throw new Error('unsupported dsn');
+    }
+  } catch {
+    throw new Error('SENTRY_DSN must be the https:// DSN shown in the Sentry project settings.');
+  }
+  const release = source.SENTRY_RELEASE?.trim() || source.RENDER_GIT_COMMIT?.trim() || null;
+  return { dsn, release };
+}
+
 function parseLogLevel(raw: string | undefined): LogLevel {
   const value = raw?.trim().toLowerCase();
   if (!value) {
@@ -163,6 +203,8 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
     googleClientId: source.GOOGLE_CLIENT_ID?.trim() || null,
     allowedEmails: parseAllowedEmails(source.ALLOWED_EMAILS),
     corsOrigins: parseCorsOrigins(source.CORS_ORIGINS),
+    redisUrl: parseRedisUrl(source.REDIS_URL),
+    sentry: parseSentry(source),
     authRateLimit: {
       windowMs: parsePositiveInteger(
         source.AUTH_RATE_LIMIT_WINDOW_MS,
@@ -179,6 +221,24 @@ export function loadEnv(source: NodeJS.ProcessEnv = process.env): Env {
         DEFAULT_AUTH_ACCOUNT_RATE_LIMIT_MAX,
         'AUTH_ACCOUNT_RATE_LIMIT_MAX',
       ),
+      perRiderJoinMax: parsePositiveInteger(
+        source.ROOM_JOIN_RIDER_RATE_LIMIT_MAX,
+        DEFAULT_ROOM_JOIN_RIDER_RATE_LIMIT_MAX,
+        'ROOM_JOIN_RIDER_RATE_LIMIT_MAX',
+      ),
+    },
+    sessions: {
+      accessTokenTtlSeconds: parsePositiveInteger(
+        source.ACCESS_TOKEN_TTL_SECONDS,
+        DEFAULT_ACCESS_TOKEN_TTL_SECONDS,
+        'ACCESS_TOKEN_TTL_SECONDS',
+      ),
+      refreshTokenTtlSeconds:
+        parsePositiveInteger(
+          source.REFRESH_TOKEN_TTL_DAYS,
+          DEFAULT_REFRESH_TOKEN_TTL_DAYS,
+          'REFRESH_TOKEN_TTL_DAYS',
+        ) * SECONDS_PER_DAY,
     },
     livekit: {
       apiKey: livekitApiKey,

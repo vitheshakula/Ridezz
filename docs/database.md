@@ -8,6 +8,7 @@ parameterized queries, so no SQL is assembled from user input anywhere in the co
 ```mermaid
 erDiagram
     User ||--o{ Room : hosts
+    User ||--o{ RefreshToken : "signs in with"
     User {
         text id PK "uuid"
         text riderName
@@ -28,6 +29,16 @@ erDiagram
         float destinationLat "nullable, -90..90"
         float destinationLng "nullable, -180..180"
     }
+    RefreshToken {
+        text id PK "uuid"
+        text userId FK "User.id, cascade delete, indexed"
+        text familyId "one per sign-in, indexed"
+        text tokenHash UK "SHA-256 of the token"
+        timestamp expiresAt
+        timestamp createdAt
+        timestamp usedAt "set when exchanged; presenting it again is reuse"
+        timestamp revokedAt "set when used, logged out or revoked"
+    }
 ```
 
 ### Constraints and indexes
@@ -40,6 +51,9 @@ erDiagram
 | `Room` | `code` unique             | Joins look rooms up by code                              |
 | `Room` | `hostId` index            | Foreign key lookups and host checks                      |
 | `Room` | `hostId` → `User.id`      | `ON DELETE RESTRICT`: a rider with rooms cannot be deleted by accident |
+| `RefreshToken` | `tokenHash` unique | Refresh lookups by hash; the raw token is never stored |
+| `RefreshToken` | `familyId` index   | Revoking every token of one sign-in at once            |
+| `RefreshToken` | `userId` → `User.id` | `ON DELETE CASCADE`: deleting a rider ends all their sessions |
 
 Validation ranges (name lengths, coordinates) are enforced in the API layer before any write.
 
@@ -49,7 +63,10 @@ Every request touches at most a few rows, each by a unique or indexed key: there
 endpoints, joins or N+1 patterns. Authenticated requests load only the five user columns they need
 (never the password hash). Writes that must be atomic use single statements: `upsert` for hosting
 a room, and a conditional `updateMany ... WHERE roomCode IS NULL` so concurrent first requests
-agree on one room code.
+agree on one room code. Refresh-token rotation runs in a transaction: the old token is marked used
+only if it is still unused, and the replacement is created in the same transaction, so two
+concurrent refreshes with one token cannot both succeed. Expired refresh tokens are deleted for a
+rider each time they sign in.
 
 ## Migrations
 
@@ -64,6 +81,7 @@ npm run prisma:migrate:deploy
 | -------------------------------------- | ------------------------- |
 | `20261002_postgresql_baseline`         | Initial PostgreSQL schema |
 | `20261104000000_add_room_host_index`   | Index on `Room.hostId`    |
+| `20261105000000_add_refresh_tokens`    | `RefreshToken` table      |
 
 Rules:
 
@@ -71,6 +89,36 @@ Rules:
 - Prefer additive changes (new tables, nullable columns) so the previous release still runs
   against the new schema, which keeps rollbacks possible. Drop columns in a later release.
 - Large-table index builds should use `CREATE INDEX CONCURRENTLY` in a hand-edited migration.
+
+## Database roles
+
+Run the server with a role that can only read and write data, and migrations with the owner role:
+
+| Role           | Used by                          | Privileges                                     |
+| -------------- | -------------------------------- | ---------------------------------------------- |
+| `ridezz_owner` | `npm run prisma:migrate:deploy` (`MIGRATION_DATABASE_URL`) | Owns the database and schema; creates and alters tables |
+| `ridezz_app`   | The running server (`DATABASE_URL`) | `SELECT`, `INSERT`, `UPDATE`, `DELETE` only  |
+
+One-time setup, as an administrator, then as `ridezz_owner`:
+
+```sql
+CREATE ROLE ridezz_owner LOGIN PASSWORD '<owner password>';
+CREATE ROLE ridezz_app LOGIN PASSWORD '<app password>';
+ALTER DATABASE ridezz OWNER TO ridezz_owner;
+ALTER SCHEMA public OWNER TO ridezz_owner;
+```
+
+```sql
+REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE ON SCHEMA public TO ridezz_app;
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO ridezz_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE ridezz_owner IN SCHEMA public
+  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO ridezz_app;
+```
+
+The default privileges give `ridezz_app` access to tables that later migrations create. With this
+setup, a compromised server cannot drop or alter tables. Without `MIGRATION_DATABASE_URL`,
+migrations fall back to `DATABASE_URL`, which then has to be the owner.
 
 ## Connections
 

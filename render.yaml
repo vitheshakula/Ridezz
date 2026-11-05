@@ -28,6 +28,15 @@ services:
         sync: false
       - key: LIVEKIT_URL
         sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: ridezz-cache-staging
+          property: connectionString
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: ALLOWED_EMAILS
@@ -62,10 +71,29 @@ services:
         sync: false
       - key: LIVEKIT_URL
         sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: ridezz-cache
+          property: connectionString
+      - key: MIGRATION_DATABASE_URL
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: ALLOWED_EMAILS
         sync: false
+
+  - type: keyvalue
+    name: ridezz-cache-staging
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
+
+  - type: keyvalue
+    name: ridezz-cache
+    ipAllowList: []
+    maxmemoryPolicy: allkeys-lru
 
 databases:
   - name: ridezz-db-staging

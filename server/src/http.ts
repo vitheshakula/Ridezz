@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import type { ErrorRequestHandler, NextFunction, Request, RequestHandler, Response } from 'express';
+import type { ErrorRequestHandler, Request, RequestHandler } from 'express';
 import { ErrorCode, sendError } from './errors';
+import { errorTracker } from './integrations/errorTracker';
 import { logger } from './logger';
 
 declare global {
@@ -61,20 +62,15 @@ export function logRequestError(
   error: unknown,
   level: 'error' | 'warn' = 'error',
 ): void {
-  logger()[level](event, {
+  const context = {
     requestId: req.requestId ?? 'unavailable',
     method: req.method,
     path: requestPath(req),
-    ...safeErrorDetails(error),
-  });
-}
-
-export function asyncHandler(
-  handler: (req: Request, res: Response, next: NextFunction) => Promise<unknown>,
-): RequestHandler {
-  return (req, res, next) => {
-    handler(req, res, next).catch(next);
   };
+  logger()[level](event, { ...context, ...safeErrorDetails(error) });
+  if (level === 'error') {
+    errorTracker().capture(error, { event, ...context, userId: req.user?.id });
+  }
 }
 
 export const notFoundHandler: RequestHandler = (_req, res) => {

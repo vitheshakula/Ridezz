@@ -47,7 +47,7 @@ export const SignupPage = ({ navigation }: any) => {
     setIsLoading(true);
     try {
       const result = await register(riderName, email, password);
-      await login(result.token, result.user);
+      await login(result.token, result.user, result.refreshToken);
       navigation?.navigate('JoinScreen');
     } catch (error) {
       setFormError(describeAuthError(error, 'Registration failed. Please try again.'));
