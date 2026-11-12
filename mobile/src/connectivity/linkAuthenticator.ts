@@ -176,6 +176,7 @@ export type LinkAuthRejectReason =
   | 'not_direct'
   | 'wrong_ride'
   | 'sender_mismatch'
+  | 'self_hello'
   | 'duplicate'
   | 'stale'
   | 'failed_attempt'
@@ -641,11 +642,16 @@ export function linkAuthRoutable(
   policy: { channelBinding: 'required' | 'preferred' },
 ): boolean {
   try {
-    if (!isTimestamp(wallNow) || linkAuthStatus(state) !== 'mutual') {
+    if (!isTimestamp(wallNow) || !isPlainObject(policy)) {
       return false;
     }
+    // Explicitly require an authenticated record, whatever the phase says.
     const authenticated = state.authenticated;
-    if (authenticated === null || !isPlainObject(policy)) {
+    if (
+      !isPlainObject(authenticated) ||
+      linkAuthStatus(state) !== 'mutual' ||
+      !isTimestamp(authenticated.expiresAt)
+    ) {
       return false;
     }
     if (policy.channelBinding === 'required') {
@@ -784,9 +790,9 @@ function failNow(c: Ctx, reason: LinkAuthFailureReason): void {
     a.helloNextAt = null;
     a.proofNextAt = null;
   }
-  // A failed attempt must not ask for signatures.
+  // A failed attempt must neither ask for signatures nor put new handshake messages on the wire.
   for (let i = c.effects.length - 1; i >= 0; i--) {
-    if (c.effects[i].kind === 'sign') {
+    if (c.effects[i].kind === 'sign' || c.effects[i].kind === 'send') {
       c.effects.splice(i, 1);
     }
   }
@@ -1302,6 +1308,11 @@ function restartOnPeerHello(
   // A HELLO whose sender does not match its own credential must never tear anything down.
   if (originId !== hello.credential.nodeId) {
     reject(c, 'sender_mismatch');
+    return;
+  }
+  // A reflected copy of our own HELLO must never tear down an attempt or a mutual link.
+  if (hello.credential.nodeId === c.r.local.nodeId) {
+    reject(c, 'self_hello');
     return;
   }
   if (!restartAttempt(c)) {

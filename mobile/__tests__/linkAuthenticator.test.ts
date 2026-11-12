@@ -3990,18 +3990,26 @@ describe('replay and reflection', () => {
     expectFailed(ctx.rig, effects, 'identity_clash');
   });
 
-  it('our own HELLO echoed back while mutual tears the attempt down as specified, never authenticating', () => {
+  it('our own HELLO echoed back while mutual is refused and changes nothing', () => {
     const ctx = mutualSolo();
     const ownHello = ctx.rig.sent[0];
-    const effects = ctx.rig.recv(ownHello, { originId: ctx.rig.nodeId });
-    expect(effects.map(e => e.kind)).toEqual([
-      'deauthenticated',
-      'failed',
-      'send',
-    ]);
-    expect(reasonsOf(effects, 'failed')).toEqual(['identity_clash']);
-    expect(ctx.rig.status).toBe('failed');
-    expect(ctx.rig.count('authenticated')).toBe(1);
+    const sent = ctx.rig.sent.length;
+    for (let i = 0; i < 20; i++) {
+      expectRejected(
+        ctx.rig,
+        () => ctx.rig.recv(ownHello, { originId: ctx.rig.nodeId }),
+        'self_hello',
+      );
+    }
+    expect(ctx.rig.status).toBe('mutual');
+    expect(ctx.rig.sent).toHaveLength(sent);
+    expect(ctx.rig.state.restartTimes).toEqual([]);
+    expect(ctx.rig.count('deauthenticated')).toBe(0);
+    expect(
+      linkAuthRoutable(ctx.rig.state, ctx.clock.wall, {
+        channelBinding: 'preferred',
+      }),
+    ).toBe(true);
   });
 
   it('a PROOF signature placed in a CONFIRM, and vice versa, never completes the handshake', () => {
@@ -4687,7 +4695,7 @@ describe('further edge cases', () => {
     ctx.rig.answer();
     expect(ctx.rig.state.failure).toBe('peer_credential_expired');
     expect(ctx.rig.count('authenticated')).toBe(0);
-    expect(ctx.rig.sentStages()).toEqual(['hello', 'proof', 'confirm']); // the CONFIRM left, the link is not trusted
+    expect(ctx.rig.sentStages()).toEqual(['hello', 'proof']); // a failing step sends nothing
   });
 
   it('a clock reading that goes backwards is clamped for every decision', () => {
@@ -4989,5 +4997,196 @@ describe('further edge cases', () => {
     expect(proofCount(ctx.rig)).toBe(proofs);
     ctx.rig.answer();
     expect(ctx.rig.status).toBe('mutual');
+  });
+});
+
+// =================================================================================================
+// Task 2.3.1 regression tests
+// =================================================================================================
+
+describe('hardening regressions', () => {
+  it('a reflected own HELLO in the failed phase is refused without a restart', () => {
+    const ctx = solo({ signer: 'auto' });
+    ctx.rig.start();
+    const ownHello = ctx.rig.sent[0];
+    ctx.rig.recv(ctx.remote.hello());
+    ctx.rig.recv(ctx.remote.proof(ctx.rig, { key: devC }), ctx.remote.origin);
+    expect(ctx.rig.status).toBe('failed');
+    expectRejected(
+      ctx.rig,
+      () => ctx.rig.recv(ownHello, { originId: ctx.rig.nodeId }),
+      'self_hello',
+    );
+    expect(ctx.rig.state.restartTimes).toEqual([]);
+  });
+
+  it('a restart that fails on the new HELLO puts nothing on the wire', () => {
+    const ctx = mutualSolo();
+    const sent = ctx.rig.sent.length;
+    const bad = new Remote(devB, {
+      credential: credentialFor(devB, {}, untrustedServer),
+      nonce: nonceN('bad-hello'),
+    });
+    const effects = ctx.rig.recv(bad.hello(), bad.origin);
+    expect(effects.map(e => e.kind)).toEqual(['deauthenticated', 'failed']);
+    expect(reasonsOf(effects, 'failed')).toEqual(['credential_bad_signature']);
+    expect(ctx.rig.sent).toHaveLength(sent);
+    expect(ctx.rig.status).toBe('failed');
+  });
+
+  it('a restart flood and a failed local restart also send nothing', () => {
+    const ctx = solo({ signer: 'auto', limits: { maxRestartsPerWindow: 1 } });
+    ctx.rig.start();
+    ctx.advance(10);
+    ctx.rig.restart();
+    const sent = ctx.rig.sent.length;
+    ctx.advance(10);
+    const effects = ctx.rig.restart();
+    expectFailed(ctx.rig, effects, 'restart_flood');
+    expect(effects.some(e => e.kind === 'send' || e.kind === 'sign')).toBe(
+      false,
+    );
+    expect(ctx.rig.sent).toHaveLength(sent);
+  });
+
+  it('no failure, anywhere, comes with a send or a sign effect', () => {
+    const ctx = solo({ signer: 'auto' });
+    watch(ctx.rig);
+    ctx.rig.start();
+    const origins = [ctx.remote.origin, { originId: nodeIdOf(devC) }];
+    for (let i = 0; i < 30; i++) {
+      ctx.advance(700);
+      ctx.remote.nonce = nonceN(`nofail-${i}`);
+      const credential =
+        i % 3 === 0
+          ? credentialFor(devB, { sessionId: OTHER_SESSION })
+          : ctx.remote.credential;
+      const effects = ctx.rig.recv(
+        ctx.remote.hello({ credential }),
+        origins[i % 2],
+      );
+      if (effects.some(e => e.kind === 'failed')) {
+        expect(effects.some(e => e.kind === 'send' || e.kind === 'sign')).toBe(
+          false,
+        );
+      }
+      ctx.rig.tick();
+    }
+  });
+
+  it('a verifier built for another session cannot start an attempt', () => {
+    const ctx = solo({ verifier: trustedVerifier(OTHER_SESSION) });
+    expectFailed(ctx.rig, ctx.rig.start(), 'local_credential_invalid');
+    expect(ctx.rig.sent).toHaveLength(0);
+    expect(ctx.rig.randomSpy).not.toHaveBeenCalled();
+  });
+
+  it('a verifier built for another ride cannot start an attempt', () => {
+    const ctx = solo({ verifier: trustedVerifier(SESSION, '99999') });
+    expectFailed(ctx.rig, ctx.rig.start(), 'local_credential_invalid');
+    expect(ctx.rig.sent).toHaveLength(0);
+  });
+
+  it('after expiry and before the next tick the status lags but the link is not routable', () => {
+    const ctx = mutualSolo({
+      credentialOverrides: { expiresAt: WALL0 + 10_000 },
+    });
+    ctx.advance(10_000);
+    expect(ctx.rig.status).toBe('mutual'); // nothing has reduced the clock yet
+    for (const channelBinding of ['preferred', 'required'] as const) {
+      expect(
+        linkAuthRoutable(ctx.rig.state, ctx.clock.wall, { channelBinding }),
+      ).toBe(false);
+    }
+    ctx.rig.tick();
+    expect(ctx.rig.status).toBe('failed');
+    expect(
+      linkAuthRoutable(ctx.rig.state, ctx.clock.wall, {
+        channelBinding: 'preferred',
+      }),
+    ).toBe(false);
+  });
+
+  it('routability requires an authenticated record, whatever the phase says', () => {
+    const ctx = mutualSolo();
+    const forged = { ...ctx.rig.state, authenticated: null } as LinkAuthState;
+    expect(
+      linkAuthRoutable(forged, ctx.clock.wall, { channelBinding: 'preferred' }),
+    ).toBe(false);
+    for (const expiresAt of ['never', Infinity, NaN]) {
+      const badExpiry = {
+        ...ctx.rig.state,
+        authenticated: { ...ctx.rig.state.authenticated!, expiresAt },
+      } as unknown as LinkAuthState;
+      expect(
+        linkAuthRoutable(badExpiry, ctx.clock.wall, {
+          channelBinding: 'preferred',
+        }),
+      ).toBe(false);
+    }
+  });
+
+  it('a late signature from a previous connection with the same id cannot authenticate the new one', () => {
+    const old = solo({ connectionId: 'conn-X' });
+    old.rig.start();
+    old.rig.recv(old.remote.hello());
+    const stale = old.rig.pendingSigns[0];
+    const staleSignature = old.rig.signatureFor(stale);
+    old.rig.disconnect();
+
+    const fresh = solo({ connectionId: 'conn-X', seed: 'reconnect' });
+    fresh.rig.start();
+    fresh.remote.nonce = nonceN('reconnect-peer');
+    fresh.rig.recv(fresh.remote.hello());
+    const request = fresh.rig.pendingSigns[0];
+    expect(request.requestId).toBe(stale.requestId); // the identifier collides
+    expect(request.input).not.toBe(stale.input);
+    const effects = fresh.rig.apply({
+      kind: 'signature_ready',
+      connectionId: 'conn-X',
+      requestId: stale.requestId,
+      signature: staleSignature,
+      ...fresh.rig.clocks(),
+    });
+    expectFailed(fresh.rig, effects, 'signer_invalid_signature');
+    expect(fresh.rig.sentStages()).toEqual(['hello']);
+    expect(fresh.rig.count('authenticated')).toBe(0);
+    // the closed old state ignores the same completion
+    expectRejected(
+      old.rig,
+      () =>
+        old.rig.apply({
+          kind: 'signature_ready',
+          connectionId: 'conn-X',
+          requestId: stale.requestId,
+          signature: staleSignature,
+          ...old.rig.clocks(),
+        }),
+      'closed',
+    );
+  });
+
+  it('a signature for an earlier attempt cannot complete a later attempt', () => {
+    const ctx = solo();
+    ctx.rig.start();
+    ctx.rig.recv(ctx.remote.hello());
+    const first = ctx.rig.pendingSigns.splice(0, 1)[0];
+    const firstSignature = ctx.rig.signatureFor(first);
+    ctx.advance(10);
+    ctx.rig.restart();
+    ctx.remote.nonce = nonceN('attempt-two');
+    ctx.rig.recv(ctx.remote.hello());
+    const second = ctx.rig.pendingSigns[0];
+    expect(second.requestId).not.toBe(first.requestId);
+    const effects = ctx.rig.apply({
+      kind: 'signature_ready',
+      connectionId: ctx.rig.connectionId,
+      requestId: second.requestId,
+      signature: firstSignature,
+      ...ctx.rig.clocks(),
+    });
+    expectFailed(ctx.rig, effects, 'signer_invalid_signature');
+    expect(ctx.rig.count('authenticated')).toBe(0);
+    expect(ctx.rig.sentStages().filter(x => x === 'proof')).toHaveLength(0);
   });
 });
