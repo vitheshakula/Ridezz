@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Android 12+ (API 31+). The app already sets android:allowBackup="false", so nothing is backed up
+  or transferred today. These rules keep that posture explicit and independent of allowBackup:
+  NOTHING is extracted, for cloud backup or device-to-device transfer. In particular the link-auth
+  identity metadata (shared preference file rideaze_link_identity_v1) must never be copied to
+  another device, because its Keystore key can never move with it.
+-->
+<data-extraction-rules>
+  <cloud-backup>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="device_root" path="." />
+    <exclude domain="device_file" path="." />
+    <exclude domain="device_database" path="." />
+    <exclude domain="device_sharedpref" path="." />
+  </cloud-backup>
+  <device-transfer>
+    <exclude domain="root" path="." />
+    <exclude domain="file" path="." />
+    <exclude domain="database" path="." />
+    <exclude domain="sharedpref" path="." />
+    <exclude domain="external" path="." />
+    <exclude domain="device_root" path="." />
+    <exclude domain="device_file" path="." />
+    <exclude domain="device_database" path="." />
+    <exclude domain="device_sharedpref" path="." />
+  </device-transfer>
+</data-extraction-rules>
