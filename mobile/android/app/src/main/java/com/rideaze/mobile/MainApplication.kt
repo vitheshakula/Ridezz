@@ -24,6 +24,7 @@ class MainApplication : Application(), ReactApplication {
           add(NearbyMeshPackage())
           add(RidezzTtsPackage())
           add(RideazeSecureOutboxPackage())
+          add(RideazeLinkSignerPackage())
           add(CrashDetectionPackage())
         },
     )

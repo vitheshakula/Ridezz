@@ -146,6 +146,18 @@ class LinkIdentityStore(
    */
   fun getIdentity(sessionId: String): LinkIdentity? = synchronized(LOCK) { resolve(validSession(sessionId), false) }
 
+  /**
+   * Runs [block] with the verified EXISTING identity while holding the store's lock, so a concurrent
+   * release (or any other identity operation) cannot interleave with whatever [block] does with
+   * the key, such as signing. Never generates a key. Throws IDENTITY_NOT_FOUND if there is none,
+   * and the usual lost / mismatch / metadata errors otherwise. Exceptions from [block] propagate.
+   */
+  fun <T> withExistingIdentity(sessionId: String, block: (LinkIdentity) -> T): T =
+    synchronized(LOCK) {
+      val identity = resolve(validSession(sessionId), false) ?: fail(LinkIdentityError.IDENTITY_NOT_FOUND)
+      block(identity)
+    }
+
   /** Read-only inventory (no recovery, no writes), sorted by session id. */
   fun listIdentities(): List<LinkIdentityListing> =
     synchronized(LOCK) {
@@ -312,7 +324,8 @@ class LinkIdentityStore(
 
     private const val ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
-    private fun base64Url(bytes: ByteArray): String {
+    /** Canonical unpadded base64url (also used for public keys and signatures at the bridge). */
+    internal fun base64Url(bytes: ByteArray): String {
       val out = StringBuilder((bytes.size * 4 + 2) / 3)
       var i = 0
       while (i + 2 < bytes.size) {
