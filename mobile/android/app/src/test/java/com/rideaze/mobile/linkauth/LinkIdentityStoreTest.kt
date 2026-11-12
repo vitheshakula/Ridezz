@@ -64,6 +64,7 @@ class LinkIdentityStoreTest {
   private class FakeMetadata : LinkMetadataStore {
     val values = linkedMapOf<String, String>()
     var failWrites = false
+    var failRemoves = false
     var writes = AtomicInteger()
 
     override fun read(sessionId: String): String? = synchronized(values) { values[sessionId] }
@@ -73,7 +74,11 @@ class LinkIdentityStoreTest {
       synchronized(values) { values[sessionId] = value }
       return true
     }
-    override fun remove(sessionId: String): Boolean { synchronized(values) { values.remove(sessionId) }; return true }
+    override fun remove(sessionId: String): Boolean {
+      if (failRemoves) return false
+      synchronized(values) { values.remove(sessionId) }
+      return true
+    }
     override fun sessionIds(): List<String> = synchronized(values) { values.keys.toList() }
   }
 
@@ -425,6 +430,34 @@ class LinkIdentityStoreTest {
     store().releaseIdentity(sessionA, id.nodeId) // explicit, with the right node id
     assertTrue(meta.values.isEmpty())
     expectError(LinkIdentityError.IDENTITY_NOT_FOUND) { store().releaseIdentity(sessionA, id.nodeId) }
+  }
+
+  @Test
+  fun releaseWhoseMetadataRemovalFailsCanBeRetriedWithoutRegeneration() {
+    val id = store().ensureIdentity(sessionA)
+    val other = store().ensureIdentity(sessionB)
+    val otherKey = keys.keys[alias(sessionB)]
+    val otherMeta = meta.values[sessionB]
+    assertEquals(2, keys.generateCalls.get())
+
+    meta.failRemoves = true
+    expectError(LinkIdentityError.KEYSTORE_UNAVAILABLE) { store().releaseIdentity(sessionA, id.nodeId) }
+    // the key really was deleted (fail-closed state), the metadata is still there as evidence
+    assertFalse(keys.keys.containsKey(alias(sessionA)))
+    assertEquals("1|$sessionA|${id.nodeId}|$now|tee", meta.values[sessionA])
+    expectError(LinkIdentityError.IDENTITY_LOST) { store().ensureIdentity(sessionA) }
+    assertEquals(2, keys.generateCalls.get()) // nothing was regenerated
+
+    meta.failRemoves = false
+    store().releaseIdentity(sessionA, id.nodeId) // retry with the ORIGINAL expected node id
+    assertNull(meta.values[sessionA])
+    assertNull(store().getIdentity(sessionA))
+    assertEquals(2, keys.generateCalls.get())
+    // the other session was never touched
+    assertEquals(setOf(alias(sessionB)), keys.keys.keys)
+    assertTrue(keys.keys[alias(sessionB)] === otherKey)
+    assertEquals(otherMeta, meta.values[sessionB])
+    assertEquals(other.nodeId, store().getIdentity(sessionB)!!.nodeId)
   }
 
   @Test

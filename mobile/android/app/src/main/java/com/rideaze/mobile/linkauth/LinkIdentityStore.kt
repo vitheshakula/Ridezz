@@ -139,7 +139,11 @@ class LinkIdentityStore(
   /** Creates the identity if neither a key nor metadata exist; otherwise returns the existing one. */
   fun ensureIdentity(sessionId: String): LinkIdentity = synchronized(LOCK) { resolve(validSession(sessionId), true)!! }
 
-  /** The existing identity, or null if the session has neither key nor metadata. Never generates. */
+  /**
+   * The existing identity, or null if the session has neither key nor metadata. Never generates a
+   * key, but (like [ensureIdentity]) may restore missing metadata for a surviving key; that
+   * recovery never changes the node identity.
+   */
   fun getIdentity(sessionId: String): LinkIdentity? = synchronized(LOCK) { resolve(validSession(sessionId), false) }
 
   /** Read-only inventory (no recovery, no writes), sorted by session id. */
@@ -254,6 +258,13 @@ class LinkIdentityStore(
     return LinkIdentityMetadata.parse(sessionId, raw) ?: fail(LinkIdentityError.INVALID_METADATA)
   }
 
+  /**
+   * A failed metadata write never authorises a new identity. The Keystore key stays, and the next
+   * call (even after a process restart) recovers that same key as an orphan, with the same node id
+   * and a new creation time. Note that on Android `SharedPreferences.commit()` may already have
+   * updated its in-memory state when the disk write fails, so a retry in the same process can
+   * still see the metadata.
+   */
   private fun persist(record: LinkIdentityMetadata) {
     if (!guard { metadata.write(record.sessionId, record.encode()) }) fail(LinkIdentityError.KEYSTORE_UNAVAILABLE)
   }

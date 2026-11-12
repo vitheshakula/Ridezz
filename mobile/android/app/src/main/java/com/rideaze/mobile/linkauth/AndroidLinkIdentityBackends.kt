@@ -83,6 +83,9 @@ internal class SharedPreferencesLinkMetadataStore(context: Context) : LinkMetada
 
   override fun read(sessionId: String): String? = preferences.getString(PREFIX + sessionId, null)
 
+  // commit() returns false if the disk write failed, but SharedPreferences may already have
+  // updated its in-memory map. The store treats false as an error and never regenerates a key
+  // because of it: an existing key is recovered later with the same cryptographic identity.
   override fun write(sessionId: String, value: String): Boolean =
     preferences.edit().putString(PREFIX + sessionId, value).commit()
 
