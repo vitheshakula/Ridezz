@@ -12,6 +12,8 @@ import com.rideaze.mobile.linkauth.LinkIdentityStores
 import com.rideaze.mobile.linkauth.LinkSignerApi
 import com.rideaze.mobile.linkauth.LinkSignerCallback
 import com.rideaze.mobile.linkauth.LinkSigningService
+import com.rideaze.mobile.linkauth.PromiseCallback
+import com.rideaze.mobile.linkauth.SettlementTarget
 
 /**
  * React Native bridge for the per-ride-session link-auth signer.
@@ -81,16 +83,15 @@ class RideazeLinkSignerModule(reactContext: ReactApplicationContext) :
     super.invalidate()
   }
 
-  private fun <T> callback(promise: Promise, convert: (T) -> Any?) =
-    object : LinkSignerCallback<T> {
-      override fun onSuccess(value: T) {
-        promise.resolve(convert(value))
-      }
+  private fun <T> callback(promise: Promise, convert: (T) -> Any?): LinkSignerCallback<T> =
+    PromiseCallback(
+      object : SettlementTarget {
+        override fun resolve(value: Any?) = promise.resolve(value)
 
-      override fun onError(code: String) {
-        promise.reject(code, code)
-      }
-    }
+        override fun reject(code: String, message: String) = promise.reject(code, message)
+      },
+      convert,
+    )
 
   private fun identityMap(identity: IdentityView): WritableMap =
     Arguments.createMap().also { map ->

@@ -80,7 +80,14 @@ class LinkSigningService(private val store: LinkIdentityStore, private val keys:
       }
     val message = validated.signingBytes()
 
-    val der = guard(LinkSignerError.SIGNING_FAILED) { keys.signDer(alias, message) }
+    val der =
+      try {
+        guard(LinkSignerError.SIGNING_FAILED) { keys.signDer(alias, message) }
+      } catch (e: LinkSignerException) {
+        // A key that can no longer be recovered or used is gone for good: say so, not "try again".
+        if (e.cause is java.security.UnrecoverableKeyException) throw LinkSignerException(LinkSignerError.IDENTITY_LOST, e)
+        throw e
+      }
     val p1363 =
       try {
         EcdsaSignatureCodec.derToP1363(der)

@@ -1,9 +1,11 @@
 package com.rideaze.mobile.linkauth
 
+import android.security.keystore.KeyPermanentlyInvalidatedException
 import java.security.KeyStore
 import java.security.KeyStoreException
 import java.security.PrivateKey
 import java.security.Signature
+import java.security.UnrecoverableKeyException
 import java.security.interfaces.ECPublicKey
 
 /**
@@ -19,10 +21,15 @@ internal class AndroidKeystoreLinkSigningKeys : LinkSigningKeys {
 
   override fun signDer(alias: String, message: ByteArray): ByteArray {
     val key = keyStore().getKey(alias, null) as? PrivateKey ?: throw KeyStoreException("no signing key")
-    return Signature.getInstance("SHA256withECDSA").run {
-      initSign(key)
-      update(message)
-      sign()
+    try {
+      return Signature.getInstance("SHA256withECDSA").run {
+        initSign(key)
+        update(message)
+        sign()
+      }
+    } catch (e: KeyPermanentlyInvalidatedException) {
+      // Reported as an unrecoverable key so the signing service can tell permanent loss apart.
+      throw UnrecoverableKeyException("key permanently invalidated").apply { initCause(e) }
     }
   }
 }

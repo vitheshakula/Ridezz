@@ -44,6 +44,7 @@ class LinkSigningServiceTest {
     @Volatile var holdSign: CountDownLatch? = null // block until released
     @Volatile var tamper: ((alias: String, der: ByteArray) -> ByteArray)? = null
     @Volatile var failSign = false
+    @Volatile var failWith: Exception? = null
 
     private fun newPair(): KeyPair =
       KeyPairGenerator.getInstance("EC").apply { initialize(ECGenParameterSpec("secp256r1")) }.generateKeyPair()
@@ -63,6 +64,7 @@ class LinkSigningServiceTest {
       messages.add(message.copyOf())
       enterSign?.countDown()
       holdSign?.await(10, TimeUnit.SECONDS)
+      failWith?.let { throw it }
       if (failSign) throw java.security.SignatureException("hardware busy")
       val pair = synchronized(pairs) { pairs[alias] } ?: throw java.security.KeyStoreException("no key")
       val der = Signature.getInstance("SHA256withECDSA").run { initSign(pair.private); update(message); sign() }
@@ -299,6 +301,31 @@ class LinkSigningServiceTest {
     expectError(LinkSignerError.SIGNING_FAILED) { service.sign(sessionA, "proof", text) }
     keystore.failSign = false
     assertEquals(86, service.sign(sessionA, "proof", text).length) // and it recovers
+  }
+
+  @Test
+  fun anUnrecoverableKeyIsPermanentIdentityLossButOtherFailuresAreNot() {
+    val id = identity()
+    val text = statement("proof", id.nodeId)
+    keystore.failWith = java.security.UnrecoverableKeyException("invalidated")
+    expectError(LinkSignerError.IDENTITY_LOST) { service.sign(sessionA, "proof", text) }
+    keystore.failWith = java.security.SignatureException("transient")
+    expectError(LinkSignerError.SIGNING_FAILED) { service.sign(sessionA, "proof", text) }
+    keystore.failWith = null
+    assertEquals(86, service.sign(sessionA, "proof", text).length)
+    assertEquals(1, keystore.generateCalls.get()) // nothing was regenerated
+  }
+
+  @Test
+  fun signingWithAnOrphanKeyRecoversTheMissingMetadataAndKeepsTheSameIdentity() {
+    val id = identity()
+    meta.values.clear() // the key survived, its metadata did not
+    val text = statement("proof", id.nodeId)
+    val signature = service.sign(sessionA, "proof", text)
+    assertTrue(verifies(keystore.publicKey(alias(sessionA))!!, text, signature))
+    assertEquals(1, keystore.generateCalls.get()) // the same key; no new identity
+    assertEquals(id.nodeId, meta.values[sessionA]!!.split("|")[2]) // metadata restored for it
+    assertEquals(id.nodeId, store.getIdentity(sessionA)!!.nodeId)
   }
 
   @Test
