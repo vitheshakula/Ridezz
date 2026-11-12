@@ -113,35 +113,69 @@ class EcPublicKeyEncodingTest {
     }
   }
 
+  /**
+   * Real secp256r1 points whose coordinates have leading zero bytes, found once with Node's crypto
+   * and checked on the curve with independent BigInteger arithmetic. `sec1Hex` is 04 || X || Y as
+   * exported by Node (JWK x and y), NOT produced by the encoder under test; `nodeId` is the
+   * base64url SHA-256 of those bytes. No private keys are kept.
+   */
+  private class FixedPoint(val label: String, val sec1Hex: String, val nodeId: String)
+
+  private val zeroPrefixedPoints =
+    listOf(
+      FixedPoint("X has one leading zero byte", "0400c6a9b9543486bf52d0d84d7452c86620dda1eabc8d63718c55326903a61a0ccdc969500ef15dc9a05b0f8a0102843bbd59a8753ca2c18cb4eea84cb7be2196", "IwwLzThZ1qCDqrP0FzKlhUVsdgdZvirRFZossvjQ27M"),
+      FixedPoint("X has two leading zero bytes", "04000064b99339a6f373db058d28a912098b30eaeee6ad83f94b4e6ac0ce8f226a32906858df8390264bf0547b16cb3706d03ed7013249466c247612ba3194d38e", "AVNY7WjV2euPL32RPVSbpic8cHxbGU-d30xp79HELsU"),
+      FixedPoint("Y has two leading zero bytes", "04ed2ee98496ad7c7aa500f32ca38b7c3f81e48f37a52808d46624e0feaeee0b84000029fdd364c816136817043b225cfc5797ab9cb2a4e46bf39f3fe80aecd616", "3DaecwXoFRg9mqFVM6VoUo7VbyJuogOigWU1kSnwhRg"),
+      FixedPoint("X and Y both have a leading zero byte", "0400f44ce3854083c6a6a247cb31e55384c4417cb1341650d5b0baae07b2d99d9b00544c1fa6f000f23208082e6a890434c0efad5cb36adf561b559a20efe0820e", "KpwPOZoT1zSdsDOr3fUfQWMcrDJlW0riGhNB0k6FsK0"),
+    )
+
+  private fun hexBytes(hex: String): ByteArray =
+    ByteArray(hex.length / 2) { hex.substring(2 * it, 2 * it + 2).toInt(16).toByte() }
+
   @Test
-  fun coordinatesAreCorrectlyPaddedAndSignBytesRemoved() {
-    var signByteX = 0
-    var signByteY = 0
-    var shortX = 0
-    var shortY = 0
-    for (key in generated(1500)) {
+  fun leadingZeroCoordinatesArePaddedToExactly32BytesDeterministically() {
+    for (fixed in zeroPrefixedPoints) {
+      val expected = hexBytes(fixed.sec1Hex)
+      assertEquals(fixed.label, 65, expected.size)
+      val key = keyFromPoint(expected)
+      // the BigInteger really is shorter than 32 bytes, so padding is what is being tested
+      val shortX = key.w.affineX.bitLength() <= 248
+      val shortY = key.w.affineY.bitLength() <= 248
+      assertTrue("${fixed.label}: expected a short coordinate", shortX || shortY)
+      val out = EcPublicKeyEncoding.toUncompressedPoint(key)
+      assertArrayEquals(fixed.label, expected, out)
+      val digest = MessageDigest.getInstance("SHA-256").digest(out)
+      assertEquals(fixed.label, fixed.nodeId, Base64.getUrlEncoder().withoutPadding().encodeToString(digest))
+    }
+    val first = zeroPrefixedPoints.map { keyFromPoint(hexBytes(it.sec1Hex)) }
+    assertTrue(first[0].w.affineX.bitLength() <= 248) // one leading zero byte on X
+    assertTrue(first[1].w.affineX.bitLength() <= 240) // two on X
+    assertTrue(first[2].w.affineY.bitLength() <= 240) // two on Y
+    assertTrue(first[3].w.affineX.bitLength() <= 248 && first[3].w.affineY.bitLength() <= 248)
+  }
+
+  @Test
+  fun generatedKeysAlwaysRoundTripAndSignBytesAreStripped() {
+    // random keys: the exact value is checked against an independent reconstruction every time;
+    // the sign-byte counts are only a sanity check on the sample (about half of all coordinates)
+    var signByte = 0
+    for (key in generated(300)) {
       val x = key.w.affineX
       val y = key.w.affineY
-      if (x.toByteArray().size == 33) signByteX++
-      if (y.toByteArray().size == 33) signByteY++
-      if (x.bitLength() <= 248) shortX++
-      if (y.bitLength() <= 248) shortY++
+      if (x.toByteArray().size == 33) signByte++
+      if (y.toByteArray().size == 33) signByte++
       val out = EcPublicKeyEncoding.toUncompressedPoint(key)
       assertEquals(65, out.size)
       assertEquals(x, BigInteger(1, out.copyOfRange(1, 33)))
       assertEquals(y, BigInteger(1, out.copyOfRange(33, 65)))
     }
-    // about half of all coordinates have the top bit set (BigInteger adds a sign byte) and
-    // about 1 in 256 are at least one byte short (they need zero padding)
-    assertTrue("sign-byte X cases: $signByteX", signByteX > 100)
-    assertTrue("sign-byte Y cases: $signByteY", signByteY > 100)
-    assertTrue("short X cases: $shortX", shortX >= 1)
-    assertTrue("short Y cases: $shortY", shortY >= 1)
+    assertTrue("sign-byte coordinates: $signByte of 600", signByte > 150)
   }
 
   @Test
-  fun fixedSignByteAndShortCoordinatesFromTheVectors() {
+  fun signByteCoordinatesFromTheRecordedVectors() {
     // the recorded keys are real points; check each coordinate's BigInteger shape against its bytes
+    var withSignByte = 0
     for ((_, pub) in vectors) {
       val bytes = b64(pub)
       val key = keyFromPoint(bytes)
@@ -149,9 +183,12 @@ class EcPublicKeyEncodingTest {
       for (offset in listOf(1, 33)) {
         val coordinate = bytes.copyOfRange(offset, offset + 32)
         assertArrayEquals(coordinate, out.copyOfRange(offset, offset + 32))
-        assertEquals(coordinate[0].toInt() and 0x80 != 0, BigInteger(1, coordinate).toByteArray().size == 33)
+        val topBit = coordinate[0].toInt() and 0x80 != 0
+        assertEquals(topBit, BigInteger(1, coordinate).toByteArray().size == 33)
+        if (topBit) withSignByte++
       }
     }
+    assertTrue("the recorded vectors must include sign-byte coordinates", withSignByte >= 2)
   }
 
   @Test
