@@ -154,6 +154,16 @@ const PUBLIC_KEY_BYTES = 65;
 const PUBLIC_KEY_CHARS = 87;
 const SIGNATURE_BYTES = 64;
 const SIGNATURE_CHARS = 86;
+/**
+ * The NIST P-256 group order n (FIPS 186-4, D.1.2.3), big-endian. Compared as bytes so no BigInt
+ * support is needed under Hermes. A unit test checks this constant against @noble/curves.
+ */
+const P256_ORDER = Uint8Array.from([
+  0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0xff, 0xff, 0xff, 0xff, 0xff,
+  0xff, 0xff, 0xff, 0xbc, 0xe6, 0xfa, 0xad, 0xa7, 0x17, 0x9e, 0x84, 0xf3, 0xb9,
+  0xca, 0xc2, 0xfc, 0x63, 0x25, 0x51,
+]);
+const SCALAR_BYTES = 32;
 const MAX_STATEMENT_CHARS = 512;
 const MAX_LISTING = 1000;
 
@@ -285,13 +295,34 @@ function readIdentity(
   });
 }
 
+/** True for a 32-byte big-endian scalar `x` with 1 <= x < n. Reads every byte: no early exit. */
+function isScalarInRange(signature: Uint8Array, start: number): boolean {
+  let nonZero = false;
+  let order = 0; // -1: below n, 0: equal so far, 1: above n
+  for (let i = 0; i < SCALAR_BYTES; i++) {
+    const byte = signature[start + i];
+    if (byte !== 0) {
+      nonZero = true;
+    }
+    if (order === 0 && byte !== P256_ORDER[i]) {
+      order = byte < P256_ORDER[i] ? -1 : 1;
+    }
+  }
+  return nonZero && order === -1;
+}
+
 function readSignature(value: unknown): Uint8Array {
   // 86 canonical characters decode to exactly 64 bytes: a DER signature (70-72 bytes) can never fit.
+  // Then r and s are range-checked (see isScalarInRange).
   if (typeof value !== 'string' || value.length !== SIGNATURE_CHARS) {
     return invalidResponse();
   }
   const decoded = decodeBase64Url(value);
   if (decoded === null || decoded.length !== SIGNATURE_BYTES) {
+    return invalidResponse();
+  }
+  // r and s must both lie in [1, n-1]. High-S and low-S are BOTH valid and the bytes are never changed.
+  if (!isScalarInRange(decoded, 0) || !isScalarInRange(decoded, SCALAR_BYTES)) {
     return invalidResponse();
   }
   return Uint8Array.from(decoded);
@@ -318,6 +349,15 @@ function readListing(value: unknown): readonly LinkSignerListing[] {
       return invalidResponse();
     }
     if (createdAt !== null && !isTimestamp(createdAt)) {
+      return invalidResponse();
+    }
+    // Native only reports `ok` when the stored metadata exists and matches the key, so all three
+    // fields are present. Every other status may legitimately have any of them null
+    // (identity_lost / keystore_unavailable: all null; key_without_metadata: only nodeId).
+    if (
+      status === 'ok' &&
+      (nodeId === null || createdAt === null || securityLevel === null)
+    ) {
       return invalidResponse();
     }
     return Object.freeze({
@@ -381,7 +421,13 @@ export function createAndroidLinkSigner(
     try {
       return read(result);
     } catch (error) {
-      throw toLinkSignerError(error);
+      // Anything thrown while VALIDATING the response (a hostile getter, a Proxy trap...) is a bad
+      // response. It must never be mapped by its `code`, which would let a response masquerade as
+      // a native rejection, and its message is never kept.
+      if (error instanceof LinkSignerError) {
+        throw error;
+      }
+      throw new LinkSignerError('invalid_native_response');
     }
   };
 

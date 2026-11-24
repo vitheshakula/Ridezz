@@ -1,5 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
+import { p256 } from '@noble/curves/nist.js';
 import { NativeModules, Platform } from 'react-native';
 import {
   LinkSignerError,
@@ -859,5 +860,332 @@ describe('native errors', () => {
     ]);
     expect(winner).toBe('pending');
     expect(native.signLinkAuthStatement).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('review corrections (Task 2.5.4.1)', () => {
+  const hex32 = (value: bigint): string => value.toString(16).padStart(64, '0');
+  const sigOf = (r: bigint, s: bigint): string =>
+    Buffer.from(hex32(r) + hex32(s), 'hex').toString('base64url');
+  const HALF = ORDER / BigInt(2);
+  const ONE = BigInt(1);
+  const ZERO = BigInt(0);
+  const TWO_256 = BigInt(2) ** BigInt(256);
+
+  const sign = (native: FakeNative) =>
+    signerFor(native).signLinkAuthStatement(SESSION, 'proof', STATEMENT);
+
+  describe('P1363 scalar ranges: 1 <= r, s < n', () => {
+    it('the test constant for n is the real P-256 order (independent check against @noble/curves)', () => {
+      expect(p256.Point.Fn.ORDER).toBe(ORDER);
+      expect(ORDER.toString(16)).toHaveLength(64);
+    });
+
+    const invalid: [string, string][] = [
+      ['r = 0', sigOf(ZERO, ONE)],
+      ['s = 0', sigOf(ONE, ZERO)],
+      ['r = 0 and s = 0 (all zero)', sigOf(ZERO, ZERO)],
+      ['r = n', sigOf(ORDER, ONE)],
+      ['s = n', sigOf(ONE, ORDER)],
+      ['r = n and s = n', sigOf(ORDER, ORDER)],
+      ['r = n + 1', sigOf(ORDER + ONE, ONE)],
+      ['s = n + 1', sigOf(ONE, ORDER + ONE)],
+      ['r far above n (2^256 - 2)', sigOf(TWO_256 - BigInt(2), ONE)],
+      ['s = 2^256 - 1', sigOf(ONE, TWO_256 - ONE)],
+      ['all 0xff', Buffer.alloc(64, 0xff).toString('base64url')],
+      ['a valid r with s above n', sigOf(HALF, ORDER + BigInt(5))],
+      ['a valid s with r above n', sigOf(ORDER + BigInt(5), HALF)],
+    ];
+
+    it.each(invalid)(
+      'rejects %s as invalid_native_response',
+      async (_label, response) => {
+        const native = fakeNative();
+        native.signLinkAuthStatement.mockResolvedValue(response);
+        expect((await rejection(sign(native))).code).toBe(
+          'invalid_native_response',
+        );
+        expect(native.signLinkAuthStatement).toHaveBeenCalledTimes(1); // no retry
+      },
+    );
+
+    it('every rejected form is still 86 canonical characters: only the range check can catch it', () => {
+      for (const [, response] of invalid) {
+        expect(response).toHaveLength(86);
+        expect(decodeBase64Url(response)).toHaveLength(64);
+      }
+    });
+
+    const valid: [string, bigint, bigint][] = [
+      ['r = 1, s = 1 (smallest scalars)', ONE, ONE],
+      ['r = n - 1, s = n - 1 (largest scalars)', ORDER - ONE, ORDER - ONE],
+      ['r = 1, s = n - 1', ONE, ORDER - ONE],
+      ['r = n - 1, s = 1', ORDER - ONE, ONE],
+      ['low-S boundary: s = (n - 1) / 2', ONE + ONE, HALF],
+      ['high-S boundary: s = (n + 1) / 2', ONE + ONE, HALF + ONE],
+    ];
+
+    it.each(valid)(
+      'accepts %s and returns the bytes unchanged',
+      async (_label, r, sc) => {
+        const native = fakeNative();
+        native.signLinkAuthStatement.mockResolvedValue(sigOf(r, sc));
+        const out = await sign(native);
+        expect(Buffer.from(out).toString('hex')).toBe(hex32(r) + hex32(sc));
+      },
+    );
+
+    it('the recorded low-S and high-S signatures are still accepted unmodified', async () => {
+      expect(sBigInt(LOW_S_SIGNATURE) <= HALF).toBe(true);
+      expect(sBigInt(HIGH_S_SIGNATURE) > HALF).toBe(true);
+      for (const recorded of [LOW_S_SIGNATURE, HIGH_S_SIGNATURE]) {
+        const native = fakeNative();
+        native.signLinkAuthStatement.mockResolvedValue(recorded);
+        expect(Buffer.from(await sign(native)).toString('base64url')).toBe(
+          recorded,
+        );
+      }
+    });
+
+    it('does not verify signatures itself: an in-range pair that does not verify is passed through unchanged', async () => {
+      const bogus = sigOf(BigInt(123456789), BigInt(987654321));
+      const publicKey = decodeBase64Url(PUB_A)!;
+      expect(
+        verifyP256Signature(
+          publicKey,
+          new TextEncoder().encode(STATEMENT),
+          decodeBase64Url(bogus)!,
+        ),
+      ).toBe(false); // really invalid for this key and statement
+      const native = fakeNative();
+      native.signLinkAuthStatement.mockResolvedValue(bogus);
+      expect(Buffer.from(await sign(native)).toString('base64url')).toBe(bogus);
+    });
+  });
+
+  describe('listing rows follow the Kotlin inventory contract', () => {
+    const listWith = async (rows: unknown) => {
+      const native = fakeNative();
+      native.listIdentities.mockResolvedValue(rows);
+      return signerFor(native).listIdentities();
+    };
+
+    it.each([
+      ['no nodeId', { nodeId: null }],
+      ['no createdAt', { createdAt: null }],
+      ['no securityLevel', { securityLevel: null }],
+      [
+        'nothing at all',
+        { nodeId: null, createdAt: null, securityLevel: null },
+      ],
+    ])('rejects an ok row with %s', async (_label, over) => {
+      const native = fakeNative();
+      native.listIdentities.mockResolvedValue([listingRow(over)]);
+      expect((await rejection(signerFor(native).listIdentities())).code).toBe(
+        'invalid_native_response',
+      );
+    });
+
+    it('a null in one ok row rejects the whole listing, even next to valid rows', async () => {
+      const native = fakeNative();
+      native.listIdentities.mockResolvedValue([
+        listingRow(),
+        listingRow({ sessionId: OTHER_SESSION, securityLevel: null }),
+      ]);
+      expect((await rejection(signerFor(native).listIdentities())).code).toBe(
+        'invalid_native_response',
+      );
+    });
+
+    // Shapes LinkIdentityStore.inspect() really produces for each non-ok status.
+    const allNull = { nodeId: null, createdAt: null, securityLevel: null };
+    const nonOk: [string, Record<string, unknown>][] = [
+      [
+        'identity_lost without metadata',
+        { status: 'identity_lost', ...allNull },
+      ],
+      ['identity_lost with its stored metadata', { status: 'identity_lost' }],
+      [
+        'key_without_metadata (node id from the key only)',
+        {
+          status: 'key_without_metadata',
+          nodeId: NODE_B,
+          createdAt: null,
+          securityLevel: null,
+        },
+      ],
+      ['invalid_metadata', { status: 'invalid_metadata', ...allNull }],
+      [
+        'identity_mismatch with the stored metadata',
+        { status: 'identity_mismatch' },
+      ],
+      [
+        'identity_mismatch without metadata',
+        { status: 'identity_mismatch', ...allNull },
+      ],
+      ['keystore_unavailable', { status: 'keystore_unavailable', ...allNull }],
+    ];
+
+    it.each(nonOk)('accepts %s', async (_label, over) => {
+      const list = await listWith([listingRow(over)]);
+      expect(list).toHaveLength(1);
+      expect(list[0].status).toBe(over.status);
+      expect(list[0].nodeId).toBe(
+        over.nodeId === undefined ? NODE_A : over.nodeId,
+      );
+      expect(list[0].createdAtMs).toBe(
+        over.createdAt === undefined ? 1_700_000_000_000 : over.createdAt,
+      );
+    });
+
+    it('still rejects malformed fields on non-ok rows (existing validation is unchanged)', async () => {
+      for (const over of [
+        { status: 'identity_lost', nodeId: 'x' },
+        { status: 'invalid_metadata', createdAt: 'now' },
+        {
+          status: 'keystore_unavailable',
+          securityLevel: 'vault',
+          nodeId: null,
+          createdAt: null,
+        },
+      ]) {
+        const native = fakeNative();
+        native.listIdentities.mockResolvedValue([listingRow(over)]);
+        expect((await rejection(signerFor(native).listIdentities())).code).toBe(
+          'invalid_native_response',
+        );
+      }
+    });
+
+    it('accepts a fully populated ok row', async () => {
+      const list = await listWith([listingRow()]);
+      expect([
+        list[0].status,
+        list[0].nodeId,
+        list[0].createdAtMs,
+        list[0].securityLevel,
+      ]).toEqual(['ok', NODE_A, 1_700_000_000_000, 'tee']);
+    });
+  });
+
+  describe('exceptions while reading a native response', () => {
+    const SECRET = `secret ${SESSION} ${NODE_A} rideaze.linkauth.v1.alias`;
+
+    const hostileIdentity = (thrown: unknown) => ({
+      get sessionId(): never {
+        throw thrown;
+      },
+      nodeId: NODE_A,
+      publicKey: PUB_A,
+      createdAt: 1_700_000_000_000,
+      securityLevel: 'tee',
+      created: false,
+    });
+
+    it('a throwing getter is invalid_native_response, with no message and no native call repeated', async () => {
+      const native = fakeNative();
+      native.ensureIdentity.mockResolvedValue(
+        hostileIdentity(new Error(SECRET)),
+      );
+      const error = await rejection(signerFor(native).ensureIdentity(SESSION));
+      expect(error.code).toBe('invalid_native_response');
+      expect(error.message).toBe('invalid_native_response');
+      expect(JSON.stringify(error)).not.toContain('secret');
+      expect(String(error.stack ?? '')).not.toContain('secret');
+      expect(native.ensureIdentity).toHaveBeenCalledTimes(1);
+      expect(native.getIdentity).not.toHaveBeenCalled();
+    });
+
+    it.each(NATIVE_LINK_SIGNER_ERROR_CODES)(
+      'a getter that throws {code: %s} is NOT mistaken for a native rejection',
+      async code => {
+        const native = fakeNative();
+        native.getIdentity.mockResolvedValue(
+          hostileIdentity(Object.assign(new Error(SECRET), { code })),
+        );
+        expect(
+          (await rejection(signerFor(native).getIdentity(SESSION))).code,
+        ).toBe('invalid_native_response');
+      },
+    );
+
+    it('a getter that throws a non-Error value is also invalid_native_response', async () => {
+      for (const thrown of [
+        'identity_lost',
+        42,
+        null,
+        undefined,
+        { code: 'busy' },
+      ]) {
+        const native = fakeNative();
+        native.ensureIdentity.mockResolvedValue(hostileIdentity(thrown));
+        expect(
+          (await rejection(signerFor(native).ensureIdentity(SESSION))).code,
+        ).toBe('invalid_native_response');
+      }
+    });
+
+    it('a Proxy that throws from a trap is invalid_native_response', async () => {
+      const proxy = new Proxy(
+        {},
+        {
+          ownKeys(): never {
+            throw Object.assign(new Error(SECRET), { code: 'busy' });
+          },
+        },
+      );
+      const native = fakeNative();
+      native.ensureIdentity.mockResolvedValue(proxy);
+      expect(
+        (await rejection(signerFor(native).ensureIdentity(SESSION))).code,
+      ).toBe('invalid_native_response');
+    });
+
+    it('hostile getters in listing rows are handled the same way', async () => {
+      const row = {
+        ...listingRow(),
+        get status(): never {
+          throw Object.assign(new Error(SECRET), { code: 'identity_lost' });
+        },
+      };
+      const native = fakeNative();
+      native.listIdentities.mockResolvedValue([row]);
+      const error = await rejection(signerFor(native).listIdentities());
+      expect(error.code).toBe('invalid_native_response');
+      expect(error.message).not.toContain('secret');
+    });
+
+    it('native rejections keep their codes exactly as before (the invoke phase is unchanged)', async () => {
+      for (const code of NATIVE_LINK_SIGNER_ERROR_CODES) {
+        const native = fakeNative();
+        native.signLinkAuthStatement.mockRejectedValue(nativeError(code));
+        expect((await rejection(sign(native))).code).toBe(code);
+        expect(native.signLinkAuthStatement).toHaveBeenCalledTimes(1);
+      }
+      const native = fakeNative();
+      native.signLinkAuthStatement.mockRejectedValue(
+        nativeError('some_new_code'),
+      );
+      expect((await rejection(sign(native))).code).toBe('native_error');
+    });
+
+    it('settles exactly once: a hostile response yields one rejection and no further native calls', async () => {
+      const native = fakeNative();
+      native.ensureIdentity.mockResolvedValue(
+        hostileIdentity(new Error(SECRET)),
+      );
+      const signer = signerFor(native);
+      const settled: string[] = [];
+      await signer.ensureIdentity(SESSION).then(
+        () => settled.push('resolved'),
+        (e: LinkSignerError) => settled.push(`rejected:${e.code}`),
+      );
+      await new Promise(resolve => setImmediate(resolve));
+      expect(settled).toEqual(['rejected:invalid_native_response']);
+      for (const method of Object.values(native)) {
+        expect(method.mock.calls.length).toBeLessThanOrEqual(1);
+      }
+      expect(native.releaseIdentity).not.toHaveBeenCalled();
+    });
   });
 });
